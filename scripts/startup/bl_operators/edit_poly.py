@@ -14,7 +14,8 @@ Tab picks a level:
 Entering a level starts a session: the object temporarily uses a copy of the mesh as it arrives
 at that level (with the level's moves applied), and the modifiers up to and including the level
 are hidden because their result is already in that copy. Modifiers above stay visible, which
-shows the end result. Tab again records how far each vertex moved as moves of the level and
+shows the end result. Clicking another Edit Poly while editing, then Tab (or its Edit Level button), records the
+current level and switches to that one. Tab again records how far each vertex moved as moves of the level and
 puts the original mesh back. The base mesh is never edited.
 
 Only moves are recorded so far. Topology changes are refused when leaving: undo them first, or
@@ -159,12 +160,19 @@ class OBJECT_OT_edit_poly_tab(Operator):
         ob = context.active_object
 
         if in_session(ob):
+            # Clicking another Edit Poly in the stack while editing, then Tab, switches levels.
+            active = ob.modifiers.active
+            switch_to = None
+            if active is not None and active.type == 'EDIT_POLY' and active.name != ob[KEY_MODIFIER]:
+                switch_to = active.name
             error = commit_session(context, ob)
             if error:
                 self.report({'ERROR'}, error)
                 if ob.mode != 'EDIT':
                     enter_edit_mode_only(context, ob)
                 return {'CANCELLED'}
+            if switch_to is not None:
+                start_session(context, ob, ob.modifiers[switch_to])
             return {'FINISHED'}
 
         # Everything that is not a mesh in Object Mode behaves as before.
@@ -208,11 +216,20 @@ class OBJECT_OT_edit_poly_level_edit(Operator):
 
     def execute(self, context):
         ob = context.active_object
-        if ob is None or in_session(ob):
+        if ob is None or ob.type != 'MESH':
             return {'CANCELLED'}
         mod = ob.modifiers.get(self.modifier)
         if mod is None or mod.type != 'EDIT_POLY':
             return {'CANCELLED'}
+        if in_session(ob):
+            if ob[KEY_MODIFIER] == mod.name:
+                return {'CANCELLED'}  # Already editing this level.
+            error = commit_session(context, ob)
+            if error:
+                self.report({'ERROR'}, error)
+                if ob.mode != 'EDIT':
+                    enter_edit_mode_only(context, ob)
+                return {'CANCELLED'}
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         ob.modifiers.active = mod

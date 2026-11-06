@@ -248,9 +248,14 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   ui::Layout &layout = *panel->layout;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
 
+  const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
+  PointerRNA op_ptr = layout.op(
+      "OBJECT_OT_edit_poly_level_edit", IFACE_("Edit Level"), ICON_EDITMODE_HLT);
+  RNA_string_set(&op_ptr, "modifier", md->name);
+
   layout.use_property_split_set(true);
   layout.prop(ptr, "moves_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  layout.label(IFACE_("Tab to edit this level (moves only for now)"), ICON_INFO);
+  layout.label(IFACE_("Moves only for now"), ICON_INFO);
 
   modifier_error_message_draw(layout, ptr);
 }
