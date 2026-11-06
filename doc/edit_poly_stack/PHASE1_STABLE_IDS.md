@@ -1,6 +1,6 @@
 # Edit Poly stack, phase 1: stable element IDs
 
-Status: core ID rule written and unit tested (13 tests; gcc with ASan/UBSan, clang). Not yet wired into any modifier.
+Status: ID rule in a real Blender build; Subdivision writes IDs (step 2).
 
 ## Goal
 
@@ -46,13 +46,31 @@ face corner rotation and flipped normals do not change IDs; collisions resolve t
 every run and never touch elements without an ID. A quad centre uses the (1/2, 1/2) face-point
 rule, never `subd_face_center`, which is for n-gons only.
 
+## Done in step 2: Subdivision writes IDs
+
+- Attributes, one name per domain (names are unique within a mesh): `.stable_id_point`,
+  `.stable_id_edge`, `.stable_id_face`, and `.stable_parent_*` for parents. Type `Int32_2D`.
+- `BKE_stable_id_mesh.hh` / `stable_id_mesh.cc`: read IDs or make root IDs from indices
+  (`read_or_make_root_ids`), write IDs and parents, `ensure_root_ids`.
+- `subdiv_mesh.cc` (CPU subdivision, used by the modifier and the Subdivide node):
+  - corner and loose vertices keep their ID;
+  - edge vertices: `subd_edge_point`, position taken from the index layout (no float rounding);
+  - quad interior: `quad_to_canonical` then `subd_face_point`; the quad centre is (1/2, 1/2);
+  - n-gon: centre `subd_face_center`, points on the centre-to-midpoint lines
+    `subd_ngon_spoke_point`, other patch points `subd_ngon_patch_point`;
+  - edges and faces: derived from their vertex IDs; parent is the base edge or base face.
+- ID attributes are no longer interpolated by subdivision (that gave meaningless values).
+- 17 unit tests.
+
+How to see it: Spreadsheet editor, enable "Show Internal Attributes". GPU subdivision skips the
+CPU path when Subdivision is the last modifier, so turn it off in Preferences > Viewport while
+testing. Collisions are not resolved inside subdivision (64 bit hashes; resolving would cost a
+hash map per evaluation).
+
 ## Next steps
 
-1. Add `.stable_id` / `.stable_parent` as hidden attributes and assign root IDs on mesh creation,
-   primitive add, import and Collapse.
-2. Subdivision: in `subdiv_mesh.cc`, fill IDs for edge points, face points, centres and pieces.
-   Vertex layout there is corner verts, edge verts, then inner face verts, so each group maps to
-   one of the rules above. N-gon interiors need a rule beyond the quad `(u, v)` form.
+1. Store root IDs on the original mesh when it is created, imported or collapsed, so they survive
+   index changes (needed once Edit Mode writes into an Edit Poly instead of the base mesh).
 3. Mirror and Array: copies via `MirrorCopy` and `ArrayCopy`, original keeps its ID.
 4. Bevel, Solidify, Weld, Decimate, Remesh: decide per modifier. Remesh and Decimate cannot
    preserve most IDs; they should clear IDs and mark the stack as "edits above are unmatched".

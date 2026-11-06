@@ -143,6 +143,99 @@ TEST(stable_id, canonical_frame_ignores_winding)
   EXPECT_EQ(frame(quad), frame(flipped));
 }
 
+/* Stored corner order of a quad after rotating by `rotation` and optionally flipping winding. */
+static void reorder_quad(const StableID in[4], const int rotation, const bool flip, StableID out[4])
+{
+  for (int i = 0; i < 4; i++) {
+    const int j = flip ? (rotation - i + 8) % 4 : (i + rotation) % 4;
+    out[i] = in[j];
+  }
+}
+
+/* Grid position (a, b) of a corner `k` of `in` inside the reordered quad's stored frame. */
+static void corner_pos(const StableID quad[4], const StableID v, const int n, int &a, int &b)
+{
+  const int pos[4][2] = {{0, 0}, {n, 0}, {n, n}, {0, n}};
+  for (int i = 0; i < 4; i++) {
+    if (quad[i] == v) {
+      a = pos[i][0];
+      b = pos[i][1];
+    }
+  }
+}
+
+TEST(stable_id, quad_points_ignore_corner_order_and_winding)
+{
+  const StableID base[4] = {make_root(4, 7), make_root(4, 2), make_root(4, 9), make_root(4, 5)};
+  const int n = 4;
+  /* Reference: a point at weights (wa toward base[1], wb toward base[3]) from base[0]. */
+  for (int wa = 0; wa <= n; wa++) {
+    for (int wb = 0; wb <= n; wb++) {
+      int ref_u = -1, ref_v = -1;
+      for (int rotation = 0; rotation < 4; rotation++) {
+        for (const bool flip : {false, true}) {
+          StableID q[4];
+          reorder_quad(base, rotation, flip, q);
+          /* Express the same physical point in q's stored frame via bilinear corner positions. */
+          int a0, b0, a1, b1, a3, b3;
+          corner_pos(q, base[0], n, a0, b0);
+          corner_pos(q, base[1], n, a1, b1);
+          corner_pos(q, base[3], n, a3, b3);
+          const int a = a0 + (a1 - a0) * wa / n + (a3 - a0) * wb / n;
+          const int b = b0 + (b1 - b0) * wa / n + (b3 - b0) * wb / n;
+          int u, v;
+          quad_to_canonical(q, a, b, n, u, v);
+          if (ref_u < 0) {
+            ref_u = u;
+            ref_v = v;
+          }
+          EXPECT_EQ(u, ref_u);
+          EXPECT_EQ(v, ref_v);
+        }
+      }
+    }
+  }
+}
+
+TEST(stable_id, quad_center_matches_across_levels)
+{
+  const StableID q[4] = {make_root(4, 0), make_root(4, 1), make_root(4, 2), make_root(4, 3)};
+  const StableID face = make_root(6, 0);
+  int u1, v1, u2, v2;
+  quad_to_canonical(q, 1, 1, 2, u1, v1); /* Level 1 center. */
+  quad_to_canonical(q, 2, 2, 4, u2, v2); /* Level 2 center. */
+  EXPECT_EQ(subd_face_point(face, Fraction::make(u1, 2), Fraction::make(v1, 2)),
+            subd_face_point(face, Fraction::make(u2, 4), Fraction::make(v2, 4)));
+}
+
+TEST(stable_id, ngon_points_are_level_independent_and_distinct)
+{
+  const StableID face = make_root(6, 1);
+  const StableID a = make_root(1, 0), b = make_root(1, 1), c = make_root(1, 2);
+  /* Spoke point halfway between edge midpoint and center, at levels 2 and 3. */
+  EXPECT_EQ(subd_ngon_spoke_point(face, a, b, Fraction::make(1, 2)),
+            subd_ngon_spoke_point(face, b, a, Fraction::make(2, 4)));
+  EXPECT_NE(subd_ngon_spoke_point(face, a, b, Fraction::make(1, 2)),
+            subd_ngon_spoke_point(face, b, c, Fraction::make(1, 2)));
+  EXPECT_EQ(subd_ngon_patch_point(face, a, Fraction::make(1, 2), Fraction::make(1, 2)),
+            subd_ngon_patch_point(face, a, Fraction::make(2, 4), Fraction::make(2, 4)));
+  EXPECT_NE(subd_ngon_patch_point(face, a, Fraction::make(1, 4), Fraction::make(1, 2)),
+            subd_ngon_patch_point(face, a, Fraction::make(1, 2), Fraction::make(1, 4)));
+  EXPECT_NE(subd_ngon_patch_point(face, a, Fraction::make(1, 2), Fraction::make(1, 2)),
+            subd_face_center(face));
+}
+
+TEST(stable_id, derive_from_set_ignores_order)
+{
+  StableID x[4] = {make_root(1, 3), make_root(1, 1), make_root(1, 4), make_root(1, 2)};
+  StableID y[4] = {make_root(1, 2), make_root(1, 4), make_root(1, 1), make_root(1, 3)};
+  EXPECT_EQ(derive_from_set(Derivation::SubdFacePiece, x, 4),
+            derive_from_set(Derivation::SubdFacePiece, y, 4));
+  StableID z[3] = {make_root(1, 3), make_root(1, 1), make_root(1, 4)};
+  EXPECT_NE(derive_from_set(Derivation::SubdFacePiece, x, 4),
+            derive_from_set(Derivation::SubdFacePiece, z, 3));
+}
+
 TEST(stable_id, id_index_finds_elements_after_reordering)
 {
   StableID ids[3] = {make_root(1, 0), make_root(1, 1), make_root(1, 2)};

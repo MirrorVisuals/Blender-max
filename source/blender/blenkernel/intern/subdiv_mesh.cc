@@ -6,6 +6,8 @@
  * \ingroup bke
  */
 
+#include <cmath>
+
 #include "DNA_key_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_meshdata_types.h"
@@ -17,6 +19,8 @@
 #include "BLI_math_vector.h"
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
+#include "BLI_task.hh"
+#include "BLI_vector.hh"
 
 #include "BKE_attribute.hh"
 #include "BKE_attribute_math.hh"
@@ -25,6 +29,7 @@
 #include "BKE_key.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_mapping.hh"
+#include "BKE_stable_id_mesh.hh"
 #include "BKE_subdiv.hh"
 #include "BKE_subdiv_deform.hh"
 #include "BKE_subdiv_eval.hh"
@@ -121,6 +126,19 @@ struct SubdivMeshContext {
   Array<int> vert_to_edge_offsets;
   Array<int> vert_to_edge_indices;
   GroupedSpan<int> vert_to_edge_map;
+
+  /* Stable element IDs for the Edit Poly stack, see BKE_stable_id.hh. The base mesh IDs are read
+   * from its attributes, or made from indices when it has none. Vertex IDs are written by the
+   * vertex callbacks; edge and face IDs are derived from them after the traversal. */
+  Array<stable_id::StableID> coarse_vert_ids;
+  Array<stable_id::StableID> coarse_edge_ids;
+  Array<stable_id::StableID> coarse_face_ids;
+  Array<stable_id::StableID> subdiv_vert_ids;
+  Array<stable_id::StableID> subdiv_vert_parents;
+  /* Base edge each result edge came from, or #ORIGINDEX_NONE for edges inside a base face. */
+  Array<int> subdiv_edge_coarse_edge;
+  /* Groups of result faces per base face (copy of the offsets passed to #subdiv_mesh_face). */
+  Array<int> subdiv_faces_by_base_face;
 };
 
 static void subdiv_mesh_ctx_cache_uv_layers(SubdivMeshContext *ctx)
@@ -879,7 +897,8 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
   const AttributeAccessor coarse_attrs = coarse_mesh.attributes();
   MutableAttributeAccessor attributes = subdiv_mesh.attributes_for_write();
 
-  Set<StringRef> vert_skip_names{{"position"}};
+  Set<StringRef> vert_skip_names{
+      {"position", stable_id::ATTR_ID_POINT, stable_id::ATTR_PARENT_POINT}};
   for (const bDeformGroup &group : coarse_mesh.vertex_group_names) {
     vert_skip_names.add(group.name);
   }
@@ -894,7 +913,9 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
 
   create_attrs_and_retrieve_interp_spans(coarse_attrs,
                                          AttrDomain::Edge,
-                                         {".edge_verts"},
+                                         {".edge_verts",
+                                          stable_id::ATTR_ID_EDGE,
+                                          stable_id::ATTR_PARENT_EDGE},
                                          attributes,
                                          subdiv_context->coarse_edge_attrs,
                                          subdiv_context->coarse_edge_attr_spans,
@@ -903,7 +924,7 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
 
   create_attrs_and_retrieve_interp_spans(coarse_attrs,
                                          AttrDomain::Face,
-                                         {},
+                                         {stable_id::ATTR_ID_FACE, stable_id::ATTR_PARENT_FACE},
                                          attributes,
                                          subdiv_context->coarse_face_attrs,
                                          subdiv_context->coarse_face_attr_spans,
@@ -929,6 +950,10 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
 
   subdiv_mesh_ctx_cache_custom_data_layers(subdiv_context);
   subdiv_mesh_prepare_accumulator(subdiv_context, num_vertices);
+  subdiv_context->subdiv_vert_ids.reinitialize(num_vertices);
+  subdiv_context->subdiv_vert_parents = Array<stable_id::StableID>(num_vertices,
+                                                                   stable_id::StableID{});
+  subdiv_context->subdiv_edge_coarse_edge = Array<int>(num_edges, ORIGINDEX_NONE);
   subdiv_mesh.runtime->subsurf_face_dot_tags.clear();
   subdiv_mesh.runtime->subsurf_face_dot_tags.resize(num_vertices);
   if (subdiv_context->settings->use_optimal_display) {
@@ -1090,6 +1115,144 @@ static void subdiv_mesh_vert_displacement_every_edge(const ForeachContext *forea
       foreach_context, tls, ptex_face_index, u, v, subdiv_vert_index);
 }
 
+/* -------------------------------------------------------------------- */
+/** \name Stable element IDs
+ * \{ */
+
+/**
+ * ID of a vertex on a base edge. Edge vertices are stored per base edge in order from the edge's
+ * first to its second vertex, starting right after the base vertices, so the position along the
+ * edge follows from the index alone (no float rounding).
+ */
+static void subdiv_mesh_edge_vert_id(SubdivMeshContext *ctx,
+                                     const int coarse_edge_index,
+                                     const int subdiv_vert_index)
+{
+  const int resolution = ctx->settings->resolution;
+  const int verts_per_edge = resolution - 2;
+  const int first = ctx->coarse_mesh->verts_num + coarse_edge_index * verts_per_edge;
+  const int step = subdiv_vert_index - first + 1;
+  BLI_assert(step >= 1 && step <= verts_per_edge);
+  const int2 &edge = ctx->coarse_edges[coarse_edge_index];
+  ctx->subdiv_vert_ids[subdiv_vert_index] = stable_id::subd_edge_point(
+      ctx->coarse_vert_ids[edge[0]], ctx->coarse_vert_ids[edge[1]], step, resolution - 1);
+  ctx->subdiv_vert_parents[subdiv_vert_index] = ctx->coarse_edge_ids[coarse_edge_index];
+}
+
+/** ID of a vertex inside a base face, from its patch coordinates as reported by the traversal. */
+static void subdiv_mesh_inner_vert_id(SubdivMeshContext *ctx,
+                                      const int coarse_face_index,
+                                      const int coarse_corner,
+                                      const float u,
+                                      const float v,
+                                      const int subdiv_vert_index)
+{
+  using namespace stable_id;
+  const IndexRange face = ctx->coarse_faces[coarse_face_index];
+  const Span<int> face_verts = ctx->coarse_corner_verts.slice(face);
+  const StableID face_id = ctx->coarse_face_ids[coarse_face_index];
+  const int resolution = ctx->settings->resolution;
+  StableID result;
+  if (face.size() == 4) {
+    /* One patch over the whole quad, (0, 0) at corner 0, u towards corner 1, v towards corner 3.
+     * The center of a quad is (1/2, 1/2) here too, so it matches its ID at every level. */
+    const int n = resolution - 1;
+    const StableID corners[4] = {ctx->coarse_vert_ids[face_verts[0]],
+                                 ctx->coarse_vert_ids[face_verts[1]],
+                                 ctx->coarse_vert_ids[face_verts[2]],
+                                 ctx->coarse_vert_ids[face_verts[3]]};
+    int cu, cv;
+    quad_to_canonical(corners, int(std::lround(u * n)), int(std::lround(v * n)), n, cu, cv);
+    result = subd_face_point(face_id, Fraction::make(cu, n), Fraction::make(cv, n));
+  }
+  else if (u == 1.0f && v == 1.0f) {
+    result = subd_face_center(face_id);
+  }
+  else {
+    /* One patch per corner: (0, 0) at the corner, u towards the midpoint of the edge to the next
+     * corner, v towards the midpoint of the edge to the previous corner, (1, 1) at the center. */
+    const int m = resolution >> 1;
+    const int a = int(std::lround(u * m));
+    const int b = int(std::lround(v * m));
+    const int size = int(face.size());
+    const StableID corner = ctx->coarse_vert_ids[face_verts[coarse_corner]];
+    const StableID next = ctx->coarse_vert_ids[face_verts[(coarse_corner + 1) % size]];
+    const StableID prev = ctx->coarse_vert_ids[face_verts[(coarse_corner + size - 1) % size]];
+    if (a == m) {
+      /* On the line from the next edge's midpoint (v = 0) to the center (v = 1). */
+      result = subd_ngon_spoke_point(face_id, corner, next, Fraction::make(b, m));
+    }
+    else if (next < prev) {
+      result = subd_ngon_patch_point(face_id, corner, Fraction::make(a, m), Fraction::make(b, m));
+    }
+    else {
+      result = subd_ngon_patch_point(face_id, corner, Fraction::make(b, m), Fraction::make(a, m));
+    }
+  }
+  ctx->subdiv_vert_ids[subdiv_vert_index] = result;
+  ctx->subdiv_vert_parents[subdiv_vert_index] = face_id;
+}
+
+/**
+ * Edge and face IDs, derived from the vertex IDs. Every result face lies inside one base face,
+ * which is its parent; an edge's parent is the base edge it lies on, or the base face for edges
+ * inside a face.
+ */
+static void subdiv_mesh_write_stable_ids(SubdivMeshContext *ctx, Mesh &mesh)
+{
+  using namespace stable_id;
+  const Span<StableID> vert_ids = ctx->subdiv_vert_ids;
+  const Span<int2> edges = mesh.edges();
+  const OffsetIndices<int> faces = mesh.faces();
+  const Span<int> corner_verts = mesh.corner_verts();
+  const Span<int> corner_edges = mesh.corner_edges();
+
+  Array<StableID> edge_ids(edges.size());
+  Array<StableID> edge_parents(edges.size(), StableID{});
+  threading::parallel_for(edges.index_range(), 4096, [&](const IndexRange range) {
+    for (const int i : range) {
+      edge_ids[i] = derive_unordered(
+          Derivation::SubdEdgePiece, vert_ids[edges[i][0]], vert_ids[edges[i][1]]);
+      const int coarse_edge = ctx->subdiv_edge_coarse_edge[i];
+      if (coarse_edge != ORIGINDEX_NONE) {
+        edge_parents[i] = ctx->coarse_edge_ids[coarse_edge];
+      }
+    }
+  });
+
+  Array<StableID> face_ids(faces.size());
+  Array<StableID> face_parents(faces.size());
+  if (!ctx->subdiv_faces_by_base_face.is_empty()) {
+    const OffsetIndices<int> groups(ctx->subdiv_faces_by_base_face);
+    /* Edges inside a base face belong to that face only, so threads never write the same one. */
+    threading::parallel_for(groups.index_range(), 512, [&](const IndexRange range) {
+      Vector<StableID, 8> scratch;
+      for (const int coarse_face : range) {
+        const StableID parent = ctx->coarse_face_ids[coarse_face];
+        for (const int face : groups[coarse_face]) {
+          scratch.clear();
+          for (const int corner : faces[face]) {
+            scratch.append(vert_ids[corner_verts[corner]]);
+            const int edge = corner_edges[corner];
+            if (ctx->subdiv_edge_coarse_edge[edge] == ORIGINDEX_NONE) {
+              edge_parents[edge] = parent;
+            }
+          }
+          face_ids[face] = derive_from_set(
+              Derivation::SubdFacePiece, scratch.data(), int(scratch.size()));
+          face_parents[face] = parent;
+        }
+      }
+    });
+  }
+
+  write_ids(mesh, AttrDomain::Point, vert_ids, ctx->subdiv_vert_parents);
+  write_ids(mesh, AttrDomain::Edge, edge_ids, edge_parents);
+  write_ids(mesh, AttrDomain::Face, face_ids, face_parents);
+}
+
+/** \} */
+
 static void subdiv_mesh_vert_corner(const ForeachContext *foreach_context,
                                     void * /*tls*/,
                                     const int ptex_face_index,
@@ -1104,6 +1267,7 @@ static void subdiv_mesh_vert_corner(const ForeachContext *foreach_context,
   SubdivMeshContext *ctx = static_cast<SubdivMeshContext *>(foreach_context->user_data);
   evaluate_vert_and_apply_displacement_copy(
       ctx, ptex_face_index, u, v, coarse_vert_index, subdiv_vert_index);
+  ctx->subdiv_vert_ids[subdiv_vert_index] = ctx->coarse_vert_ids[coarse_vert_index];
 }
 
 static void subdiv_mesh_ensure_vert_interpolation(SubdivMeshContext *ctx,
@@ -1131,7 +1295,7 @@ static void subdiv_mesh_vert_edge(const ForeachContext *foreach_context,
                                   const int ptex_face_index,
                                   const float u,
                                   const float v,
-                                  const int /*coarse_edge_index*/,
+                                  const int coarse_edge_index,
                                   const int coarse_face_index,
                                   const int coarse_corner,
                                   const int subdiv_vert_index)
@@ -1141,6 +1305,7 @@ static void subdiv_mesh_vert_edge(const ForeachContext *foreach_context,
   subdiv_mesh_ensure_vert_interpolation(ctx, tls, coarse_face_index, coarse_corner);
   evaluate_vert_and_apply_displacement_interpolate(
       ctx, ptex_face_index, u, v, tls->vert_interpolation, subdiv_vert_index);
+  subdiv_mesh_edge_vert_id(ctx, coarse_edge_index, subdiv_vert_index);
 }
 
 static bool subdiv_mesh_is_center_vert(const IndexRange coarse_face, const float u, const float v)
@@ -1188,6 +1353,7 @@ static void subdiv_mesh_vert_inner(const ForeachContext *foreach_context,
   ctx->subdiv_positions[subdiv_vert_index] = eval_final_point(subdiv, ptex_face_index, u, v);
   subdiv_mesh_tag_center_vert(coarse_face, subdiv_vert_index, u, v, subdiv_mesh);
   subdiv_vert_orco_evaluate(ctx, ptex_face_index, u, v, subdiv_vert_index);
+  subdiv_mesh_inner_vert_id(ctx, coarse_face_index, coarse_corner, u, v, subdiv_vert_index);
 }
 
 /** \} */
@@ -1233,6 +1399,7 @@ static void subdiv_mesh_edge(const ForeachContext *foreach_context,
 {
   SubdivMeshContext *ctx = static_cast<SubdivMeshContext *>(foreach_context->user_data);
   subdiv_copy_edge_data(ctx, subdiv_edge_index, coarse_edge_index);
+  ctx->subdiv_edge_coarse_edge[subdiv_edge_index] = coarse_edge_index;
   ctx->subdiv_edges[subdiv_edge_index][0] = subdiv_v1;
   ctx->subdiv_edges[subdiv_edge_index][1] = subdiv_v2;
 }
@@ -1332,6 +1499,7 @@ static void subdiv_mesh_face(const ForeachContext *foreach_context,
                              OffsetIndices<int> subdiv_faces_by_base_face)
 {
   SubdivMeshContext *ctx = static_cast<SubdivMeshContext *>(foreach_context->user_data);
+  ctx->subdiv_faces_by_base_face = Array<int>(subdiv_faces_by_base_face.data());
   threading::memory_bandwidth_bound_task(int64_t(ctx->subdiv_mesh->faces_num) * 4, [&]() {
     for (const int i : ctx->coarse_face_attrs.index_range()) {
       bke::attribute_math::gather_to_groups(subdiv_faces_by_base_face,
@@ -1362,6 +1530,7 @@ static void subdiv_mesh_vert_loose(const ForeachContext *foreach_context,
   SubdivMeshContext *ctx = static_cast<SubdivMeshContext *>(foreach_context->user_data);
   subdiv_vert_data_copy(ctx, coarse_vert_index, subdiv_vert_index);
   ctx->subdiv_positions[subdiv_vert_index] = ctx->coarse_positions[coarse_vert_index];
+  ctx->subdiv_vert_ids[subdiv_vert_index] = ctx->coarse_vert_ids[coarse_vert_index];
 }
 
 /* Get neighbor edges of the given one.
@@ -1473,6 +1642,13 @@ static void subdiv_mesh_vert_of_loose_edge(const ForeachContext *foreach_context
    * This data has already been copied from the original vertex by #subdiv_mesh_vert_loose. */
   if (!ELEM(u, 0.0, 1.0)) {
     subdiv_mesh_vert_of_loose_edge_interpolate(ctx, coarse_edge, u, subdiv_vert_index);
+    const int steps = ctx->settings->resolution - 1;
+    ctx->subdiv_vert_ids[subdiv_vert_index] = stable_id::subd_edge_point(
+        ctx->coarse_vert_ids[coarse_edge[0]],
+        ctx->coarse_vert_ids[coarse_edge[1]],
+        uint32_t(std::lround(u * steps)),
+        steps);
+    ctx->subdiv_vert_parents[subdiv_vert_index] = ctx->coarse_edge_ids[coarse_edge_index];
   }
   /* Interpolate coordinate. */
   ctx->subdiv_positions[subdiv_vert_index] = mesh_interpolate_position_on_edge(
@@ -1553,6 +1729,12 @@ Mesh *subdiv_to_mesh(Subdiv *subdiv, const ToMeshSettings *settings, const Mesh 
 
   subdiv_context.subdiv = subdiv;
   subdiv_context.have_displacement = (subdiv->displacement_evaluator != nullptr);
+  subdiv_context.coarse_vert_ids = stable_id::read_or_make_root_ids(*coarse_mesh,
+                                                                    AttrDomain::Point);
+  subdiv_context.coarse_edge_ids = stable_id::read_or_make_root_ids(*coarse_mesh,
+                                                                    AttrDomain::Edge);
+  subdiv_context.coarse_face_ids = stable_id::read_or_make_root_ids(*coarse_mesh,
+                                                                    AttrDomain::Face);
   /* Multi-threaded traversal/evaluation. */
   stats_begin(&subdiv->stats, SUBDIV_STATS_SUBDIV_TO_MESH_GEOMETRY);
   ForeachContext foreach_context;
@@ -1603,6 +1785,9 @@ Mesh *subdiv_to_mesh(Subdiv *subdiv, const ToMeshSettings *settings, const Mesh 
   }
   for (bke::GSpanAttributeWriter &attr : subdiv_context.subdiv_corner_attrs) {
     attr.finish();
+  }
+  if (result != nullptr) {
+    subdiv_mesh_write_stable_ids(&subdiv_context, *result);
   }
 
   stats_end(&subdiv->stats, SUBDIV_STATS_SUBDIV_TO_MESH);

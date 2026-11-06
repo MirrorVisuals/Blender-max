@@ -19,7 +19,7 @@
  *     names the kind of derivation, and a few small integers (e.g. a subdivision fraction).
  *     The result must not depend on element indices, thread count or iteration order.
  *  3. Derived elements record their primary parent ID, so an operation stored on a face can find
- *     the faces it was split into (see #ParentIndex).
+ *     the faces it was split into (see #ParentIndex). Surviving elements have no parent.
  *
  * IDs are stored as a pair of 32 bit integers (#blender::bke::AttrType::Int32_2D), because there is
  * no 64 bit attribute type. The value {0, 0} means "no ID".
@@ -34,9 +34,17 @@
 
 namespace blender::bke::stable_id {
 
-/** Attribute names. The leading dot hides them from the UI. */
-constexpr const char *ATTR_ID = ".stable_id";
-constexpr const char *ATTR_PARENT = ".stable_parent";
+/**
+ * Attribute names, one per domain because attribute names are unique within a mesh. The leading
+ * dot hides them from the UI; the spreadsheet shows them with "Show Internal Attributes".
+ * The ID of an element's parent is in the matching `.stable_parent_*` attribute.
+ */
+constexpr const char *ATTR_ID_POINT = ".stable_id_point";
+constexpr const char *ATTR_ID_EDGE = ".stable_id_edge";
+constexpr const char *ATTR_ID_FACE = ".stable_id_face";
+constexpr const char *ATTR_PARENT_POINT = ".stable_parent_point";
+constexpr const char *ATTR_PARENT_EDGE = ".stable_parent_edge";
+constexpr const char *ATTR_PARENT_FACE = ".stable_parent_face";
 
 struct StableID {
   uint32_t lo = 0;
@@ -234,6 +242,51 @@ constexpr StableID subd_face_point(const StableID face, const Fraction u, const 
 }
 
 /**
+ * Subdivision of a face that is not a quad: a point on the line from the midpoint of one of the
+ * face's edges (`edge_a`, `edge_b` are its vertices, in any order) to the face centre, at
+ * fraction `t` from the midpoint. Such a point lies between two corner patches, so it is named
+ * by the edge rather than by either corner.
+ */
+constexpr StableID subd_ngon_spoke_point(const StableID face,
+                                         const StableID edge_a,
+                                         const StableID edge_b,
+                                         const Fraction t)
+{
+  const StableID spoke = derive_unordered(
+      Derivation::SubdInnerEdge, edge_a, edge_b, face.as_u64());
+  return derive(Derivation::SubdFacePoint, spoke, t.packed(), 1);
+}
+
+/**
+ * Subdivision of a face that is not a quad: a point inside the patch of one corner.
+ * `u` runs from the corner towards the midpoint of the edge to the neighbour with the smaller
+ * vertex ID, `v` towards the other neighbour's edge midpoint, so the result does not depend on
+ * the face's winding.
+ */
+constexpr StableID subd_ngon_patch_point(const StableID face,
+                                         const StableID corner_vertex,
+                                         const Fraction u,
+                                         const Fraction v)
+{
+  const StableID patch = derive(Derivation::SubdFacePiece, face, corner_vertex.as_u64(), 2);
+  return derive(Derivation::SubdFacePoint, patch, u.packed(), v.packed());
+}
+
+/**
+ * ID of an element defined by a set of vertices, such as a face made by subdivision. The order of
+ * `ids` does not matter; the array is sorted in place.
+ */
+inline StableID derive_from_set(const Derivation kind, StableID *ids, const int count)
+{
+  std::sort(ids, ids + count);
+  uint64_t h = detail::combine(uint64_t(kind), uint64_t(count));
+  for (int i = 0; i < count; i++) {
+    h = detail::combine(h, ids[i].as_u64());
+  }
+  return detail::finish(h);
+}
+
+/**
  * Index of the corner to start counting from: the one whose vertex has the smallest ID.
  * Every vertex of a face has a different ID, so this is unique and independent of the face's
  * stored corner order.
@@ -261,6 +314,28 @@ inline int canonical_direction(const StableID *corner_vertex_ids,
   const StableID next = corner_vertex_ids[(start + 1) % corner_count];
   const StableID prev = corner_vertex_ids[(start + corner_count - 1) % corner_count];
   return next < prev ? 1 : -1;
+}
+
+/**
+ * Convert a point on an `n` x `n` grid over a quad into the quad's canonical frame
+ * (#canonical_start, #canonical_direction). The input has (0, 0) at stored corner 0, `a` running
+ * towards corner 1 and `b` towards corner 3, which is how subdivision reports quad points.
+ * Returns the numerators of the canonical (u, v), both over `n`.
+ */
+inline void quad_to_canonical(
+    const StableID corner_vertex_ids[4], const int a, const int b, const int n, int &r_u, int &r_v)
+{
+  const int pos[4][2] = {{0, 0}, {n, 0}, {n, n}, {0, n}};
+  const int s = canonical_start(corner_vertex_ids, 4);
+  const int d = canonical_direction(corner_vertex_ids, 4, s);
+  const int *o = pos[s];
+  const int *pu = pos[(s + d + 4) % 4];
+  const int *pv = pos[(s - d + 4) % 4];
+  const int ax = pu[0] - o[0], ay = pu[1] - o[1];
+  const int bx = pv[0] - o[0], by = pv[1] - o[1];
+  /* The axes are +-n along x or y, so the division is exact. */
+  r_u = ((a - o[0]) * ax + (b - o[1]) * ay) / n;
+  r_v = ((a - o[0]) * bx + (b - o[1]) * by) / n;
 }
 
 /**
@@ -323,7 +398,7 @@ class IDIndex {
 
 /**
  * Find the elements that were made from a parent element. Built from the per-element parent IDs
- * (#ATTR_PARENT). Used to run an operation stored on a face on the faces it was split into.
+ * (the `.stable_parent_*` attributes). Used to run an operation stored on a face on the faces it was split into.
  */
 class ParentIndex {
  public:

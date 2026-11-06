@@ -270,6 +270,7 @@ set(SRC
   intern/softbody.cc
   intern/sound.cc
   intern/speaker.cc
+  intern/stable_id_mesh.cc
   intern/studiolight.cc
   intern/subdiv.cc
   intern/subdiv_ccg.cc
@@ -513,6 +514,7 @@ set(SRC
   BKE_sound_types.hh
   BKE_speaker.hh
   BKE_stable_id.hh
+  BKE_stable_id_mesh.hh
   BKE_studiolight.h
   BKE_subdiv.hh
   BKE_subdiv_ccg.hh
