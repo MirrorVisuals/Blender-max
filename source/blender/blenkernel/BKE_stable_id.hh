@@ -46,7 +46,8 @@ constexpr const char *ATTR_PARENT_POINT = ".stable_parent_point";
 constexpr const char *ATTR_PARENT_EDGE = ".stable_parent_edge";
 constexpr const char *ATTR_PARENT_FACE = ".stable_parent_face";
 /**
- * Face corner attribute written by subdivision: the position of the corner's vertex inside the
+ * Face corner attribute (float3, z unused, because two-component corner attributes are treated as
+ * UV maps) written by subdivision: the position of the corner's vertex inside the
  * base face it came from, in a 2D layout of that face that does not depend on its stored corner
  * order or winding (vertex k of the canonical order at angle 2*pi*k/n on the unit circle, the
  * center at the origin). Used to find which faces of a finer or coarser subdivision cover a face

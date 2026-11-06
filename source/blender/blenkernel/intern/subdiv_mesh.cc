@@ -940,7 +940,7 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
       ".corner_vert", ".corner_edge", "custom_normal", stable_id::ATTR_SUBD_UV};
   /* UV map names are interpolated separately. */
   for (const StringRef name : coarse_mesh.uv_map_names()) {
-    corner_skip_names.add_new(name);
+    corner_skip_names.add(name);
   }
   create_attrs_and_retrieve_interp_spans(coarse_attrs,
                                          AttrDomain::Corner,
@@ -1309,8 +1309,9 @@ static void subdiv_mesh_write_stable_ids(SubdivMeshContext *ctx, Mesh &mesh)
     const int verts_per_edge = ctx->settings->resolution - 2;
     const int inner_offset = coarse_verts_num + int(ctx->coarse_edges.size()) * verts_per_edge;
     const float steps = float(ctx->settings->resolution - 1);
-    bke::SpanAttributeWriter<float2> uv_writer =
-        mesh.attributes_for_write().lookup_or_add_for_write_only_span<float2>(
+    /* Stored as float3 (z = 0): two-component corner attributes count as UV maps. */
+    bke::SpanAttributeWriter<float3> uv_writer =
+        mesh.attributes_for_write().lookup_or_add_for_write_only_span<float3>(
             ATTR_SUBD_UV, AttrDomain::Corner);
     threading::parallel_for(groups.index_range(), 512, [&](const IndexRange range) {
       Vector<StableID, 8> corner_ids;
@@ -1347,7 +1348,7 @@ static void subdiv_mesh_write_stable_ids(SubdivMeshContext *ctx, Mesh &mesh)
             else {
               uv = ctx->subdiv_inner_uv[vert];
             }
-            uv_writer.span[corner] = uv;
+            uv_writer.span[corner] = float3(uv.x, uv.y, 0.0f);
           }
         }
       }

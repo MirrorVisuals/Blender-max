@@ -244,7 +244,8 @@ struct FootprintData {
   Array<StableID> vert_ids;
   Array<StableID> face_ids;
   VArraySpan<int2> face_parents;
-  VArraySpan<float2> corner_uv;
+  /** Stored as float3 with z unused; see #ATTR_SUBD_UV. */
+  Array<float2> corner_uv;
   OffsetIndices<int> faces;
   Span<int> corner_verts;
   bool valid = false;
@@ -257,12 +258,16 @@ struct FootprintData {
     corner_verts = mesh.corner_verts();
     const bke::AttributeAccessor attributes = mesh.attributes();
     const bke::AttributeReader<int2> parents = attributes.lookup<int2>(ATTR_PARENT_FACE);
-    const bke::AttributeReader<float2> uv = attributes.lookup<float2>(ATTR_SUBD_UV);
+    const bke::AttributeReader<float3> uv = attributes.lookup<float3>(ATTR_SUBD_UV);
     if (parents && uv && parents.domain == bke::AttrDomain::Face &&
         uv.domain == bke::AttrDomain::Corner)
     {
       face_parents = *parents;
-      corner_uv = *uv;
+      const VArraySpan<float3> uv3 = *uv;
+      corner_uv.reinitialize(uv3.size());
+      for (const int i : uv3.index_range()) {
+        corner_uv[i] = float2(uv3[i].x, uv3[i].y);
+      }
       valid = true;
     }
   }
