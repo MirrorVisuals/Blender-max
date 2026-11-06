@@ -50,6 +50,11 @@ const EnumPropertyItem rna_enum_object_modifier_type_items[] = {
      "Generate vertex weights based on distance to object"},
 
     RNA_ENUM_ITEM_HEADING(N_("Modify"), nullptr),
+    {eModifierType_EditPoly,
+     "EDIT_POLY",
+     ICON_EDITMODE_HLT,
+     "Edit Poly",
+     "Edits stored by stable element ID and replayed on the mesh below (experimental)"},
     {eModifierType_DataTransfer,
      "DATA_TRANSFER",
      ICON_MOD_DATA_TRANSFER,
@@ -1219,6 +1224,56 @@ static void rna_HookModifier_vertex_indices_get(PointerRNA *ptr, int *values)
   if (hmd->indexar != nullptr) {
     memcpy(values, hmd->indexar, sizeof(int) * hmd->indexar_num);
   }
+}
+
+static int rna_EditPolyModifier_move_find(const EditPolyModifierData *emd, const int stable_id[2])
+{
+  for (int i = 0; i < emd->moves_num; i++) {
+    if (emd->move_ids[2 * i] == stable_id[0] && emd->move_ids[2 * i + 1] == stable_id[1]) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static void rna_EditPolyModifier_move_set(ID *id,
+                                          EditPolyModifierData *emd,
+                                          const int stable_id[2],
+                                          const float offset[3])
+{
+  int i = rna_EditPolyModifier_move_find(emd, stable_id);
+  if (i == -1) {
+    /* Grow both arrays by one. */
+    const int num = emd->moves_num + 1;
+    int *ids = MEM_new_array_uninitialized<int>(size_t(num) * 2, "EditPoly move_ids");
+    float *offsets = MEM_new_array_uninitialized<float>(size_t(num) * 3, "EditPoly move_offsets");
+    if (emd->moves_num > 0) {
+      memcpy(ids, emd->move_ids, sizeof(int) * 2 * emd->moves_num);
+      memcpy(offsets, emd->move_offsets, sizeof(float) * 3 * emd->moves_num);
+    }
+    MEM_SAFE_DELETE(emd->move_ids);
+    MEM_SAFE_DELETE(emd->move_offsets);
+    emd->move_ids = ids;
+    emd->move_offsets = offsets;
+    i = emd->moves_num;
+    emd->moves_num = num;
+  }
+  emd->move_ids[2 * i] = stable_id[0];
+  emd->move_ids[2 * i + 1] = stable_id[1];
+  for (int k = 0; k < 3; k++) {
+    emd->move_offsets[3 * i + k] = offset[k];
+  }
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
+}
+
+static void rna_EditPolyModifier_moves_clear(ID *id, EditPolyModifierData *emd)
+{
+  MEM_SAFE_DELETE(emd->move_ids);
+  MEM_SAFE_DELETE(emd->move_offsets);
+  emd->moves_num = 0;
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
 }
 
 static void rna_HookModifier_vertex_indices_set(HookModifierData *hmd,
@@ -7350,6 +7405,54 @@ static void rna_def_modifier_laplaciandeform(BlenderRNA *brna)
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 }
 
+static void rna_def_modifier_edit_poly(BlenderRNA *brna)
+{
+  StructRNA *srna;
+  PropertyRNA *prop;
+  FunctionRNA *func;
+  PropertyRNA *parm;
+
+  srna = RNA_def_struct(brna, "EditPolyModifier", "Modifier");
+  RNA_def_struct_ui_text(
+      srna,
+      "Edit Poly Modifier",
+      "Edits stored by stable element ID and replayed on the mesh below (experimental)");
+  RNA_def_struct_sdna(srna, "EditPolyModifierData");
+  RNA_def_struct_ui_icon(srna, ICON_EDITMODE_HLT);
+
+  RNA_define_lib_overridable(true);
+
+  prop = RNA_def_property(srna, "moves_num", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_sdna(prop, nullptr, "moves_num");
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop, "Moves", "Number of stored vertex moves");
+
+  func = RNA_def_function(srna, "move_set", "rna_EditPolyModifier_move_set");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(
+      func, "Store a move for the vertex with this stable ID, replacing an earlier one");
+  parm = RNA_def_int_array(func,
+                           "stable_id",
+                           2,
+                           nullptr,
+                           INT_MIN,
+                           INT_MAX,
+                           "Stable ID",
+                           "Value of the vertex's .stable_id_point attribute",
+                           INT_MIN,
+                           INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_float_vector(
+      func, "offset", 3, nullptr, -FLT_MAX, FLT_MAX, "Offset", "Object space", -1e4f, 1e4f);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+
+  func = RNA_def_function(srna, "moves_clear", "rna_EditPolyModifier_moves_clear");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(func, "Remove all stored moves");
+
+  RNA_define_lib_overridable(false);
+}
+
 static void rna_def_modifier_weld(BlenderRNA *brna)
 {
   StructRNA *srna;
@@ -11710,6 +11813,7 @@ void RNA_def_modifier(BlenderRNA *brna)
   rna_def_modifier_meshcache(brna);
   rna_def_modifier_laplaciandeform(brna);
   rna_def_modifier_weld(brna);
+  rna_def_modifier_edit_poly(brna);
   rna_def_modifier_wireframe(brna);
   rna_def_modifier_datatransfer(brna);
   rna_def_modifier_normaledit(brna);

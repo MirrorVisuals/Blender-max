@@ -125,6 +125,7 @@ enum ModifierType : int {
   eModifierType_GreasePencilBuild = 84,
   eModifierType_GreasePencilSimplify = 85,
   eModifierType_GreasePencilTexture = 86,
+  eModifierType_EditPoly = 87,
   NUM_MODIFIER_TYPES,
 };
 
@@ -2195,6 +2196,21 @@ struct WeldModifierData {
   WeldModifierMode mode = MOD_WELD_MODE_ALL;
   WeldModifierFlag flag = {};
   char _pad[2] = {};
+};
+
+/**
+ * Edit Poly stack (experimental): edits stored against stable element IDs and replayed on the
+ * mesh that arrives at the modifier. Phase 2 only stores vertex moves.
+ */
+struct EditPolyModifierData {
+  ModifierData modifier;
+
+  /** Stable vertex IDs, two ints per move (see BKE_stable_id.hh). */
+  int *move_ids = nullptr;
+  /** Offsets in object space, three floats per move. */
+  float *move_offsets = nullptr;
+  int moves_num = 0;
+  char _pad[4] = {};
 };
 
 /** #DataTransferModifierData.flags */
