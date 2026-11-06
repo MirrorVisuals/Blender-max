@@ -37,6 +37,15 @@ KEY_HIDDEN = "_edit_poly_hidden"
 AUTO_ADD = True
 
 
+def classic_toggle():
+    """The normal Tab behaviour. Objects without an Edit Mode (empties, cameras...) are ignored,
+    as with the default keymap."""
+    try:
+        return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
+    except (TypeError, RuntimeError):
+        return {'PASS_THROUGH'}
+
+
 def in_session(ob):
     return ob is not None and KEY_MESH in ob
 
@@ -191,12 +200,12 @@ class OBJECT_OT_edit_poly_tab(Operator):
         if ob is None or ob.type != 'MESH' or context.mode != 'OBJECT' or ob.data.library:
             if not in_viewport:
                 return {'PASS_THROUGH'}
-            return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
+            return classic_toggle()
 
         level = pick_level(ob)
         if level is None:
             if not AUTO_ADD:
-                return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
+                return classic_toggle()
             level = ob.modifiers.new("Edit Poly", 'EDIT_POLY')
         error = start_session(context, ob, level)
         if error:
