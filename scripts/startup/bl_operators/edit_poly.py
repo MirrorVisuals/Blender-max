@@ -467,8 +467,78 @@ class OBJECT_OT_edit_poly_level_edit(Operator):
         return {'FINISHED'}
 
 
+# Attributes that describe the history of a mesh rather than the mesh itself. A collapsed mesh
+# has no history: its elements keep their stable IDs, but not their parents or footprints.
+_HISTORY_ATTRIBUTES = (
+    ".stable_parent_point", ".stable_parent_edge", ".stable_parent_face", ".stable_subd_uv",
+    VERT_LO, VERT_HI, FACE_LO, FACE_HI,
+)
+
+
+class OBJECT_OT_edit_poly_collapse_to(Operator):
+    """Bake this modifier and all modifiers below it into the mesh. """ \
+        """Stable IDs are kept, so Edit Poly levels above keep finding their elements"""
+    bl_idname = "object.edit_poly_collapse_to"
+    bl_label = "Collapse to Here"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier: StringProperty(name="Modifier")
+
+    @classmethod
+    def poll(cls, context):
+        ob = context.active_object
+        if ob is None or ob.type != 'MESH' or context.mode != 'OBJECT':
+            return False
+        if in_session(ob):
+            cls.poll_message_set("Leave the Edit Poly level first (Tab)")
+            return False
+        return True
+
+    def execute(self, context):
+        ob = context.active_object
+        mods = ob.modifiers[:]
+        level = ob.modifiers.get(self.modifier)
+        if level is None:
+            self.report({'ERROR'}, "Modifier not found")
+            return {'CANCELLED'}
+        k = mods.index(level)
+        disabled = [m.name for m in mods[:k + 1] if not m.show_viewport]
+
+        # Evaluate up to and including the modifier, as shown in the viewport.
+        visible = {m.name: m.show_viewport for m in mods}
+        for m in mods[k + 1:]:
+            m.show_viewport = False
+        collapsed = evaluated_copy(context, ob)
+        for m in mods[k + 1:]:
+            m.show_viewport = visible[m.name]
+
+        for name in _HISTORY_ATTRIBUTES:
+            attr = collapsed.attributes.get(name)
+            if attr is not None:
+                collapsed.attributes.remove(attr)
+
+        original = ob.data
+        had_shape_keys = original.shape_keys is not None
+        ob.data = collapsed
+        for m in mods[:k + 1]:
+            ob.modifiers.remove(m)
+        name = original.name
+        if original.users == 0:
+            bpy.data.meshes.remove(original)
+        collapsed.name = name
+
+        if disabled:
+            self.report({'WARNING'}, "Disabled modifiers were removed without effect: " +
+                        ", ".join(disabled))
+        if had_shape_keys:
+            self.report({'WARNING'}, "Shape keys of the original mesh are not part of the "
+                        "collapsed mesh")
+        return {'FINISHED'}
+
+
 classes = (
     OBJECT_OT_edit_poly_tab,
     OBJECT_OT_edit_poly_session_discard,
     OBJECT_OT_edit_poly_level_edit,
+    OBJECT_OT_edit_poly_collapse_to,
 )

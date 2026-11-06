@@ -238,6 +238,14 @@ static void modifier_ops_extra_draw(bContext *C, ui::Layout *layout, void *md_v)
                ICON_CHECKMARK);
   }
 
+  /* Edit Poly stack: bake this modifier and everything below it, keeping stable IDs. */
+  if (ob->type == OB_MESH) {
+    op_ptr = layout->op("OBJECT_OT_edit_poly_collapse_to",
+                        CTX_IFACE_(BLT_I18NCONTEXT_OPERATOR_DEFAULT, "Collapse to Here"),
+                        ICON_NONE);
+    RNA_string_set(&op_ptr, "modifier", md->name);
+  }
+
   /* Apply as shapekey. */
   if (BKE_modifier_is_same_topology(md) && !BKE_modifier_is_non_geometrical(md)) {
     PointerRNA op_ptr = layout->op(
