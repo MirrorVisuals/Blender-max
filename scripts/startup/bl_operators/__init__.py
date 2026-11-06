@@ -20,6 +20,7 @@ _modules = [
     "console",
     "constraint",
     "copy_global_transform",
+    "edit_poly",
     "file",
     "geometry_nodes",
     "grease_pencil",

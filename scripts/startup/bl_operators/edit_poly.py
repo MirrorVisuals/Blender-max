@@ -1,0 +1,227 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+"""
+Edit Poly stack, phase 3: Tab edits an Edit Poly modifier level instead of the base mesh.
+
+Tab picks a level:
+- the active modifier, if it is an Edit Poly;
+- otherwise the nearest Edit Poly below the active modifier;
+- otherwise the topmost Edit Poly;
+- otherwise a new Edit Poly is added at the top of the stack.
+
+Entering a level starts a session: the object temporarily uses a copy of the mesh as it arrives
+at that level (with the level's moves applied), and the modifiers up to and including the level
+are hidden because their result is already in that copy. Modifiers above stay visible, which
+shows the end result. Tab again records how far each vertex moved as moves of the level and
+puts the original mesh back. The base mesh is never edited.
+
+Only moves are recorded so far. Topology changes are refused when leaving: undo them first, or
+use Discard Edit Poly Session.
+"""
+
+import bpy
+from bpy.types import Operator
+from bpy.props import StringProperty
+
+KEY_MESH = "_edit_poly_mesh"
+KEY_MODIFIER = "_edit_poly_modifier"
+KEY_HIDDEN = "_edit_poly_hidden"
+KEY_COUNTS = "_edit_poly_counts"
+
+# Tab on an object without an Edit Poly adds one, so the base mesh is never edited directly.
+AUTO_ADD = True
+
+
+def in_session(ob):
+    return ob is not None and KEY_MESH in ob
+
+
+def pick_level(ob):
+    mods = ob.modifiers
+    active = mods.active
+    if active is not None:
+        if active.type == 'EDIT_POLY':
+            return active
+        index = mods.find(active.name)
+        for mod in reversed(mods[:index]):
+            if mod.type == 'EDIT_POLY':
+                return mod
+    for mod in reversed(mods[:]):
+        if mod.type == 'EDIT_POLY':
+            return mod
+    return None
+
+
+def mesh_counts(mesh):
+    return [len(mesh.vertices), len(mesh.edges), len(mesh.polygons)]
+
+
+def evaluated_copy(context, ob):
+    depsgraph = context.evaluated_depsgraph_get()
+    depsgraph.update()
+    return bpy.data.meshes.new_from_object(
+        ob.evaluated_get(depsgraph), preserve_all_data_layers=True, depsgraph=depsgraph)
+
+
+def enter_edit_mode_only(context, ob):
+    """Enter Edit Mode on `ob` alone, without pulling other selected meshes in."""
+    others = [o for o in context.selected_objects if o != ob]
+    for o in others:
+        o.select_set(False)
+    ob.select_set(True)
+    context.view_layer.objects.active = ob
+    bpy.ops.object.mode_set(mode='EDIT')
+    for o in others:
+        o.select_set(True)
+
+
+def start_session(context, ob, level):
+    mods = ob.modifiers[:]
+    k = mods.index(level)
+    visible = {mod.name: mod.show_viewport for mod in mods}
+
+    # The mesh as it arrives at the level.
+    for mod in mods[k:]:
+        mod.show_viewport = False
+    session_mesh = evaluated_copy(context, ob)
+    level.session_prepare(mesh=session_mesh)
+
+    # The level's current result, so existing moves show up in Edit Mode.
+    level.show_viewport = True
+    result = evaluated_copy(context, ob)
+    if len(result.vertices) == len(session_mesh.vertices):
+        co = [0.0] * (3 * len(result.vertices))
+        result.vertices.foreach_get("co", co)
+        session_mesh.vertices.foreach_set("co", co)
+    bpy.data.meshes.remove(result)
+
+    # While editing, the session mesh replaces everything up to and including the level.
+    for mod in mods[:k + 1]:
+        mod.show_viewport = False
+    for mod in mods[k + 1:]:
+        mod.show_viewport = visible[mod.name]
+
+    original = ob.data
+    session_mesh.name = original.name + " (Edit Poly)"
+    ob[KEY_MESH] = original
+    ob[KEY_MODIFIER] = level.name
+    ob[KEY_HIDDEN] = [mod.name for mod in mods[:k + 1] if visible[mod.name]]
+    ob[KEY_COUNTS] = mesh_counts(session_mesh)
+    ob.data = session_mesh
+    ob.modifiers.active = level
+
+    enter_edit_mode_only(context, ob)
+
+
+def end_session(ob):
+    """Put the original mesh and modifier visibility back."""
+    session_mesh = ob.data
+    ob.data = ob[KEY_MESH]
+    for name in ob[KEY_HIDDEN]:
+        mod = ob.modifiers.get(name)
+        if mod is not None:
+            mod.show_viewport = True
+    for key in (KEY_MESH, KEY_MODIFIER, KEY_HIDDEN, KEY_COUNTS):
+        del ob[key]
+    if session_mesh is not None and session_mesh.users == 0:
+        bpy.data.meshes.remove(session_mesh)
+
+
+def commit_session(context, ob):
+    """Record the session as moves. Returns an error message, or None."""
+    if ob.mode == 'EDIT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    level = ob.modifiers.get(ob[KEY_MODIFIER])
+    if level is None or level.type != 'EDIT_POLY':
+        end_session(ob)
+        return None  # The level was removed while editing: nothing to record into.
+    if mesh_counts(ob.data) != list(ob[KEY_COUNTS]):
+        return ("Topology was changed. The Edit Poly modifier only records moves so far: "
+                "undo the topology change, or use Discard Edit Poly Session")
+    try:
+        level.session_commit(mesh=ob.data)
+    except RuntimeError as ex:
+        return str(ex).strip()
+    end_session(ob)
+    return None
+
+
+class OBJECT_OT_edit_poly_tab(Operator):
+    """Edit the active Edit Poly level (Tab). Moves are stored in the modifier, """ \
+        """the base mesh is never edited"""
+    bl_idname = "object.edit_poly_tab"
+    bl_label = "Toggle Edit Poly Level"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        ob = context.active_object
+
+        if in_session(ob):
+            error = commit_session(context, ob)
+            if error:
+                self.report({'ERROR'}, error)
+                if ob.mode != 'EDIT':
+                    enter_edit_mode_only(context, ob)
+                return {'CANCELLED'}
+            return {'FINISHED'}
+
+        # Everything that is not a mesh in Object Mode behaves as before.
+        if ob is None or ob.type != 'MESH' or context.mode != 'OBJECT' or ob.data.library:
+            return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
+
+        level = pick_level(ob)
+        if level is None:
+            if not AUTO_ADD:
+                return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
+            level = ob.modifiers.new("Edit Poly", 'EDIT_POLY')
+        start_session(context, ob, level)
+        return {'FINISHED'}
+
+
+class OBJECT_OT_edit_poly_session_discard(Operator):
+    """Leave the Edit Poly session without recording anything"""
+    bl_idname = "object.edit_poly_session_discard"
+    bl_label = "Discard Edit Poly Session"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return in_session(context.active_object)
+
+    def execute(self, context):
+        ob = context.active_object
+        if ob.mode == 'EDIT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        end_session(ob)
+        return {'FINISHED'}
+
+
+class OBJECT_OT_edit_poly_level_edit(Operator):
+    """Edit this Edit Poly level"""
+    bl_idname = "object.edit_poly_level_edit"
+    bl_label = "Edit Level"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier: StringProperty(name="Modifier")
+
+    def execute(self, context):
+        ob = context.active_object
+        if ob is None or in_session(ob):
+            return {'CANCELLED'}
+        mod = ob.modifiers.get(self.modifier)
+        if mod is None or mod.type != 'EDIT_POLY':
+            return {'CANCELLED'}
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        ob.modifiers.active = mod
+        start_session(context, ob, mod)
+        return {'FINISHED'}
+
+
+classes = (
+    OBJECT_OT_edit_poly_tab,
+    OBJECT_OT_edit_poly_session_discard,
+    OBJECT_OT_edit_poly_level_edit,
+)

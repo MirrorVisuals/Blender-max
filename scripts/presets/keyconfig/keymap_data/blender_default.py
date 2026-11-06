@@ -4641,22 +4641,19 @@ def km_object_non_modal(params):
 
         if params.use_pie_click_drag:
             items.extend([
-                ("object.mode_set", {"type": 'TAB', "value": 'CLICK'},
-                 {"properties": [("mode", 'EDIT'), ("toggle", True)]}),
+                ("object.edit_poly_tab", {"type": 'TAB', "value": 'CLICK'}, None),
                 op_menu_pie("VIEW3D_MT_object_mode_pie", {"type": 'TAB', "value": 'CLICK_DRAG'}),
                 ("view3d.object_mode_pie_or_toggle", {"type": 'TAB', "value": 'PRESS', "ctrl": True}, None),
             ])
         elif params.use_v3d_tab_menu:
             # Swap Tab/Ctrl-Tab
             items.extend([
-                ("object.mode_set", {"type": 'TAB', "value": 'PRESS', "ctrl": True},
-                 {"properties": [("mode", 'EDIT'), ("toggle", True)]}),
+                ("object.edit_poly_tab", {"type": 'TAB', "value": 'PRESS', "ctrl": True}, None),
                 op_menu_pie("VIEW3D_MT_object_mode_pie", {"type": 'TAB', "value": 'PRESS'}),
             ])
         else:
             items.extend([
-                ("object.mode_set", {"type": 'TAB', "value": 'PRESS'},
-                 {"properties": [("mode", 'EDIT'), ("toggle", True)]}),
+                ("object.edit_poly_tab", {"type": 'TAB', "value": 'PRESS'}, None),
                 ("view3d.object_mode_pie_or_toggle", {"type": 'TAB', "value": 'PRESS', "ctrl": True}, None),
             ])
 

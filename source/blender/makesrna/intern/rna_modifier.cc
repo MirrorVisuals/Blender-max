@@ -882,6 +882,7 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 #  include "DEG_depsgraph_build.hh"
 #  include "DEG_depsgraph_query.hh"
 
+#  include "MOD_edit_poly.hh"
 #  include "MOD_nodes.hh"
 
 #  include "NOD_nodes_srna.hh"
@@ -1265,6 +1266,26 @@ static void rna_EditPolyModifier_move_set(ID *id,
   }
   DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
   WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
+}
+
+static void rna_EditPolyModifier_session_prepare(EditPolyModifierData * /*emd*/, Mesh *mesh)
+{
+  blender::edit_poly::session_prepare(*mesh);
+}
+
+static bool rna_EditPolyModifier_session_commit(ID *id,
+                                                EditPolyModifierData *emd,
+                                                ReportList *reports,
+                                                Mesh *mesh)
+{
+  const std::string error = blender::edit_poly::session_commit(*emd, *mesh);
+  if (!error.empty()) {
+    BKE_report(reports, RPT_ERROR, error.c_str());
+    return false;
+  }
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
+  return true;
 }
 
 static void rna_EditPolyModifier_moves_clear(ID *id, EditPolyModifierData *emd)
@@ -7445,6 +7466,23 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
   parm = RNA_def_float_vector(
       func, "offset", 3, nullptr, -FLT_MAX, FLT_MAX, "Offset", "Object space", -1e4f, 1e4f);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+
+  func = RNA_def_function(srna, "session_prepare", "rna_EditPolyModifier_session_prepare");
+  RNA_def_function_ui_description(
+      func,
+      "Stamp each vertex of a mesh, taken as it arrives at this modifier, with its stable ID and "
+      "position, to start an Edit Mode session");
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+
+  func = RNA_def_function(srna, "session_commit", "rna_EditPolyModifier_session_commit");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID | FUNC_USE_REPORTS);
+  RNA_def_function_ui_description(
+      func, "Record how far each vertex of a session mesh moved, as moves of this modifier");
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_boolean(func, "ok", false, "", "False if nothing was recorded (see report)");
+  RNA_def_function_return(func, parm);
 
   func = RNA_def_function(srna, "moves_clear", "rna_EditPolyModifier_moves_clear");
   RNA_def_function_flag(func, FUNC_USE_SELF_ID);
