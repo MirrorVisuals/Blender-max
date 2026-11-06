@@ -139,6 +139,8 @@ struct SubdivMeshContext {
   Array<int> subdiv_edge_coarse_edge;
   /* Groups of result faces per base face (copy of the offsets passed to #subdiv_mesh_face). */
   Array<int> subdiv_faces_by_base_face;
+  /* Layout position (see #stable_id::ATTR_SUBD_UV) of vertices inside a base face. */
+  Array<float2> subdiv_inner_uv;
 };
 
 static void subdiv_mesh_ctx_cache_uv_layers(SubdivMeshContext *ctx)
@@ -934,7 +936,8 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
   /* Rely on #CD_NORMAL to propagate normals to subdivision surfaces.
    * These are converted into "custom_normals" afterwards, otherwise these normals
    * would interpolated without being normalized, see: #152277. */
-  Set<StringRef> corner_skip_names{".corner_vert", ".corner_edge", "custom_normal"};
+  Set<StringRef> corner_skip_names{
+      ".corner_vert", ".corner_edge", "custom_normal", stable_id::ATTR_SUBD_UV};
   /* UV map names are interpolated separately. */
   for (const StringRef name : coarse_mesh.uv_map_names()) {
     corner_skip_names.add_new(name);
@@ -954,6 +957,7 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
   subdiv_context->subdiv_vert_parents = Array<stable_id::StableID>(num_vertices,
                                                                    stable_id::StableID{});
   subdiv_context->subdiv_edge_coarse_edge = Array<int>(num_edges, ORIGINDEX_NONE);
+  subdiv_context->subdiv_inner_uv = Array<float2>(num_vertices, float2(0.0f));
   subdiv_mesh.runtime->subsurf_face_dot_tags.clear();
   subdiv_mesh.runtime->subsurf_face_dot_tags.resize(num_vertices);
   if (subdiv_context->settings->use_optimal_display) {
@@ -1139,6 +1143,31 @@ static void subdiv_mesh_edge_vert_id(SubdivMeshContext *ctx,
   ctx->subdiv_vert_parents[subdiv_vert_index] = ctx->coarse_edge_ids[coarse_edge_index];
 }
 
+/**
+ * Layout position of corner `corner` (stored order) of a base face, see #stable_id::ATTR_SUBD_UV.
+ */
+static float2 subdiv_face_layout_position(const Span<stable_id::StableID> corner_vert_ids,
+                                          const int corner)
+{
+  const int n = int(corner_vert_ids.size());
+  const int s = stable_id::canonical_start(corner_vert_ids.data(), n);
+  const int d = stable_id::canonical_direction(corner_vert_ids.data(), n, s);
+  const int k = (((corner - s) * d) % n + n) % n;
+  const float angle = 6.28318530717958647692f * float(k) / float(n);
+  return float2(std::cos(angle), std::sin(angle));
+}
+
+static float2 bilinear(const float2 &p00,
+                       const float2 &p10,
+                       const float2 &p11,
+                       const float2 &p01,
+                       const float u,
+                       const float v)
+{
+  return (1.0f - u) * (1.0f - v) * p00 + u * (1.0f - v) * p10 + u * v * p11 +
+         (1.0f - u) * v * p01;
+}
+
 /** ID of a vertex inside a base face, from its patch coordinates as reported by the traversal. */
 static void subdiv_mesh_inner_vert_id(SubdivMeshContext *ctx,
                                       const int coarse_face_index,
@@ -1153,6 +1182,33 @@ static void subdiv_mesh_inner_vert_id(SubdivMeshContext *ctx,
   const StableID face_id = ctx->coarse_face_ids[coarse_face_index];
   const int resolution = ctx->settings->resolution;
   StableID result;
+  {
+    /* Layout position inside the base face. */
+    const int size = int(face.size());
+    Vector<StableID, 8> corner_ids;
+    for (const int vert : face_verts) {
+      corner_ids.append(ctx->coarse_vert_ids[vert]);
+    }
+    if (size == 4) {
+      /* The quad patch is bilinear over the stored corners. */
+      ctx->subdiv_inner_uv[subdiv_vert_index] = bilinear(
+          subdiv_face_layout_position(corner_ids, 0),
+          subdiv_face_layout_position(corner_ids, 1),
+          subdiv_face_layout_position(corner_ids, 2),
+          subdiv_face_layout_position(corner_ids, 3),
+          u,
+          v);
+    }
+    else {
+      /* Patch of one corner: corner, next edge midpoint, center, previous edge midpoint. */
+      const float2 corner_pos = subdiv_face_layout_position(corner_ids, coarse_corner);
+      const float2 next = subdiv_face_layout_position(corner_ids, (coarse_corner + 1) % size);
+      const float2 prev = subdiv_face_layout_position(corner_ids,
+                                                      (coarse_corner + size - 1) % size);
+      ctx->subdiv_inner_uv[subdiv_vert_index] = bilinear(
+          corner_pos, (corner_pos + next) * 0.5f, float2(0.0f), (corner_pos + prev) * 0.5f, u, v);
+    }
+  }
   if (face.size() == 4) {
     /* One patch over the whole quad, (0, 0) at corner 0, u towards corner 1, v towards corner 3.
      * The center of a quad is (1/2, 1/2) here too, so it matches its ID at every level. */
@@ -1244,6 +1300,59 @@ static void subdiv_mesh_write_stable_ids(SubdivMeshContext *ctx, Mesh &mesh)
         }
       }
     });
+  }
+
+  /* Corner layout positions. */
+  if (!ctx->subdiv_faces_by_base_face.is_empty()) {
+    const OffsetIndices<int> groups(ctx->subdiv_faces_by_base_face);
+    const int coarse_verts_num = ctx->coarse_mesh->verts_num;
+    const int verts_per_edge = ctx->settings->resolution - 2;
+    const int inner_offset = coarse_verts_num + int(ctx->coarse_edges.size()) * verts_per_edge;
+    const float steps = float(ctx->settings->resolution - 1);
+    bke::SpanAttributeWriter<float2> uv_writer =
+        mesh.attributes_for_write().lookup_or_add_for_write_only_span<float2>(
+            ATTR_SUBD_UV, AttrDomain::Corner);
+    threading::parallel_for(groups.index_range(), 512, [&](const IndexRange range) {
+      Vector<StableID, 8> corner_ids;
+      for (const int coarse_face : range) {
+        const IndexRange base = ctx->coarse_faces[coarse_face];
+        const Span<int> base_verts = ctx->coarse_corner_verts.slice(base);
+        corner_ids.clear();
+        for (const int vert : base_verts) {
+          corner_ids.append(ctx->coarse_vert_ids[vert]);
+        }
+        auto base_corner_pos = [&](const int coarse_vert) {
+          for (const int c : base_verts.index_range()) {
+            if (base_verts[c] == coarse_vert) {
+              return subdiv_face_layout_position(corner_ids, c);
+            }
+          }
+          return float2(0.0f);
+        };
+        for (const int face : groups[coarse_face]) {
+          for (const int corner : faces[face]) {
+            const int vert = corner_verts[corner];
+            float2 uv;
+            if (vert < coarse_verts_num) {
+              uv = base_corner_pos(vert);
+            }
+            else if (vert < inner_offset) {
+              const int local = vert - coarse_verts_num;
+              const int edge = local / verts_per_edge;
+              const float t = float(local % verts_per_edge + 1) / steps;
+              const int2 &coarse_edge = ctx->coarse_edges[edge];
+              uv = math::interpolate(
+                  base_corner_pos(coarse_edge[0]), base_corner_pos(coarse_edge[1]), t);
+            }
+            else {
+              uv = ctx->subdiv_inner_uv[vert];
+            }
+            uv_writer.span[corner] = uv;
+          }
+        }
+      }
+    });
+    uv_writer.finish();
   }
 
   write_ids(mesh, AttrDomain::Point, vert_ids, ctx->subdiv_vert_parents);

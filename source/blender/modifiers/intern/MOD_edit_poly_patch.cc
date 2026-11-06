@@ -172,8 +172,10 @@ static bool is_skipped_attribute(const StringRef name)
               ATTR_PARENT_POINT,
               ATTR_PARENT_EDGE,
               ATTR_PARENT_FACE,
-              SESSION_ATTR_VERT_ID,
-              SESSION_ATTR_FACE_ID);
+              SESSION_ATTR_VERT_ID_LO,
+              SESSION_ATTR_VERT_ID_HI,
+              SESSION_ATTR_FACE_ID_LO,
+              SESSION_ATTR_FACE_ID_HI);
 }
 
 /** Copy every generic attribute of `domain`; `map[i]` is the source index, -1 keeps the default. */
@@ -403,6 +405,27 @@ Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
 /** \name Computing a patch
  * \{ */
 
+bool read_session_ids(const Mesh &mesh, const bke::AttrDomain domain, Array<StableID> &r_ids)
+{
+  const bool point = domain == bke::AttrDomain::Point;
+  const bke::AttributeAccessor attributes = mesh.attributes();
+  const bke::AttributeReader<int> lo = attributes.lookup<int>(
+      point ? SESSION_ATTR_VERT_ID_LO : SESSION_ATTR_FACE_ID_LO);
+  const bke::AttributeReader<int> hi = attributes.lookup<int>(
+      point ? SESSION_ATTR_VERT_ID_HI : SESSION_ATTR_FACE_ID_HI);
+  if (!lo || !hi || lo.domain != domain || hi.domain != domain) {
+    r_ids = {};
+    return false;
+  }
+  const VArraySpan<int> lo_span = *lo;
+  const VArraySpan<int> hi_span = *hi;
+  r_ids.reinitialize(lo_span.size());
+  for (const int i : r_ids.index_range()) {
+    r_ids[i] = StableID{uint32_t(lo_span[i]), uint32_t(hi_span[i])};
+  }
+  return true;
+}
+
 std::string patch_compute(const Mesh &input,
                           const Mesh &edited,
                           const Patch &old_patch,
@@ -413,17 +436,12 @@ std::string patch_compute(const Mesh &input,
   r_patch = {};
   r_moves.clear();
 
-  const bke::AttributeAccessor attributes = edited.attributes();
-  const bke::AttributeReader<int2> vid_reader = attributes.lookup<int2>(SESSION_ATTR_VERT_ID);
-  if (!vid_reader || vid_reader.domain != bke::AttrDomain::Point) {
+  Array<StableID> session_vert_ids;
+  Array<StableID> session_face_ids;
+  if (!read_session_ids(edited, bke::AttrDomain::Point, session_vert_ids)) {
     return "This mesh is not an Edit Poly session";
   }
-  const VArraySpan<int2> session_vert_ids = *vid_reader;
-  const bke::AttributeReader<int2> fid_reader = attributes.lookup<int2>(SESSION_ATTR_FACE_ID);
-  VArraySpan<int2> session_face_ids;
-  if (fid_reader && fid_reader.domain == bke::AttrDomain::Face) {
-    session_face_ids = *fid_reader;
-  }
+  read_session_ids(edited, bke::AttrDomain::Face, session_face_ids);
 
   const Array<StableID> in_vert_ids = read_or_make_root_ids(input, bke::AttrDomain::Point);
   const Array<StableID> in_face_ids = read_or_make_root_ids(input, bke::AttrDomain::Face);
@@ -469,7 +487,7 @@ std::string patch_compute(const Mesh &input,
   Array<StableID> anchors(verts_num);
   Set<uint64_t> used;
   for (const int i : IndexRange(verts_num)) {
-    const StableID id{uint32_t(session_vert_ids[i].x), uint32_t(session_vert_ids[i].y)};
+    const StableID id = session_vert_ids[i];
     const uint64_t key = key_of(id);
     if (id.is_valid() && in_vert_of.contains(key) && used.add(key)) {
       kind[i] = Kind::Kept;
@@ -547,10 +565,7 @@ std::string patch_compute(const Mesh &input,
   Vector<int> new_faces;
   Array<StableID> face_keys(faces.size());
   for (const int f : faces.index_range()) {
-    StableID fid{};
-    if (!session_face_ids.is_empty()) {
-      fid = StableID{uint32_t(session_face_ids[f].x), uint32_t(session_face_ids[f].y)};
-    }
+    const StableID fid = session_face_ids.is_empty() ? StableID{} : session_face_ids[f];
     face_keys[f] = fid;
     const int in_face = fid.is_valid() ? in_face_of.lookup_default(key_of(fid), -1) : -1;
     bool kept = false;

@@ -20,6 +20,7 @@
 #include <string>
 
 #include "BLI_map.hh"
+#include "BLI_string.h"
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_set.hh"
@@ -49,6 +50,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "MOD_edit_poly.hh"
+#include "MOD_edit_poly_ops.hh"
 #include "MOD_edit_poly_patch.hh"
 #include "MOD_modifiertypes.hh"
 #include "MOD_ui_common.hh"
@@ -69,8 +71,20 @@ static Span<float> patch_floats(const EditPolyModifierData &emd)
   return emd.patch_floats ? Span<float>(emd.patch_floats, emd.patch_floats_num) : Span<float>();
 }
 
+static void set_ops_text(EditPolyModifierData &emd, const std::string &text)
+{
+  if (emd.ops_text) {
+    MEM_delete(emd.ops_text);
+    emd.ops_text = nullptr;
+  }
+  if (!text.empty()) {
+    emd.ops_text = BLI_strdup(text.c_str());
+  }
+}
+
 static void free_arrays(EditPolyModifierData &emd)
 {
+  set_ops_text(emd, "");
   MEM_SAFE_DELETE(emd.move_ids);
   MEM_SAFE_DELETE(emd.move_offsets);
   MEM_SAFE_DELETE(emd.patch_ints);
@@ -147,22 +161,25 @@ void session_prepare(Mesh &input, Mesh &mesh)
   const Array<StableID> vert_ids = read_or_make_root_ids(mesh, bke::AttrDomain::Point);
   const Array<StableID> face_ids = read_or_make_root_ids(mesh, bke::AttrDomain::Face);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
-  attributes.remove(SESSION_ATTR_VERT_ID);
-  attributes.remove(SESSION_ATTR_FACE_ID);
-  bke::SpanAttributeWriter<int2> vert_writer =
-      attributes.lookup_or_add_for_write_only_span<int2>(SESSION_ATTR_VERT_ID,
-                                                         bke::AttrDomain::Point);
-  for (const int i : vert_ids.index_range()) {
-    vert_writer.span[i] = int2(int(vert_ids[i].lo), int(vert_ids[i].hi));
-  }
-  vert_writer.finish();
-  bke::SpanAttributeWriter<int2> face_writer =
-      attributes.lookup_or_add_for_write_only_span<int2>(SESSION_ATTR_FACE_ID,
-                                                         bke::AttrDomain::Face);
-  for (const int i : face_ids.index_range()) {
-    face_writer.span[i] = int2(int(face_ids[i].lo), int(face_ids[i].hi));
-  }
-  face_writer.finish();
+  auto write_pair = [&](const char *name_lo,
+                        const char *name_hi,
+                        const bke::AttrDomain domain,
+                        const Span<StableID> ids) {
+    attributes.remove(name_lo);
+    attributes.remove(name_hi);
+    bke::SpanAttributeWriter<int> lo = attributes.lookup_or_add_for_write_only_span<int>(name_lo,
+                                                                                        domain);
+    bke::SpanAttributeWriter<int> hi = attributes.lookup_or_add_for_write_only_span<int>(name_hi,
+                                                                                        domain);
+    for (const int i : ids.index_range()) {
+      lo.span[i] = int(ids[i].lo);
+      hi.span[i] = int(ids[i].hi);
+    }
+    lo.finish();
+    hi.finish();
+  };
+  write_pair(SESSION_ATTR_VERT_ID_LO, SESSION_ATTR_VERT_ID_HI, bke::AttrDomain::Point, vert_ids);
+  write_pair(SESSION_ATTR_FACE_ID_LO, SESSION_ATTR_FACE_ID_HI, bke::AttrDomain::Face, face_ids);
 }
 
 std::string session_check(const EditPolyModifierData &emd, const Mesh &input)
@@ -187,7 +204,10 @@ std::string session_check(const EditPolyModifierData &emd, const Mesh &input)
   return "";
 }
 
-std::string session_commit(EditPolyModifierData &emd, const Mesh &input, const Mesh &mesh)
+std::string session_commit(EditPolyModifierData &emd,
+                           const Mesh &input,
+                           const Mesh &mesh,
+                           const std::string &operations)
 {
   Patch old_patch;
   patch_decode(patch_ints(emd), patch_floats(emd), old_patch);
@@ -228,6 +248,29 @@ std::string session_commit(EditPolyModifierData &emd, const Mesh &input, const M
   }
   store_moves(emd, ids, offsets);
   store_patch(emd, patch);
+
+  /* Operation log: earlier log plus this session's operations, kept only if replaying it on the
+   * input explains the edited topology. */
+  Vector<OpRecord> ops;
+  std::string text = (emd.ops_text ? std::string(emd.ops_text) : std::string()) + operations;
+  if (patch.is_empty() || !ops_parse(text, ops) || ops.is_empty()) {
+    set_ops_text(emd, "");
+    return "";
+  }
+  std::string reason;
+  Mesh *replayed = ops_apply(input, ops, false, reason);
+  const bool matches = replayed && replayed->verts_num == mesh.verts_num &&
+                       replayed->edges_num == mesh.edges_num &&
+                       replayed->faces_num == mesh.faces_num;
+  if (replayed) {
+    BKE_id_free(nullptr, replayed);
+  }
+  if (!matches) {
+    set_ops_text(emd, "");
+    return "";
+  }
+  ops_compute_footprints(input, ops);
+  set_ops_text(emd, ops_to_text(ops));
   return "";
 }
 
@@ -256,6 +299,7 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
   temd->move_offsets = dup_array(emd->move_offsets, int64_t(emd->moves_num) * 3);
   temd->patch_ints = dup_array(emd->patch_ints, emd->patch_ints_num);
   temd->patch_floats = dup_array(emd->patch_floats, emd->patch_floats_num);
+  temd->ops_text = emd->ops_text ? BLI_strdup(emd->ops_text) : nullptr;
   if (!temd->move_ids || !temd->move_offsets) {
     MEM_SAFE_DELETE(temd->move_ids);
     MEM_SAFE_DELETE(temd->move_offsets);
@@ -299,7 +343,23 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
         result = patched;
       }
       else {
-        warning = "Topology edits paused: " + reason;
+        /* The mesh below changed: re-run the logged operations on what covers their elements. */
+        Vector<edit_poly::OpRecord> ops;
+        std::string ops_reason;
+        Mesh *replayed = nullptr;
+        if (emd->ops_text && edit_poly::ops_parse(emd->ops_text, ops) &&
+            edit_poly::ops_can_retarget(ops))
+        {
+          replayed = edit_poly::ops_apply(*mesh, ops, true, ops_reason);
+        }
+        if (replayed) {
+          result = replayed;
+          warning = "Mesh below changed: " + std::to_string(ops.size()) +
+                    " operation(s) re-applied; other edits of this level are paused";
+        }
+        else {
+          warning = "Topology edits paused: " + reason;
+        }
       }
     }
   }
@@ -353,6 +413,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   layout.prop(ptr, "patch_new_vertices", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "patch_new_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "patch_removed_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "operations_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_error_message_draw(layout, ptr);
 }
@@ -376,6 +437,7 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
   if (emd->patch_floats_num > 0 && emd->patch_floats) {
     writer->write_float_array(emd->patch_floats_num, emd->patch_floats);
   }
+  writer->write_string(emd->ops_text);
 }
 
 static void blend_read(BlendDataReader *reader, ModifierData *md)
@@ -400,6 +462,7 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
   if (!emd->patch_floats) {
     emd->patch_floats_num = 0;
   }
+  BLO_read_string(reader, &emd->ops_text);
 }
 
 /** \} */

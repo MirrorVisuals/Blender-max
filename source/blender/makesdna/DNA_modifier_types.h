@@ -2212,6 +2212,8 @@ struct EditPolyModifierData {
   /** Topology patch, encoded (see MOD_edit_poly_patch.hh). */
   int *patch_ints = nullptr;
   float *patch_floats = nullptr;
+  /** Re-runnable operation log, text (see MOD_edit_poly_ops.hh). */
+  char *ops_text = nullptr;
   int moves_num = 0;
   int patch_ints_num = 0;
   int patch_floats_num = 0;

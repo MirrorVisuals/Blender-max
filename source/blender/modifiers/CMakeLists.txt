@@ -34,6 +34,7 @@ set(SRC
   intern/MOD_dynamicpaint.cc
   intern/MOD_edgesplit.cc
   intern/MOD_edit_poly.cc
+  intern/MOD_edit_poly_ops.cc
   intern/MOD_edit_poly_patch.cc
   intern/MOD_explode.cc
   intern/MOD_fluid.cc
@@ -120,6 +121,7 @@ set(SRC
   intern/lineart/lineart_util.cc
 
   MOD_edit_poly.hh
+  intern/MOD_edit_poly_ops.hh
   intern/MOD_edit_poly_patch.hh
   MOD_modifiertypes.hh
   MOD_nodes.hh

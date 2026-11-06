@@ -23,10 +23,12 @@
 
 #include <string>
 
+#include "BLI_array.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_span.hh"
 #include "BLI_vector.hh"
 
+#include "BKE_attribute_enums.hh"
 #include "BKE_stable_id.hh"
 
 struct Mesh;
@@ -77,6 +79,9 @@ struct KeptMove {
   StableID id;
   float3 offset;
 };
+
+/** Read session IDs (see #SESSION_ATTR_VERT_ID_LO) of a domain. False if they are missing. */
+bool read_session_ids(const Mesh &mesh, bke::AttrDomain domain, Array<StableID> &r_ids);
 
 /**
  * Compare a session mesh after editing with the input mesh at the start of the session.

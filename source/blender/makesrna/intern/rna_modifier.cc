@@ -1289,9 +1289,11 @@ static bool rna_EditPolyModifier_session_commit(ID *id,
                                                 EditPolyModifierData *emd,
                                                 ReportList *reports,
                                                 Mesh *input,
-                                                Mesh *mesh)
+                                                Mesh *mesh,
+                                                const char *operations)
 {
-  const std::string error = blender::edit_poly::session_commit(*emd, *input, *mesh);
+  const std::string error = blender::edit_poly::session_commit(
+      *emd, *input, *mesh, operations ? operations : "");
   if (!error.empty()) {
     BKE_report(reports, RPT_ERROR, error.c_str());
     return false;
@@ -1308,6 +1310,29 @@ static int rna_EditPolyModifier_patch_header(const PointerRNA *ptr, const int fi
     return 0;
   }
   return emd->patch_ints[field];
+}
+
+static void rna_EditPolyModifier_operations_text_get(PointerRNA *ptr, char *value)
+{
+  const EditPolyModifierData *emd = static_cast<const EditPolyModifierData *>(ptr->data);
+  const char *text = emd->ops_text ? emd->ops_text : "";
+  strcpy(value, text);
+}
+
+static int rna_EditPolyModifier_operations_text_length(PointerRNA *ptr)
+{
+  const EditPolyModifierData *emd = static_cast<const EditPolyModifierData *>(ptr->data);
+  return emd->ops_text ? int(strlen(emd->ops_text)) : 0;
+}
+
+static int rna_EditPolyModifier_operations_num_get(PointerRNA *ptr)
+{
+  const EditPolyModifierData *emd = static_cast<const EditPolyModifierData *>(ptr->data);
+  int count = 0;
+  for (const char *c = emd->ops_text; c && *c; c++) {
+    count += (*c == '\n');
+  }
+  return count;
 }
 
 static int rna_EditPolyModifier_patch_new_vertices_get(PointerRNA *ptr)
@@ -7524,6 +7549,22 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "New Faces", "Faces added or rebuilt by topology edits");
 
+  prop = RNA_def_property(srna, "operations_num", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_funcs(prop, "rna_EditPolyModifier_operations_num_get", nullptr, nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(
+      prop,
+      "Operations",
+      "Extrude / inset / bevel operations that are re-applied if the mesh below changes");
+
+  prop = RNA_def_property(srna, "operations_text", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_funcs(prop,
+                                "rna_EditPolyModifier_operations_text_get",
+                                "rna_EditPolyModifier_operations_text_length",
+                                nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop, "Operation Log", "Re-runnable operation log (read-only)");
+
   prop = RNA_def_property(srna, "patch_removed_faces", PROP_INT, PROP_UNSIGNED);
   RNA_def_property_int_funcs(
       prop, "rna_EditPolyModifier_patch_removed_faces_get", nullptr, nullptr);
@@ -7555,6 +7596,12 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
   parm = RNA_def_pointer(func, "mesh", "Mesh", "", "Edited session mesh");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_string(func,
+                        "operations",
+                        nullptr,
+                        0,
+                        "Operations",
+                        "Log of extrude / inset / bevel used in the session (text format)");
   parm = RNA_def_boolean(func, "ok", false, "", "False if nothing was recorded (see report)");
   RNA_def_function_return(func, parm);
 
