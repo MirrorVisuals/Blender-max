@@ -2209,7 +2209,12 @@ struct EditPolyModifierData {
   int *move_ids = nullptr;
   /** Offsets in object space, three floats per move. */
   float *move_offsets = nullptr;
+  /** Topology patch, encoded (see MOD_edit_poly_patch.hh). */
+  int *patch_ints = nullptr;
+  float *patch_floats = nullptr;
   int moves_num = 0;
+  int patch_ints_num = 0;
+  int patch_floats_num = 0;
   char _pad[4] = {};
 };
 

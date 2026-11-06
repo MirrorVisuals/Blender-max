@@ -5,22 +5,24 @@
 /** \file
  * \ingroup modifiers
  *
- * Edit Poly modifier (experimental, phase 2 of the Edit Poly stack).
+ * Edit Poly modifier (experimental, Edit Poly stack).
  *
- * Stores vertex moves against stable vertex IDs (see BKE_stable_id.hh) and replays them on the
- * mesh that arrives at the modifier. Because the moves are found by ID rather than by index, they
- * stay on the same points when modifiers below change, e.g. a Subdivision level. A move whose
- * point does not exist in the incoming mesh is paused, not deleted: it applies again as soon as
- * the point comes back.
+ * Stores edits against stable element IDs (see BKE_stable_id.hh) and replays them on the mesh
+ * that arrives at the modifier:
+ * 1. a topology patch (see MOD_edit_poly_patch.hh): removed elements and new geometry anchored
+ *    to input vertices;
+ * 2. vertex moves.
+ * Because everything is found by ID rather than by index, the edits stay on the same elements
+ * when modifiers below change. Edits whose elements are missing are paused, not deleted.
  */
 
 #include <cstring>
 #include <string>
 
 #include "BLI_map.hh"
-#include "BLI_set.hh"
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
+#include "BLI_set.hh"
 #include "BLI_vector.hh"
 
 #include "BLT_translation.hh"
@@ -30,6 +32,7 @@
 #include "DNA_screen_types.h"
 
 #include "BKE_attribute.hh"
+#include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
 #include "BKE_screen.hh"
@@ -46,10 +49,87 @@
 #include "MEM_guardedalloc.h"
 
 #include "MOD_edit_poly.hh"
+#include "MOD_edit_poly_patch.hh"
 #include "MOD_modifiertypes.hh"
 #include "MOD_ui_common.hh"
 
 namespace blender {
+
+/* -------------------------------------------------------------------- */
+/** \name Stored data helpers
+ * \{ */
+
+static Span<int> patch_ints(const EditPolyModifierData &emd)
+{
+  return emd.patch_ints ? Span<int>(emd.patch_ints, emd.patch_ints_num) : Span<int>();
+}
+
+static Span<float> patch_floats(const EditPolyModifierData &emd)
+{
+  return emd.patch_floats ? Span<float>(emd.patch_floats, emd.patch_floats_num) : Span<float>();
+}
+
+static void free_arrays(EditPolyModifierData &emd)
+{
+  MEM_SAFE_DELETE(emd.move_ids);
+  MEM_SAFE_DELETE(emd.move_offsets);
+  MEM_SAFE_DELETE(emd.patch_ints);
+  MEM_SAFE_DELETE(emd.patch_floats);
+  emd.moves_num = 0;
+  emd.patch_ints_num = 0;
+  emd.patch_floats_num = 0;
+}
+
+template<typename T> static T *dup_array(const T *src, const int64_t num)
+{
+  if (src == nullptr || num <= 0) {
+    return nullptr;
+  }
+  T *dst = MEM_new_array_uninitialized<T>(size_t(num), __func__);
+  memcpy(dst, src, sizeof(T) * size_t(num));
+  return dst;
+}
+
+static void store_moves(EditPolyModifierData &emd,
+                        const Span<int2> ids,
+                        const Span<float3> offsets)
+{
+  MEM_SAFE_DELETE(emd.move_ids);
+  MEM_SAFE_DELETE(emd.move_offsets);
+  emd.moves_num = int(ids.size());
+  if (ids.is_empty()) {
+    return;
+  }
+  emd.move_ids = MEM_new_array_uninitialized<int>(size_t(ids.size()) * 2, __func__);
+  emd.move_offsets = MEM_new_array_uninitialized<float>(size_t(ids.size()) * 3, __func__);
+  for (const int i : ids.index_range()) {
+    emd.move_ids[2 * i] = ids[i].x;
+    emd.move_ids[2 * i + 1] = ids[i].y;
+    emd.move_offsets[3 * i] = offsets[i].x;
+    emd.move_offsets[3 * i + 1] = offsets[i].y;
+    emd.move_offsets[3 * i + 2] = offsets[i].z;
+  }
+}
+
+static void store_patch(EditPolyModifierData &emd, const edit_poly::Patch &patch)
+{
+  Vector<int> ints;
+  Vector<float> floats;
+  edit_poly::patch_encode(patch, ints, floats);
+  MEM_SAFE_DELETE(emd.patch_ints);
+  MEM_SAFE_DELETE(emd.patch_floats);
+  emd.patch_ints = dup_array(ints.data(), ints.size());
+  emd.patch_floats = dup_array(floats.data(), floats.size());
+  emd.patch_ints_num = emd.patch_ints ? int(ints.size()) : 0;
+  emd.patch_floats_num = emd.patch_floats ? int(floats.size()) : 0;
+}
+
+static uint64_t key_of(const int2 id)
+{
+  return (uint64_t(uint32_t(id.y)) << 32) | uint32_t(id.x);
+}
+
+/** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Edit Mode sessions
@@ -57,115 +137,107 @@ namespace blender {
 
 namespace edit_poly {
 
-void session_prepare(Mesh &mesh)
+void session_prepare(Mesh &input, Mesh &mesh)
 {
   using namespace bke::stable_id;
-  const Array<StableID> ids = read_or_make_root_ids(mesh, bke::AttrDomain::Point);
+  /* The input gets IDs for every domain, so the commit compares against the same IDs that the
+   * modifier sees when it evaluates (root IDs are made from indices). */
+  ensure_root_ids(input);
+
+  const Array<StableID> vert_ids = read_or_make_root_ids(mesh, bke::AttrDomain::Point);
+  const Array<StableID> face_ids = read_or_make_root_ids(mesh, bke::AttrDomain::Face);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
-  attributes.remove(SESSION_ATTR_ID);
-  attributes.remove(SESSION_ATTR_POSITION);
-
-  bke::SpanAttributeWriter<int2> id_writer = attributes.lookup_or_add_for_write_only_span<int2>(
-      SESSION_ATTR_ID, bke::AttrDomain::Point);
-  for (const int i : ids.index_range()) {
-    id_writer.span[i] = int2(int(ids[i].lo), int(ids[i].hi));
+  attributes.remove(SESSION_ATTR_VERT_ID);
+  attributes.remove(SESSION_ATTR_FACE_ID);
+  bke::SpanAttributeWriter<int2> vert_writer =
+      attributes.lookup_or_add_for_write_only_span<int2>(SESSION_ATTR_VERT_ID,
+                                                         bke::AttrDomain::Point);
+  for (const int i : vert_ids.index_range()) {
+    vert_writer.span[i] = int2(int(vert_ids[i].lo), int(vert_ids[i].hi));
   }
-  id_writer.finish();
-
-  bke::SpanAttributeWriter<float3> pos_writer =
-      attributes.lookup_or_add_for_write_only_span<float3>(SESSION_ATTR_POSITION,
-                                                           bke::AttrDomain::Point);
-  pos_writer.span.copy_from(mesh.vert_positions());
-  pos_writer.finish();
+  vert_writer.finish();
+  bke::SpanAttributeWriter<int2> face_writer =
+      attributes.lookup_or_add_for_write_only_span<int2>(SESSION_ATTR_FACE_ID,
+                                                         bke::AttrDomain::Face);
+  for (const int i : face_ids.index_range()) {
+    face_writer.span[i] = int2(int(face_ids[i].lo), int(face_ids[i].hi));
+  }
+  face_writer.finish();
 }
 
-std::string session_commit(EditPolyModifierData &emd, const Mesh &mesh)
+std::string session_check(const EditPolyModifierData &emd, const Mesh &input)
 {
-  const bke::AttributeAccessor attributes = mesh.attributes();
-  const bke::AttributeReader<int2> id_reader = attributes.lookup<int2>(SESSION_ATTR_ID);
-  const bke::AttributeReader<float3> pos_reader = attributes.lookup<float3>(
-      SESSION_ATTR_POSITION);
-  if (!id_reader || !pos_reader || id_reader.domain != bke::AttrDomain::Point ||
-      pos_reader.domain != bke::AttrDomain::Point)
-  {
-    return "This mesh is not an Edit Poly session";
-  }
-  const VArraySpan<int2> ids = *id_reader;
-  const VArraySpan<float3> start = *pos_reader;
-  const Span<float3> positions = mesh.vert_positions();
-
-  /* Vertices added in Edit Mode copy or interpolate the attributes, which gives duplicate or
-   * empty IDs. Topology changes are not recorded yet, so refuse rather than store wrong moves. */
-  Set<int64_t> seen;
-  for (const int i : ids.index_range()) {
-    const int64_t key = (int64_t(uint32_t(ids[i].y)) << 32) | uint32_t(ids[i].x);
-    if (key == 0 || !seen.add(key)) {
-      return "Topology was changed (vertices added, merged or removed). The Edit Poly modifier "
-             "only records moves so far: undo the topology change, then leave Edit Mode";
-    }
-  }
-
-  /* Existing moves, keyed by ID. */
-  Vector<int2> move_ids;
-  Vector<float3> move_offsets;
-  Map<int64_t, int> index_of;
-  for (int i = 0; i < emd.moves_num; i++) {
-    const int2 id(emd.move_ids[2 * i], emd.move_ids[2 * i + 1]);
-    index_of.add((int64_t(uint32_t(id.y)) << 32) | uint32_t(id.x), int(move_ids.size()));
-    move_ids.append(id);
-    move_offsets.append(float3(emd.move_offsets[3 * i],
-                               emd.move_offsets[3 * i + 1],
-                               emd.move_offsets[3 * i + 2]));
-  }
-  Vector<bool> removed(move_ids.size(), false);
-
-  for (const int i : ids.index_range()) {
-    const int64_t key = (int64_t(uint32_t(ids[i].y)) << 32) | uint32_t(ids[i].x);
-    const float3 offset = positions[i] - start[i];
-    const bool moved = math::length_squared(offset) > 1e-12f;
-    if (const int *existing = index_of.lookup_ptr(key)) {
-      move_offsets[*existing] = offset;
-      removed[*existing] = !moved;
-    }
-    else if (moved) {
-      index_of.add(key, int(move_ids.size()));
-      move_ids.append(ids[i]);
-      move_offsets.append(offset);
-      removed.append(false);
-    }
-  }
-
-  int num = 0;
-  for (const int i : move_ids.index_range()) {
-    num += removed[i] ? 0 : 1;
-  }
-  MEM_SAFE_DELETE(emd.move_ids);
-  MEM_SAFE_DELETE(emd.move_offsets);
-  emd.moves_num = 0;
-  if (num == 0) {
+  if (emd.patch_ints_num == 0) {
     return "";
   }
-  emd.move_ids = MEM_new_array_uninitialized<int>(size_t(num) * 2, __func__);
-  emd.move_offsets = MEM_new_array_uninitialized<float>(size_t(num) * 3, __func__);
-  int j = 0;
-  for (const int i : move_ids.index_range()) {
-    if (removed[i]) {
-      continue;
-    }
-    emd.move_ids[2 * j] = move_ids[i].x;
-    emd.move_ids[2 * j + 1] = move_ids[i].y;
-    emd.move_offsets[3 * j] = move_offsets[i].x;
-    emd.move_offsets[3 * j + 1] = move_offsets[i].y;
-    emd.move_offsets[3 * j + 2] = move_offsets[i].z;
-    j++;
+  Patch patch;
+  if (!patch_decode(patch_ints(emd), patch_floats(emd), patch)) {
+    return "This level's topology edits could not be read";
   }
-  emd.moves_num = num;
+  if (patch.is_empty()) {
+    return "";
+  }
+  std::string reason;
+  Mesh *result = patch_apply(input, patch, reason);
+  if (result == nullptr) {
+    return "This level's topology edits are paused (" + reason +
+           "). Restore the modifiers below (e.g. the Subdivision level) to edit this level";
+  }
+  BKE_id_free(nullptr, result);
+  return "";
+}
+
+std::string session_commit(EditPolyModifierData &emd, const Mesh &input, const Mesh &mesh)
+{
+  Patch old_patch;
+  patch_decode(patch_ints(emd), patch_floats(emd), old_patch);
+
+  Patch patch;
+  Vector<KeptMove> kept_moves;
+  Vector<StableID> input_vert_ids;
+  const std::string error = patch_compute(
+      input, mesh, old_patch, patch, kept_moves, input_vert_ids);
+  if (!error.empty()) {
+    return error;
+  }
+
+  /* Moves: keep paused moves (points that are neither in the input nor new), replace the rest. */
+  Set<uint64_t> handled;
+  for (const StableID id : input_vert_ids) {
+    handled.add(id.as_u64());
+  }
+  for (const StableID id : patch.new_vert_ids) {
+    handled.add(id.as_u64());
+  }
+  Vector<int2> ids;
+  Vector<float3> offsets;
+  for (int i = 0; i < emd.moves_num; i++) {
+    const int2 id(emd.move_ids[2 * i], emd.move_ids[2 * i + 1]);
+    if (!handled.contains(key_of(id))) {
+      ids.append(id);
+      offsets.append(float3(emd.move_offsets[3 * i],
+                            emd.move_offsets[3 * i + 1],
+                            emd.move_offsets[3 * i + 2]));
+    }
+  }
+  for (const KeptMove &move : kept_moves) {
+    if (math::length_squared(move.offset) > 1e-12f) {
+      ids.append(int2(int(move.id.lo), int(move.id.hi)));
+      offsets.append(move.offset);
+    }
+  }
+  store_moves(emd, ids, offsets);
+  store_patch(emd, patch);
   return "";
 }
 
 }  // namespace edit_poly
 
 /** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Modifier
+ * \{ */
 
 static void init_data(ModifierData *md)
 {
@@ -180,82 +252,107 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
 
   BKE_modifier_copydata_generic(md, target, flag);
 
-  temd->move_ids = nullptr;
-  temd->move_offsets = nullptr;
-  temd->moves_num = 0;
-  if (emd->moves_num > 0 && emd->move_ids && emd->move_offsets) {
-    temd->move_ids = MEM_new_array_uninitialized<int>(size_t(emd->moves_num) * 2, __func__);
-    temd->move_offsets = MEM_new_array_uninitialized<float>(size_t(emd->moves_num) * 3, __func__);
-    memcpy(temd->move_ids, emd->move_ids, sizeof(int) * 2 * emd->moves_num);
-    memcpy(temd->move_offsets, emd->move_offsets, sizeof(float) * 3 * emd->moves_num);
-    temd->moves_num = emd->moves_num;
+  temd->move_ids = dup_array(emd->move_ids, int64_t(emd->moves_num) * 2);
+  temd->move_offsets = dup_array(emd->move_offsets, int64_t(emd->moves_num) * 3);
+  temd->patch_ints = dup_array(emd->patch_ints, emd->patch_ints_num);
+  temd->patch_floats = dup_array(emd->patch_floats, emd->patch_floats_num);
+  if (!temd->move_ids || !temd->move_offsets) {
+    MEM_SAFE_DELETE(temd->move_ids);
+    MEM_SAFE_DELETE(temd->move_offsets);
+    temd->moves_num = 0;
+  }
+  if (!temd->patch_ints) {
+    temd->patch_ints_num = 0;
+  }
+  if (!temd->patch_floats) {
+    temd->patch_floats_num = 0;
   }
 }
 
 static void free_data(ModifierData *md)
 {
-  EditPolyModifierData *emd = reinterpret_cast<EditPolyModifierData *>(md);
-  MEM_SAFE_DELETE(emd->move_ids);
-  MEM_SAFE_DELETE(emd->move_offsets);
-  emd->moves_num = 0;
+  free_arrays(*reinterpret_cast<EditPolyModifierData *>(md));
 }
 
 static bool is_disabled(const Scene * /*scene*/, ModifierData *md, bool /*use_render_params*/)
 {
   const EditPolyModifierData *emd = reinterpret_cast<const EditPolyModifierData *>(md);
-  return emd->moves_num == 0;
+  return emd->moves_num == 0 && emd->patch_ints_num == 0;
 }
 
 static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
 {
   using namespace bke::stable_id;
   EditPolyModifierData *emd = reinterpret_cast<EditPolyModifierData *>(md);
-  if (emd->moves_num == 0 || mesh->verts_num == 0) {
-    return mesh;
-  }
+  std::string warning;
 
-  /* Without IDs from a modifier below, the incoming mesh is the base mesh: use root IDs. */
-  const Array<StableID> ids = read_or_make_root_ids(*mesh, bke::AttrDomain::Point);
-  const IDIndex index(ids.data(), ids.size());
-
-  MutableSpan<float3> positions = mesh->vert_positions_for_write();
-  int paused = 0;
-  for (int i = 0; i < emd->moves_num; i++) {
-    const StableID id{uint32_t(emd->move_ids[2 * i]), uint32_t(emd->move_ids[2 * i + 1])};
-    const int vert = index.find(id);
-    if (vert == -1) {
-      paused++;
-      continue;
+  /* 1. Topology patch. */
+  Mesh *result = mesh;
+  if (emd->patch_ints_num > 0) {
+    edit_poly::Patch patch;
+    if (!edit_poly::patch_decode(patch_ints(*emd), patch_floats(*emd), patch)) {
+      warning = "Topology edits could not be read";
     }
-    positions[vert] += float3(emd->move_offsets[3 * i],
-                              emd->move_offsets[3 * i + 1],
-                              emd->move_offsets[3 * i + 2]);
+    else if (!patch.is_empty()) {
+      std::string reason;
+      if (Mesh *patched = edit_poly::patch_apply(*mesh, patch, reason)) {
+        result = patched;
+      }
+      else {
+        warning = "Topology edits paused: " + reason;
+      }
+    }
   }
-  mesh->tag_positions_changed();
 
-  if (paused > 0) {
-    BKE_modifier_set_warning(ctx->object,
-                             md,
-                             "%d of %d moves paused (their points are not in the mesh below)",
-                             paused,
-                             emd->moves_num);
+  /* 2. Moves. */
+  if (emd->moves_num > 0 && result->verts_num > 0) {
+    /* Without IDs from below, the incoming mesh is the base mesh: use root IDs. */
+    const Array<StableID> ids = read_or_make_root_ids(*result, bke::AttrDomain::Point);
+    const IDIndex index(ids.data(), ids.size());
+    MutableSpan<float3> positions = result->vert_positions_for_write();
+    int paused = 0;
+    for (int i = 0; i < emd->moves_num; i++) {
+      const StableID id{uint32_t(emd->move_ids[2 * i]), uint32_t(emd->move_ids[2 * i + 1])};
+      const int vert = index.find(id);
+      if (vert == -1) {
+        paused++;
+        continue;
+      }
+      positions[vert] += float3(emd->move_offsets[3 * i],
+                                emd->move_offsets[3 * i + 1],
+                                emd->move_offsets[3 * i + 2]);
+    }
+    result->tag_positions_changed();
+    if (paused > 0) {
+      if (!warning.empty()) {
+        warning += "; ";
+      }
+      warning += std::to_string(paused) + " of " + std::to_string(emd->moves_num) +
+                 " moves paused (their points are not in the mesh below)";
+    }
   }
-  return mesh;
+
+  if (!warning.empty()) {
+    BKE_modifier_set_warning(ctx->object, md, "%s", warning.c_str());
+  }
+  return result;
 }
 
 static void panel_draw(const bContext * /*C*/, Panel *panel)
 {
   ui::Layout &layout = *panel->layout;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, nullptr);
-
   const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
+
   PointerRNA op_ptr = layout.op(
       "OBJECT_OT_edit_poly_level_edit", IFACE_("Edit Level"), ICON_EDITMODE_HLT);
   RNA_string_set(&op_ptr, "modifier", md->name);
 
   layout.use_property_split_set(true);
   layout.prop(ptr, "moves_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  layout.label(IFACE_("Moves only for now"), ICON_INFO);
+  layout.prop(ptr, "patch_new_vertices", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "patch_new_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "patch_removed_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_error_message_draw(layout, ptr);
 }
@@ -273,6 +370,12 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
     writer->write_int32_array(int64_t(emd->moves_num) * 2, emd->move_ids);
     writer->write_float3_array(emd->moves_num, emd->move_offsets);
   }
+  if (emd->patch_ints_num > 0 && emd->patch_ints) {
+    writer->write_int32_array(emd->patch_ints_num, emd->patch_ints);
+  }
+  if (emd->patch_floats_num > 0 && emd->patch_floats) {
+    writer->write_float_array(emd->patch_floats_num, emd->patch_floats);
+  }
 }
 
 static void blend_read(BlendDataReader *reader, ModifierData *md)
@@ -289,7 +392,17 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
     MEM_SAFE_DELETE(emd->move_offsets);
     emd->moves_num = 0;
   }
+  BLO_read_array_and_validate_size(reader, &emd->patch_ints, &emd->patch_ints_num);
+  BLO_read_array_and_validate_size(reader, &emd->patch_floats, &emd->patch_floats_num);
+  if (!emd->patch_ints) {
+    emd->patch_ints_num = 0;
+  }
+  if (!emd->patch_floats) {
+    emd->patch_floats_num = 0;
+  }
 }
+
+/** \} */
 
 ModifierTypeInfo modifierType_EditPoly = {
     /*idname*/ "EditPoly",
@@ -299,8 +412,8 @@ ModifierTypeInfo modifierType_EditPoly = {
     /*srna*/ &RNA_EditPolyModifier,
     /*type*/ ModifierTypeType::Constructive,
     /*flags*/
-    (eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsMapping |
-     eModifierTypeFlag_SupportsEditmode | eModifierTypeFlag_EnableInEditmode),
+    (eModifierTypeFlag_AcceptsMesh | eModifierTypeFlag_SupportsEditmode |
+     eModifierTypeFlag_EnableInEditmode),
     /*icon*/ ICON_EDITMODE_HLT,
 
     /*copy_data*/ copy_data,

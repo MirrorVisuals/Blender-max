@@ -18,8 +18,10 @@ shows the end result. Clicking another Edit Poly while editing, then Tab (or its
 current level and switches to that one. Tab over a modifier panel acts on that modifier. Tab again records how far each vertex moved as moves of the level and
 puts the original mesh back. The base mesh is never edited.
 
-Only moves are recorded so far. Topology changes are refused when leaving: undo them first, or
-use Discard Edit Poly Session.
+Any tool can be used. Moves of existing vertices become moves; topology changes become the
+level's patch: removed elements and new geometry anchored to the vertices of the mesh below, so
+it follows when the mesh below is deformed. If the topology below changes (e.g. a Subdivision
+level), the patch pauses; such a level cannot be edited until the mesh below matches again.
 """
 
 import bpy
@@ -27,9 +29,9 @@ from bpy.types import Operator
 from bpy.props import StringProperty
 
 KEY_MESH = "_edit_poly_mesh"
+KEY_INPUT = "_edit_poly_input"
 KEY_MODIFIER = "_edit_poly_modifier"
 KEY_HIDDEN = "_edit_poly_hidden"
-KEY_COUNTS = "_edit_poly_counts"
 
 # Tab on an object without an Edit Poly adds one, so the base mesh is never edited directly.
 AUTO_ADD = True
@@ -55,10 +57,6 @@ def pick_level(ob):
     return None
 
 
-def mesh_counts(mesh):
-    return [len(mesh.vertices), len(mesh.edges), len(mesh.polygons)]
-
-
 def evaluated_copy(context, ob):
     depsgraph = context.evaluated_depsgraph_get()
     depsgraph.update()
@@ -79,6 +77,7 @@ def enter_edit_mode_only(context, ob):
 
 
 def start_session(context, ob, level):
+    """Returns an error message if the level cannot be edited, else None."""
     mods = ob.modifiers[:]
     k = mods.index(level)
     visible = {mod.name: mod.show_viewport for mod in mods}
@@ -86,17 +85,20 @@ def start_session(context, ob, level):
     # The mesh as it arrives at the level.
     for mod in mods[k:]:
         mod.show_viewport = False
-    session_mesh = evaluated_copy(context, ob)
-    level.session_prepare(mesh=session_mesh)
+    input_mesh = evaluated_copy(context, ob)
+    try:
+        level.session_check(input=input_mesh)
+    except RuntimeError as ex:
+        bpy.data.meshes.remove(input_mesh)
+        for mod in mods:
+            mod.show_viewport = visible[mod.name]
+        return str(ex).strip()
 
-    # The level's current result, so existing moves show up in Edit Mode.
+    # The level's current result (its patch and moves applied) is what gets edited.
     level.show_viewport = True
-    result = evaluated_copy(context, ob)
-    if len(result.vertices) == len(session_mesh.vertices):
-        co = [0.0] * (3 * len(result.vertices))
-        result.vertices.foreach_get("co", co)
-        session_mesh.vertices.foreach_set("co", co)
-    bpy.data.meshes.remove(result)
+    session_mesh = evaluated_copy(context, ob)
+    level.session_prepare(input=input_mesh, mesh=session_mesh)
+    input_mesh.name = ob.data.name + " (Edit Poly input)"
 
     # While editing, the session mesh replaces everything up to and including the level.
     for mod in mods[:k + 1]:
@@ -107,27 +109,31 @@ def start_session(context, ob, level):
     original = ob.data
     session_mesh.name = original.name + " (Edit Poly)"
     ob[KEY_MESH] = original
+    ob[KEY_INPUT] = input_mesh
     ob[KEY_MODIFIER] = level.name
     ob[KEY_HIDDEN] = [mod.name for mod in mods[:k + 1] if visible[mod.name]]
-    ob[KEY_COUNTS] = mesh_counts(session_mesh)
     ob.data = session_mesh
     ob.modifiers.active = level
 
     enter_edit_mode_only(context, ob)
+    return None
 
 
 def end_session(ob):
     """Put the original mesh and modifier visibility back."""
     session_mesh = ob.data
+    input_mesh = ob.get(KEY_INPUT)
     ob.data = ob[KEY_MESH]
     for name in ob[KEY_HIDDEN]:
         mod = ob.modifiers.get(name)
         if mod is not None:
             mod.show_viewport = True
-    for key in (KEY_MESH, KEY_MODIFIER, KEY_HIDDEN, KEY_COUNTS):
-        del ob[key]
-    if session_mesh is not None and session_mesh.users == 0:
-        bpy.data.meshes.remove(session_mesh)
+    for key in (KEY_MESH, KEY_INPUT, KEY_MODIFIER, KEY_HIDDEN):
+        if key in ob:
+            del ob[key]
+    for mesh in (session_mesh, input_mesh):
+        if mesh is not None and mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
 
 
 def commit_session(context, ob):
@@ -138,11 +144,8 @@ def commit_session(context, ob):
     if level is None or level.type != 'EDIT_POLY':
         end_session(ob)
         return None  # The level was removed while editing: nothing to record into.
-    if mesh_counts(ob.data) != list(ob[KEY_COUNTS]):
-        return ("Topology was changed. The Edit Poly modifier only records moves so far: "
-                "undo the topology change, or use Discard Edit Poly Session")
     try:
-        level.session_commit(mesh=ob.data)
+        level.session_commit(input=ob[KEY_INPUT], mesh=ob.data)
     except RuntimeError as ex:
         return str(ex).strip()
     end_session(ob)
@@ -178,7 +181,9 @@ class OBJECT_OT_edit_poly_tab(Operator):
                     enter_edit_mode_only(context, ob)
                 return {'CANCELLED'}
             if switch_to is not None:
-                start_session(context, ob, ob.modifiers[switch_to])
+                error = start_session(context, ob, ob.modifiers[switch_to])
+                if error:
+                    self.report({'ERROR'}, error)
             return {'FINISHED'}
 
         # Everything that is not a mesh in Object Mode behaves as before. Outside the 3D Viewport
@@ -193,7 +198,10 @@ class OBJECT_OT_edit_poly_tab(Operator):
             if not AUTO_ADD:
                 return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
             level = ob.modifiers.new("Edit Poly", 'EDIT_POLY')
-        start_session(context, ob, level)
+        error = start_session(context, ob, level)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -242,7 +250,10 @@ class OBJECT_OT_edit_poly_level_edit(Operator):
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         ob.modifiers.active = mod
-        start_session(context, ob, mod)
+        error = start_session(context, ob, mod)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 

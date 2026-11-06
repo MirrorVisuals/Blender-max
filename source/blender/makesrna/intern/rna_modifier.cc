@@ -1268,17 +1268,30 @@ static void rna_EditPolyModifier_move_set(ID *id,
   WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
 }
 
-static void rna_EditPolyModifier_session_prepare(EditPolyModifierData * /*emd*/, Mesh *mesh)
+static void rna_EditPolyModifier_session_prepare(EditPolyModifierData * /*emd*/,
+                                                 Mesh *input,
+                                                 Mesh *mesh)
 {
-  blender::edit_poly::session_prepare(*mesh);
+  blender::edit_poly::session_prepare(*input, *mesh);
+}
+
+static void rna_EditPolyModifier_session_check(EditPolyModifierData *emd,
+                                               ReportList *reports,
+                                               Mesh *input)
+{
+  const std::string reason = blender::edit_poly::session_check(*emd, *input);
+  if (!reason.empty()) {
+    BKE_report(reports, RPT_ERROR, reason.c_str());
+  }
 }
 
 static bool rna_EditPolyModifier_session_commit(ID *id,
                                                 EditPolyModifierData *emd,
                                                 ReportList *reports,
+                                                Mesh *input,
                                                 Mesh *mesh)
 {
-  const std::string error = blender::edit_poly::session_commit(*emd, *mesh);
+  const std::string error = blender::edit_poly::session_commit(*emd, *input, *mesh);
   if (!error.empty()) {
     BKE_report(reports, RPT_ERROR, error.c_str());
     return false;
@@ -1286,6 +1299,40 @@ static bool rna_EditPolyModifier_session_commit(ID *id,
   DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
   WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
   return true;
+}
+
+static int rna_EditPolyModifier_patch_header(const PointerRNA *ptr, const int field)
+{
+  const EditPolyModifierData *emd = static_cast<const EditPolyModifierData *>(ptr->data);
+  if (emd->patch_ints == nullptr || emd->patch_ints_num < 6) {
+    return 0;
+  }
+  return emd->patch_ints[field];
+}
+
+static int rna_EditPolyModifier_patch_new_vertices_get(PointerRNA *ptr)
+{
+  return rna_EditPolyModifier_patch_header(ptr, 3);
+}
+
+static int rna_EditPolyModifier_patch_new_faces_get(PointerRNA *ptr)
+{
+  return rna_EditPolyModifier_patch_header(ptr, 4);
+}
+
+static int rna_EditPolyModifier_patch_removed_faces_get(PointerRNA *ptr)
+{
+  return rna_EditPolyModifier_patch_header(ptr, 2);
+}
+
+static void rna_EditPolyModifier_patch_clear(ID *id, EditPolyModifierData *emd)
+{
+  MEM_SAFE_DELETE(emd->patch_ints);
+  MEM_SAFE_DELETE(emd->patch_floats);
+  emd->patch_ints_num = 0;
+  emd->patch_floats_num = 0;
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
 }
 
 static void rna_EditPolyModifier_moves_clear(ID *id, EditPolyModifierData *emd)
@@ -7467,22 +7514,53 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
       func, "offset", 3, nullptr, -FLT_MAX, FLT_MAX, "Offset", "Object space", -1e4f, 1e4f);
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
 
+  prop = RNA_def_property(srna, "patch_new_vertices", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_funcs(prop, "rna_EditPolyModifier_patch_new_vertices_get", nullptr, nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop, "New Vertices", "Vertices added by topology edits");
+
+  prop = RNA_def_property(srna, "patch_new_faces", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_funcs(prop, "rna_EditPolyModifier_patch_new_faces_get", nullptr, nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop, "New Faces", "Faces added or rebuilt by topology edits");
+
+  prop = RNA_def_property(srna, "patch_removed_faces", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_funcs(
+      prop, "rna_EditPolyModifier_patch_removed_faces_get", nullptr, nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(
+      prop, "Removed Faces", "Faces of the mesh below removed or rebuilt by topology edits");
+
   func = RNA_def_function(srna, "session_prepare", "rna_EditPolyModifier_session_prepare");
   RNA_def_function_ui_description(
       func,
-      "Stamp each vertex of a mesh, taken as it arrives at this modifier, with its stable ID and "
-      "position, to start an Edit Mode session");
-  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "");
+      "Start an Edit Mode session: give the input mesh stable IDs and stamp the mesh to edit");
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Mesh as it arrives at this modifier");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "Copy of this modifier's result, to edit");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+
+  func = RNA_def_function(srna, "session_check", "rna_EditPolyModifier_session_check");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  RNA_def_function_ui_description(
+      func, "Raise an error if this level cannot be edited (its topology edits are paused)");
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Mesh as it arrives at this modifier");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
 
   func = RNA_def_function(srna, "session_commit", "rna_EditPolyModifier_session_commit");
   RNA_def_function_flag(func, FUNC_USE_SELF_ID | FUNC_USE_REPORTS);
   RNA_def_function_ui_description(
-      func, "Record how far each vertex of a session mesh moved, as moves of this modifier");
-  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "");
+      func, "Record the edits of a session mesh as moves and a topology patch");
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Input mesh of the session");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "Edited session mesh");
   RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
   parm = RNA_def_boolean(func, "ok", false, "", "False if nothing was recorded (see report)");
   RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "patch_clear", "rna_EditPolyModifier_patch_clear");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(func, "Remove all topology edits");
 
   func = RNA_def_function(srna, "moves_clear", "rna_EditPolyModifier_moves_clear");
   RNA_def_function_flag(func, FUNC_USE_SELF_ID);

@@ -5,11 +5,13 @@
 /** \file
  * \ingroup modifiers
  *
- * Edit Mode sessions on an Edit Poly modifier (phase 3 of the Edit Poly stack).
+ * Edit Mode sessions on an Edit Poly modifier (phases 3 and 4a of the Edit Poly stack).
  *
- * A session edits a temporary mesh: the mesh as it arrives at the modifier, with the modifier's
- * moves applied. #session_prepare stamps every vertex with its stable ID and its position in the
- * incoming mesh. After editing, #session_commit turns the differences into moves.
+ * A session edits a copy of the modifier's current result. #session_prepare stamps that copy with
+ * the stable IDs of its vertices and faces (as visible attributes, which survive the Edit Mode
+ * round trip) and gives the input mesh IDs for every domain. After editing, #session_commit
+ * compares the edited copy with the input: vertex moves become moves, topology changes become the
+ * modifier's patch.
  */
 
 #pragma once
@@ -21,21 +23,27 @@ struct Mesh;
 
 namespace blender::edit_poly {
 
-/** Generic (visible) attribute names, so they survive the Edit Mode round trip. */
-constexpr const char *SESSION_ATTR_ID = "edit_poly_input_id";
-constexpr const char *SESSION_ATTR_POSITION = "edit_poly_input_position";
+constexpr const char *SESSION_ATTR_VERT_ID = "edit_poly_vertex_id";
+constexpr const char *SESSION_ATTR_FACE_ID = "edit_poly_face_id";
 
 /**
- * Store the stable ID and current position of every vertex of `mesh` in the session attributes.
- * Call on the mesh as it arrives at the modifier, before the modifier's moves are applied.
+ * `input` is the mesh as it arrives at the modifier; `mesh` is the modifier's result that will be
+ * edited. Both are copies owned by the session.
  */
-void session_prepare(Mesh &mesh);
+void session_prepare(Mesh &input, Mesh &mesh);
 
 /**
- * Record the difference between each vertex's position and its session start position as a move
- * in `emd`. Vertices that are back at their start lose their move; moves of points that are not
- * in the session (paused moves) are kept. Returns an error message, or an empty string.
+ * Check that the modifier's topology edits apply to `input` (the mesh as it arrives at the
+ * modifier). Editing a level whose edits are paused would replace them, so sessions are refused
+ * then. Returns the reason, or an empty string when editing is fine.
  */
-std::string session_commit(EditPolyModifierData &emd, const Mesh &mesh);
+std::string session_check(const EditPolyModifierData &emd, const Mesh &input);
+
+/**
+ * Record the edits of a session mesh in `emd`. Moves of input vertices replace earlier moves of
+ * those vertices; moves of points that are not in the input (paused moves) are kept. The patch is
+ * replaced. Returns an error message, or an empty string.
+ */
+std::string session_commit(EditPolyModifierData &emd, const Mesh &input, const Mesh &mesh);
 
 }  // namespace blender::edit_poly
