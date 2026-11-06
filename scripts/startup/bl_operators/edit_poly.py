@@ -15,7 +15,7 @@ Entering a level starts a session: the object temporarily uses a copy of the mes
 at that level (with the level's moves applied), and the modifiers up to and including the level
 are hidden because their result is already in that copy. Modifiers above stay visible, which
 shows the end result. Clicking another Edit Poly while editing, then Tab (or its Edit Level button), records the
-current level and switches to that one. Tab again records how far each vertex moved as moves of the level and
+current level and switches to that one. Tab over a modifier panel acts on that modifier. Tab again records how far each vertex moved as moves of the level and
 puts the original mesh back. The base mesh is never edited.
 
 Only moves are recorded so far. Topology changes are refused when leaving: undo them first, or
@@ -158,6 +158,12 @@ class OBJECT_OT_edit_poly_tab(Operator):
 
     def execute(self, context):
         ob = context.active_object
+        in_viewport = context.area is None or context.area.type == 'VIEW_3D'
+
+        # Tab over a modifier panel in the Properties editor acts on that modifier.
+        hovered = getattr(context, "modifier", None)
+        if ob is not None and hovered is not None and hovered.id_data == ob:
+            ob.modifiers.active = hovered
 
         if in_session(ob):
             # Clicking another Edit Poly in the stack while editing, then Tab, switches levels.
@@ -175,8 +181,11 @@ class OBJECT_OT_edit_poly_tab(Operator):
                 start_session(context, ob, ob.modifiers[switch_to])
             return {'FINISHED'}
 
-        # Everything that is not a mesh in Object Mode behaves as before.
+        # Everything that is not a mesh in Object Mode behaves as before. Outside the 3D Viewport
+        # Tab had no meaning, so leave it alone there.
         if ob is None or ob.type != 'MESH' or context.mode != 'OBJECT' or ob.data.library:
+            if not in_viewport:
+                return {'PASS_THROUGH'}
             return bpy.ops.object.mode_set(mode='EDIT', toggle=True)
 
         level = pick_level(ob)

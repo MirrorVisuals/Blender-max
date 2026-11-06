@@ -1280,6 +1280,8 @@ def km_property_editor(_params):
         ("object.modifier_copy", {"type": 'D', "value": 'PRESS', "shift": True}, None),
         ("object.add_modifier_menu", {"type": 'A', "value": 'PRESS', "shift": True}, None),
         ("object.modifier_apply", {"type": 'A', "value": 'PRESS', "ctrl": True}, {"properties": [("report", True)]}),
+        # Edit Poly stack: Tab over a modifier panel edits that level.
+        ("object.edit_poly_tab", {"type": 'TAB', "value": 'PRESS'}, None),
         # ShaderFX panels
         ("object.shaderfx_remove", {"type": 'X', "value": 'PRESS'}, {"properties": [("report", True)]}),
         ("object.shaderfx_remove", {"type": 'DEL', "value": 'PRESS'}, {"properties": [("report", True)]}),
