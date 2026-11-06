@@ -332,6 +332,9 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 
   /* 1. Topology patch. */
   Mesh *result = mesh;
+  /* Moves recorded together with topology edits only make sense with that topology: when the
+   * patch is paused (or replaced by re-run operations), the moves are paused too. */
+  bool apply_moves = true;
   if (emd->patch_ints_num > 0) {
     edit_poly::Patch patch;
     if (!edit_poly::patch_decode(patch_ints(*emd), patch_floats(*emd), patch)) {
@@ -352,20 +355,21 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
         {
           replayed = edit_poly::ops_apply(*mesh, ops, true, ops_reason);
         }
+        apply_moves = false;
         if (replayed) {
           result = replayed;
           warning = "Mesh below changed: " + std::to_string(ops.size()) +
                     " operation(s) re-applied; other edits of this level are paused";
         }
         else {
-          warning = "Topology edits paused: " + reason;
+          warning = "Edits paused: " + reason;
         }
       }
     }
   }
 
   /* 2. Moves. */
-  if (emd->moves_num > 0 && result->verts_num > 0) {
+  if (apply_moves && emd->moves_num > 0 && result->verts_num > 0) {
     /* Without IDs from below, the incoming mesh is the base mesh: use root IDs. */
     const Array<StableID> ids = read_or_make_root_ids(*result, bke::AttrDomain::Point);
     const IDIndex index(ids.data(), ids.size());
