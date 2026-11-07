@@ -47,6 +47,8 @@
 
 #include "DEG_depsgraph.hh"
 
+#include "BKE_stable_id_mesh.hh"
+
 #include "GEO_mesh_merge_verts.hh"
 
 namespace blender {
@@ -822,6 +824,45 @@ static Mesh *arrayModifier_doArray(ArrayModifierData *amd,
 
   if (!dst_vert_normals.is_empty()) {
     bke::mesh_vert_normals_assign(*result, std::move(dst_vert_normals));
+  }
+
+  /* Stable IDs (Edit Poly stack): the first copy keeps the input IDs, copy `c` derives them with
+   * its number, caps derive theirs from the cap mesh. Done before merging doubles, so merged
+   * vertices keep the ID of the vertex they are merged into. */
+  {
+    namespace sid = bke::stable_id;
+    Vector<sid::IDPart> parts;
+    for (int c = 0; c < count; c++) {
+      parts.append({mesh,
+                    c * chunk_nverts,
+                    c * chunk_nedges,
+                    c * chunk_nfaces,
+                    c == 0,
+                    sid::Derivation::ArrayCopy,
+                    uint64_t(c),
+                    0});
+    }
+    if (start_cap_mesh) {
+      parts.append({start_cap_mesh,
+                    result_nverts - start_cap_nverts - end_cap_nverts,
+                    result_nedges - start_cap_nedges - end_cap_nedges,
+                    result_nfaces - start_cap_nfaces - end_cap_nfaces,
+                    false,
+                    sid::Derivation::Generated,
+                    0xCA90,
+                    0});
+    }
+    if (end_cap_mesh) {
+      parts.append({end_cap_mesh,
+                    result_nverts - end_cap_nverts,
+                    result_nedges - end_cap_nedges,
+                    result_nfaces - end_cap_nfaces,
+                    false,
+                    sid::Derivation::Generated,
+                    0xCA91,
+                    0});
+    }
+    sid::write_part_ids(*result, parts);
   }
 
   /* Handle merging */

@@ -47,4 +47,27 @@ void write_ids(Mesh &mesh, AttrDomain domain, Span<StableID> ids, Span<StableID>
 /** Store root IDs for every domain that has none yet. */
 void ensure_root_ids(Mesh &mesh);
 
+/**
+ * A block of a mesh that a modifier built by copying another mesh element by element (same
+ * order), e.g. the mirrored half of Mirror or one copy of Array.
+ */
+struct IDPart {
+  const Mesh *source = nullptr;
+  int vert_start = 0;
+  int edge_start = 0;
+  int face_start = 0;
+  /** The block keeps the source IDs (the original half / first copy). */
+  bool keep = false;
+  /** Otherwise: IDs are `derive(kind, source ID, a, b)` and the source ID is the parent. */
+  Derivation kind = Derivation::Generated;
+  uint64_t a = 0;
+  uint64_t b = 0;
+};
+
+/**
+ * Write IDs for vertices, edges and faces of `result` from the parts it was built from. Elements
+ * outside every part get IDs from their index; duplicates are resolved (the first keeps its ID).
+ */
+void write_part_ids(Mesh &result, Span<IDPart> parts);
+
 }  // namespace blender::bke::stable_id

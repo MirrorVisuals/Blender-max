@@ -150,6 +150,56 @@ void write_ids(Mesh &mesh,
   }
 }
 
+void write_part_ids(Mesh &result, const Span<IDPart> parts)
+{
+  for (const AttrDomain domain : {AttrDomain::Point, AttrDomain::Edge, AttrDomain::Face}) {
+    const int size = domain_size(result, domain);
+    Array<StableID> ids(size, StableID{});
+    Array<StableID> parents(size, StableID{});
+    /* Read every distinct source once (Array uses the same source for all copies). */
+    Vector<std::pair<const Mesh *, Array<StableID>>> sources;
+    auto source_ids = [&](const Mesh *source) -> const Array<StableID> & {
+      for (const auto &item : sources) {
+        if (item.first == source) {
+          return item.second;
+        }
+      }
+      sources.append({source, read_or_make_root_ids(*source, domain)});
+      return sources.last().second;
+    };
+    for (const IDPart &part : parts) {
+      if (part.source == nullptr) {
+        continue;
+      }
+      const Array<StableID> &src = source_ids(part.source);
+      const int start = domain == AttrDomain::Point ? part.vert_start :
+                        domain == AttrDomain::Edge  ? part.edge_start :
+                                                      part.face_start;
+      for (const int i : src.index_range()) {
+        const int dst = start + i;
+        if (dst < 0 || dst >= size) {
+          continue;
+        }
+        if (part.keep) {
+          ids[dst] = src[i];
+        }
+        else {
+          ids[dst] = derive(part.kind, src[i], part.a, part.b);
+          parents[dst] = src[i];
+        }
+      }
+    }
+    const uint64_t seed = root_seed(domain) ^ 0xA11D;
+    for (const int i : IndexRange(size)) {
+      if (!ids[i].is_valid()) {
+        ids[i] = make_root(seed, i);
+      }
+    }
+    resolve_collisions(ids.data(), size);
+    write_ids(result, domain, ids, parents);
+  }
+}
+
 void ensure_root_ids(Mesh &mesh)
 {
   for (const AttrDomain domain : {AttrDomain::Point, AttrDomain::Edge, AttrDomain::Face}) {
