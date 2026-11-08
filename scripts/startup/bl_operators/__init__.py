@@ -21,6 +21,7 @@ _modules = [
     "constraint",
     "copy_global_transform",
     "edit_poly",
+    "uvw_map",
     "file",
     "geometry_nodes",
     "grease_pencil",

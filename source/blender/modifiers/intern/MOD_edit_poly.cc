@@ -89,9 +89,11 @@ static void free_arrays(EditPolyModifierData &emd)
   MEM_SAFE_DELETE(emd.move_offsets);
   MEM_SAFE_DELETE(emd.patch_ints);
   MEM_SAFE_DELETE(emd.patch_floats);
+  MEM_SAFE_DELETE(emd.sel_face_ids);
   emd.moves_num = 0;
   emd.patch_ints_num = 0;
   emd.patch_floats_num = 0;
+  emd.sel_faces_num = 0;
 }
 
 template<typename T> static T *dup_array(const T *src, const int64_t num)
@@ -122,6 +124,21 @@ static void store_moves(EditPolyModifierData &emd,
     emd.move_offsets[3 * i] = offsets[i].x;
     emd.move_offsets[3 * i + 1] = offsets[i].y;
     emd.move_offsets[3 * i + 2] = offsets[i].z;
+  }
+}
+
+static void store_selection(EditPolyModifierData &emd, const Span<int2> ids)
+{
+  MEM_SAFE_DELETE(emd.sel_face_ids);
+  emd.sel_faces_num = int(ids.size());
+  emd.flag |= MOD_EDITPOLY_HAS_SELECTION;
+  if (ids.is_empty()) {
+    return;
+  }
+  emd.sel_face_ids = MEM_new_array_uninitialized<int>(size_t(ids.size()) * 2, __func__);
+  for (const int i : ids.index_range()) {
+    emd.sel_face_ids[2 * i] = ids[i].x;
+    emd.sel_face_ids[2 * i + 1] = ids[i].y;
   }
 }
 
@@ -215,10 +232,25 @@ std::string session_commit(EditPolyModifierData &emd,
   Patch patch;
   Vector<KeptMove> kept_moves;
   Vector<StableID> input_vert_ids;
+  Array<StableID> edited_face_ids;
   const std::string error = patch_compute(
-      input, mesh, old_patch, patch, kept_moves, input_vert_ids);
+      input, mesh, old_patch, patch, kept_moves, input_vert_ids, edited_face_ids);
   if (!error.empty()) {
     return error;
+  }
+
+  /* Face selection: passed up the stack by ID, like the selection of an Edit Poly in 3ds Max. */
+  {
+    const bke::AttributeAccessor attributes = mesh.attributes();
+    const VArraySpan<bool> select = *attributes.lookup_or_default<bool>(
+        ".select_poly", bke::AttrDomain::Face, false);
+    Vector<int2> selected;
+    for (const int f : edited_face_ids.index_range()) {
+      if (select[f] && edited_face_ids[f].is_valid()) {
+        selected.append(int2(int(edited_face_ids[f].lo), int(edited_face_ids[f].hi)));
+      }
+    }
+    store_selection(emd, selected);
   }
 
   /* Moves: keep paused moves (points that are neither in the input nor new), replace the rest. */
@@ -300,6 +332,10 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
   temd->patch_ints = dup_array(emd->patch_ints, emd->patch_ints_num);
   temd->patch_floats = dup_array(emd->patch_floats, emd->patch_floats_num);
   temd->ops_text = emd->ops_text ? BLI_strdup(emd->ops_text) : nullptr;
+  temd->sel_face_ids = dup_array(emd->sel_face_ids, int64_t(emd->sel_faces_num) * 2);
+  if (!temd->sel_face_ids) {
+    temd->sel_faces_num = 0;
+  }
   if (!temd->move_ids || !temd->move_offsets) {
     MEM_SAFE_DELETE(temd->move_ids);
     MEM_SAFE_DELETE(temd->move_offsets);
@@ -321,7 +357,34 @@ static void free_data(ModifierData *md)
 static bool is_disabled(const Scene * /*scene*/, ModifierData *md, bool /*use_render_params*/)
 {
   const EditPolyModifierData *emd = reinterpret_cast<const EditPolyModifierData *>(md);
-  return emd->moves_num == 0 && emd->patch_ints_num == 0;
+  return emd->moves_num == 0 && emd->patch_ints_num == 0 &&
+         (emd->flag & MOD_EDITPOLY_HAS_SELECTION) == 0;
+}
+
+static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
+{
+  using namespace bke::stable_id;
+  Set<uint64_t> selected;
+  for (int i = 0; i < emd.sel_faces_num; i++) {
+    selected.add(key_of(int2(emd.sel_face_ids[2 * i], emd.sel_face_ids[2 * i + 1])));
+  }
+  const Array<StableID> ids = read_or_make_root_ids(mesh, bke::AttrDomain::Face);
+  bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  attributes.remove(".select_poly");
+  if (selected.is_empty()) {
+    return;
+  }
+  /* Faces split from a selected face (e.g. by a Subdivision added below later) are selected. */
+  const VArraySpan<int2> parents = *attributes.lookup_or_default<int2>(
+      ATTR_PARENT_FACE, bke::AttrDomain::Face, int2(0, 0));
+  bke::SpanAttributeWriter<bool> select = attributes.lookup_or_add_for_write_only_span<bool>(
+      ".select_poly", bke::AttrDomain::Face);
+  for (const int f : ids.index_range()) {
+    const int2 parent = parents[f];
+    select.span[f] = selected.contains(ids[f].as_u64()) ||
+                     ((parent.x != 0 || parent.y != 0) && selected.contains(key_of(parent)));
+  }
+  select.finish();
 }
 
 static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
@@ -396,6 +459,11 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     }
   }
 
+  /* 3. Face selection, for modifiers above that work on selected faces (e.g. UVW Map). */
+  if (emd->flag & MOD_EDITPOLY_HAS_SELECTION) {
+    write_selection(*emd, *result);
+  }
+
   if (!warning.empty()) {
     BKE_modifier_set_warning(ctx->object, md, "%s", warning.c_str());
   }
@@ -418,6 +486,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   layout.prop(ptr, "patch_new_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "patch_removed_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "operations_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "selected_faces_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_error_message_draw(layout, ptr);
 }
@@ -442,6 +511,9 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
     writer->write_float_array(emd->patch_floats_num, emd->patch_floats);
   }
   writer->write_string(emd->ops_text);
+  if (emd->sel_faces_num > 0 && emd->sel_face_ids) {
+    writer->write_int32_array(int64_t(emd->sel_faces_num) * 2, emd->sel_face_ids);
+  }
 }
 
 static void blend_read(BlendDataReader *reader, ModifierData *md)
@@ -467,6 +539,12 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
     emd->patch_floats_num = 0;
   }
   BLO_read_string(reader, &emd->ops_text);
+  int sel_num = emd->sel_faces_num;
+  BLO_read_array_and_validate_size(reader, &emd->sel_face_ids, &sel_num, 2);
+  if (sel_num != emd->sel_faces_num || !emd->sel_face_ids) {
+    MEM_SAFE_DELETE(emd->sel_face_ids);
+    emd->sel_faces_num = 0;
+  }
 }
 
 /** \} */

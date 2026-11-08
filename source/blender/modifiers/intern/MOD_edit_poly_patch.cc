@@ -431,7 +431,8 @@ std::string patch_compute(const Mesh &input,
                           const Patch &old_patch,
                           Patch &r_patch,
                           Vector<KeptMove> &r_moves,
-                          Vector<StableID> &r_input_vert_ids)
+                          Vector<StableID> &r_input_vert_ids,
+                          Array<StableID> &r_edited_face_ids)
 {
   r_patch = {};
   r_moves.clear();
@@ -564,6 +565,8 @@ std::string patch_compute(const Mesh &input,
   Set<uint64_t> kept_input_faces;
   Vector<int> new_faces;
   Array<StableID> face_keys(faces.size());
+  r_edited_face_ids.reinitialize(faces.size());
+  r_edited_face_ids.fill(StableID{});
   for (const int f : faces.index_range()) {
     const StableID fid = session_face_ids.is_empty() ? StableID{} : session_face_ids[f];
     face_keys[f] = fid;
@@ -603,6 +606,7 @@ std::string patch_compute(const Mesh &input,
     }
     if (kept) {
       kept_input_faces.add(key_of(fid));
+      r_edited_face_ids[f] = fid;
     }
     else {
       new_faces.append(f);
@@ -646,6 +650,7 @@ std::string patch_compute(const Mesh &input,
     r_patch.new_face_sizes.append(int(faces[f].size()));
     r_patch.new_face_ids.append(id);
     r_patch.new_face_sources.append(source);
+    r_edited_face_ids[f] = id;
     for (const int corner : faces[f]) {
       r_patch.new_face_corner_verts.append(result_ids[corner_verts[corner]]);
     }

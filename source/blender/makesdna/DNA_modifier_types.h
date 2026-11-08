@@ -126,6 +126,7 @@ enum ModifierType : int {
   eModifierType_GreasePencilSimplify = 85,
   eModifierType_GreasePencilTexture = 86,
   eModifierType_EditPoly = 87,
+  eModifierType_UVWMap = 88,
   NUM_MODIFIER_TYPES,
 };
 
@@ -2214,10 +2215,56 @@ struct EditPolyModifierData {
   float *patch_floats = nullptr;
   /** Re-runnable operation log, text (see MOD_edit_poly_ops.hh). */
   char *ops_text = nullptr;
+  /** Face selection passed up the stack, stable face IDs, two ints per face. */
+  int *sel_face_ids = nullptr;
   int moves_num = 0;
   int patch_ints_num = 0;
   int patch_floats_num = 0;
+  int sel_faces_num = 0;
+  /** #EditPolyModifierFlag. */
+  int flag = 0;
   char _pad[4] = {};
+};
+
+enum EditPolyModifierFlag {
+  /** The level passes its own face selection up the stack (stored at the last commit). */
+  MOD_EDITPOLY_HAS_SELECTION = (1 << 0),
+};
+
+/** UVW Map modifier: projections as in 3ds Max. */
+enum UVWMapModifierType {
+  MOD_UVWMAP_PLANAR = 0,
+  MOD_UVWMAP_CYLINDRICAL = 1,
+  MOD_UVWMAP_SPHERICAL = 2,
+  MOD_UVWMAP_SHRINKWRAP = 3,
+  MOD_UVWMAP_BOX = 4,
+  MOD_UVWMAP_FACE = 5,
+};
+
+enum UVWMapModifierFlag {
+  MOD_UVWMAP_FLIP_U = (1 << 0),
+  MOD_UVWMAP_FLIP_V = (1 << 1),
+  MOD_UVWMAP_CAP = (1 << 2),
+  MOD_UVWMAP_SELECTION = (1 << 3),
+};
+
+struct UVWMapModifierData {
+  ModifierData modifier;
+  /** Optional object that is the gizmo (its transform and empty size). */
+  struct Object *gizmo_object = nullptr;
+  /** Gizmo in object space; the gizmo box spans -size/2..size/2. */
+  float gizmo_location[3] = {0.0f, 0.0f, 0.0f};
+  float gizmo_rotation[3] = {0.0f, 0.0f, 0.0f};
+  float gizmo_size[3] = {2.0f, 2.0f, 2.0f};
+  float tile[3] = {1.0f, 1.0f, 1.0f};
+  float offset[2] = {0.0f, 0.0f};
+  /** #UVWMapModifierType. */
+  int map_type = 0;
+  /** Alignment: 0 = X, 1 = Y, 2 = Z. */
+  int axis = 2;
+  /** #UVWMapModifierFlag. */
+  int flag = 0;
+  char uvmap_name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68] = "";
 };
 
 /** #DataTransferModifierData.flags */

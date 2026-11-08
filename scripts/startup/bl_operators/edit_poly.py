@@ -5,6 +5,10 @@
 """
 Edit Poly stack, phase 3: Tab edits an Edit Poly modifier level instead of the base mesh.
 
+When the active modifier is a UVW Map, Tab edits its gizmo instead (see uvw_map.py).
+Leaving a level stores its face selection, which is passed up the stack (e.g. to a UVW Map
+with Selected Faces Only).
+
 Tab picks a level:
 - the active modifier, if it is an Edit Poly;
 - otherwise the nearest Edit Poly below the active modifier;
@@ -370,13 +374,26 @@ class OBJECT_OT_edit_poly_tab(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        from bl_operators import uvw_map
         ob = context.active_object
         in_viewport = context.area is None or context.area.type == 'VIEW_3D'
+
+        # Tab on a UVW Map gizmo returns to the object (the gizmo is like a sub-object).
+        if uvw_map.is_gizmo(ob):
+            uvw_map.finish_gizmo_edit(context, ob)
+            return {'FINISHED'}
 
         # Tab over a modifier panel in the Properties editor acts on that modifier.
         hovered = getattr(context, "modifier", None)
         if ob is not None and hovered is not None and hovered.id_data == ob:
             ob.modifiers.active = hovered
+
+        # Tab on a UVW Map edits its gizmo.
+        active = ob.modifiers.active if ob is not None and hasattr(ob, "modifiers") else None
+        if (active is not None and active.type == 'UVW_MAP' and not in_session(ob) and
+                context.mode == 'OBJECT'):
+            uvw_map.start_gizmo_edit(context, ob, active)
+            return {'FINISHED'}
 
         if in_session(ob):
             # Clicking another Edit Poly in the stack while editing, then Tab, switches levels.

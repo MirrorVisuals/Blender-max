@@ -86,6 +86,12 @@ const EnumPropertyItem rna_enum_object_modifier_type_items[] = {
      ICON_MOD_UVPROJECT,
      "UV Project",
      "Project the UV map coordinates from the negative Z axis of another object"},
+    {eModifierType_UVWMap,
+     "UVW_MAP",
+     ICON_MOD_UVPROJECT,
+     "UVW Map",
+     "Planar, box, cylindrical, spherical, shrink wrap or face mapping from a movable gizmo, "
+     "optionally on selected faces only (as in 3ds Max)"},
     {eModifierType_UVWarp,
      "UV_WARP",
      ICON_MOD_UVPROJECT,
@@ -1093,6 +1099,7 @@ static void rna_ExplodeModifier_vgroup_set(PointerRNA *ptr, const char *value)
 
 RNA_MOD_UVLAYER_NAME_SET(MappingInfo, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(UVProject, uvlayer_name);
+RNA_MOD_UVLAYER_NAME_SET(UVWMap, uvmap_name);
 RNA_MOD_UVLAYER_NAME_SET(UVWarp, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(WeightVGEdit, mask_tex_uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(WeightVGMix, mask_tex_uvlayer_name);
@@ -1128,6 +1135,7 @@ RNA_MOD_OBJECT_SET(Array, end_cap, OB_MESH);
 RNA_MOD_OBJECT_SET(Array, curve_ob, OB_CURVES_LEGACY);
 RNA_MOD_OBJECT_SET(Boolean, object, OB_MESH);
 RNA_MOD_OBJECT_SET(Cast, object, OB_EMPTY);
+RNA_MOD_OBJECT_SET(UVWMap, gizmo_object, OB_EMPTY);
 RNA_MOD_OBJECT_SET(Curve, object, OB_CURVES_LEGACY);
 RNA_MOD_OBJECT_SET(DataTransfer, ob_source, OB_MESH);
 RNA_MOD_OBJECT_SET(Lattice, object, OB_LATTICE);
@@ -7605,6 +7613,23 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
   parm = RNA_def_boolean(func, "ok", false, "", "False if nothing was recorded (see report)");
   RNA_def_function_return(func, parm);
 
+  prop = RNA_def_property(srna, "selected_faces_num", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_sdna(prop, nullptr, "sel_faces_num");
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(
+      prop,
+      "Selected Faces",
+      "Faces selected when this level was last edited; they are passed up the stack (e.g. to "
+      "UVW Map with Selected Faces Only)");
+
+  prop = RNA_def_property(srna, "use_selection", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_EDITPOLY_HAS_SELECTION);
+  RNA_def_property_ui_text(prop,
+                           "Pass Selection",
+                           "Pass this level's face selection up the stack instead of the "
+                           "selection that arrives from below");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
   func = RNA_def_function(srna, "patch_clear", "rna_EditPolyModifier_patch_clear");
   RNA_def_function_flag(func, FUNC_USE_SELF_ID);
   RNA_def_function_ui_description(func, "Remove all topology edits");
@@ -7612,6 +7637,125 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
   func = RNA_def_function(srna, "moves_clear", "rna_EditPolyModifier_moves_clear");
   RNA_def_function_flag(func, FUNC_USE_SELF_ID);
   RNA_def_function_ui_description(func, "Remove all stored moves");
+
+  RNA_define_lib_overridable(false);
+}
+
+static void rna_def_modifier_uvw_map(BlenderRNA *brna)
+{
+  StructRNA *srna;
+  PropertyRNA *prop;
+
+  static const EnumPropertyItem map_type_items[] = {
+      {MOD_UVWMAP_PLANAR, "PLANAR", 0, "Planar", "Project from one side of the gizmo"},
+      {MOD_UVWMAP_CYLINDRICAL,
+       "CYLINDRICAL",
+       0,
+       "Cylindrical",
+       "Wrap around the gizmo axis (optionally with planar caps)"},
+      {MOD_UVWMAP_SPHERICAL, "SPHERICAL", 0, "Spherical", "Wrap as a sphere with two poles"},
+      {MOD_UVWMAP_SHRINKWRAP,
+       "SHRINK_WRAP",
+       0,
+       "Shrink Wrap",
+       "Wrap as a sphere gathered into a single pole, without a seam"},
+      {MOD_UVWMAP_BOX, "BOX", 0, "Box", "Project each face from the side of the gizmo it faces"},
+      {MOD_UVWMAP_FACE, "FACE", 0, "Face", "Map every face to the whole texture"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+  static const EnumPropertyItem axis_items[] = {
+      {0, "X", 0, "X", ""},
+      {1, "Y", 0, "Y", ""},
+      {2, "Z", 0, "Z", ""},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+
+  srna = RNA_def_struct(brna, "UVWMapModifier", "Modifier");
+  RNA_def_struct_ui_text(
+      srna, "UVW Map Modifier", "Projected texture coordinates from a movable gizmo");
+  RNA_def_struct_sdna(srna, "UVWMapModifierData");
+  RNA_def_struct_ui_icon(srna, ICON_MOD_UVPROJECT);
+
+  RNA_define_lib_overridable(true);
+
+  prop = RNA_def_property(srna, "map_type", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_items(prop, map_type_items);
+  RNA_def_property_ui_text(prop, "Mapping", "Projection");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "axis", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_items(prop, axis_items);
+  RNA_def_property_ui_text(prop, "Alignment", "Gizmo axis the projection is aligned to");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "uv_layer", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_sdna(prop, nullptr, "uvmap_name");
+  RNA_def_property_ui_text(
+      prop, "UV Map", "UV map to write (empty: the active one, or a new \"UVMap\")");
+  RNA_def_property_string_funcs(prop, nullptr, nullptr, "rna_UVWMapModifier_uvmap_name_set");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "gizmo_location", PROP_FLOAT, PROP_TRANSLATION);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_ui_text(prop, "Gizmo Location", "Gizmo center, in object space");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "gizmo_rotation", PROP_FLOAT, PROP_EULER);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_ui_text(prop, "Gizmo Rotation", "Gizmo rotation (XYZ Euler), in object space");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "gizmo_size", PROP_FLOAT, PROP_XYZ_LENGTH);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_ui_range(prop, 0.001, 1000.0, 1, 3);
+  RNA_def_property_ui_text(prop, "Gizmo Size", "Length, width and height of the gizmo");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "tile", PROP_FLOAT, PROP_XYZ);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_ui_range(prop, -100.0, 100.0, 1, 3);
+  RNA_def_property_ui_text(prop, "Tile", "Repeat the map: U, V and W tiling");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "offset", PROP_FLOAT, PROP_XYZ);
+  RNA_def_property_array(prop, 2);
+  RNA_def_property_ui_range(prop, -10.0, 10.0, 1, 3);
+  RNA_def_property_ui_text(prop, "Offset", "Shift the map in U and V");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "use_flip_u", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_FLIP_U);
+  RNA_def_property_ui_text(prop, "Flip U", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "use_flip_v", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_FLIP_V);
+  RNA_def_property_ui_text(prop, "Flip V", "");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "use_cap", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_CAP);
+  RNA_def_property_ui_text(
+      prop, "Cap", "Cylindrical: faces looking along the axis get a planar map");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "use_selection", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_SELECTION);
+  RNA_def_property_ui_text(prop,
+                           "Selected Faces Only",
+                           "Map only the faces selected in the Edit Poly level below (or the "
+                           "mesh); other faces keep their UVs");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "gizmo_object", PROP_POINTER, PROP_NONE);
+  RNA_def_property_ui_text(
+      prop,
+      "Gizmo Object",
+      "Object whose transform (and empty size) is the gizmo, instead of the values above");
+  RNA_def_property_pointer_funcs(
+      prop, nullptr, "rna_UVWMapModifier_gizmo_object_set", nullptr, nullptr);
+  RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_SELF_CHECK);
+  RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
 
   RNA_define_lib_overridable(false);
 }
@@ -11977,6 +12121,7 @@ void RNA_def_modifier(BlenderRNA *brna)
   rna_def_modifier_laplaciandeform(brna);
   rna_def_modifier_weld(brna);
   rna_def_modifier_edit_poly(brna);
+  rna_def_modifier_uvw_map(brna);
   rna_def_modifier_wireframe(brna);
   rna_def_modifier_datatransfer(brna);
   rna_def_modifier_normaledit(brna);

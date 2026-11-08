@@ -129,6 +129,7 @@ class OBJECT_MT_modifier_add_edit(ModifierAddMenu, Menu):
             self.operator_modifier_add(layout, 'MESH_SEQUENCE_CACHE')
         if ob_type == 'MESH':
             self.operator_modifier_add(layout, 'UV_PROJECT')
+            self.operator_modifier_add(layout, 'UVW_MAP')
             self.operator_modifier_add(layout, 'UV_WARP')
             self.operator_modifier_add(layout, 'VERTEX_WEIGHT_EDIT')
             self.operator_modifier_add(layout, 'VERTEX_WEIGHT_MIX')

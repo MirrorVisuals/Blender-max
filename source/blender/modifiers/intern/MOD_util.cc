@@ -254,6 +254,7 @@ void modifier_type_init(ModifierTypeInfo *types[])
   INIT_TYPE(Wireframe);
   INIT_TYPE(Weld);
   INIT_TYPE(EditPoly);
+  INIT_TYPE(UVWMap);
   INIT_TYPE(DataTransfer);
   INIT_TYPE(NormalEdit);
   INIT_TYPE(CorrectiveSmooth);

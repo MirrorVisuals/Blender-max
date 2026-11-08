@@ -103,6 +103,7 @@ set(SRC
   intern/MOD_ui_common.cc
   intern/MOD_util.cc
   intern/MOD_uvproject.cc
+  intern/MOD_uvw_map.cc
   intern/MOD_uvwarp.cc
   intern/MOD_volume_displace.cc
   intern/MOD_volume_to_mesh.cc
