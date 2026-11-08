@@ -1724,6 +1724,7 @@ class CYCLES_LIGHT_PT_beam_shape(CyclesButtonsPanel, Panel):
             col.prop(light, "show_cone")
         elif light.type == 'AREA':
             col.prop(light, "spread", text="Spread")
+            col.prop(light, "use_full_visible_surface")
 
 
 class CYCLES_WORLD_PT_preview(CyclesButtonsPanel, Panel):

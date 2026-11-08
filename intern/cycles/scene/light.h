@@ -143,6 +143,7 @@ class AreaLight : public Light {
   NODE_SOCKET_API(float, sizev)
   NODE_SOCKET_API(bool, ellipse)
   NODE_SOCKET_API(float, spread)
+  NODE_SOCKET_API(bool, full_visible_surface)
   NODE_SOCKET_API(bool, is_portal)
 };
 

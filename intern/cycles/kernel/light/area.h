@@ -445,8 +445,18 @@ ccl_device_inline float2 area_light_uv(const ccl_global KernelLight *klight, con
 ccl_device_inline LightEval area_light_eval_from_intersection(const ccl_global KernelLight *klight,
                                                               const float3 ray_P,
                                                               const float3 ray_D,
-                                                              const float t)
+                                                              const float t,
+                                                              const uint32_t path_flag)
 {
+  /* Full visible surface: rays that hit the light without being weighted against light sampling
+   * (camera rays, sharp reflection / refraction) see the whole surface at the radiance it has
+   * without spread. Light sampling and other rays are unchanged, so the lighting is not. */
+  if (klight->area.full_visible_surface && (path_flag & PATH_RAY_MIS_SKIP) &&
+      klight->area.normalize_spread > 0.0f)
+  {
+    return LightEval{M_1_PI_F * fabsf(klight->area.invarea), 1.0f};
+  }
+
   LightSample ls{};
   ls.t = t;
   ls.P = ray_P + ray_D * t;

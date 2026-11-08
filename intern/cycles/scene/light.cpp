@@ -205,6 +205,7 @@ NODE_DEFINE(AreaLight)
   SOCKET_FLOAT(sizev, "Size V", 1.0f);
   SOCKET_BOOLEAN(ellipse, "Ellipse", false);
   SOCKET_FLOAT(spread, "Spread", M_PI_F);
+  SOCKET_BOOLEAN(full_visible_surface, "Full Visible Surface", false);
   SOCKET_BOOLEAN(is_portal, "Is Portal", false);
 
   return type;
@@ -274,6 +275,7 @@ void AreaLight::copy_to_kernel(KernelLight *klight, const Scene *scene, const Ob
 
   klight->area.tan_half_spread = tan_half_spread;
   klight->area.normalize_spread = normalize_spread;
+  klight->area.full_visible_surface = full_visible_surface ? 1 : 0;
 
   Light::copy_to_kernel(klight, scene, object, shader_flags);
 }

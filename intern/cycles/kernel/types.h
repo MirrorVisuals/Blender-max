@@ -1498,7 +1498,9 @@ struct KernelAreaLight {
   float invarea;
   float tan_half_spread;
   float normalize_spread;
-  float pad[2];
+  /* Seen directly (rays without MIS: camera, singular bounces), the surface ignores spread. */
+  int full_visible_surface;
+  float pad;
 };
 
 struct KernelSunLight {

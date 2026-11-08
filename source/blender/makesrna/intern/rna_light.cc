@@ -521,6 +521,16 @@ static void rna_def_area_light(BlenderRNA *brna)
       "How widely the emitted light fans out, as in the case of a gridded softbox");
   RNA_def_property_update(prop, 0, "rna_Light_draw_update");
 
+  prop = RNA_def_property(srna, "use_full_visible_surface", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "mode", LA_FULL_VISIBLE_SURFACE);
+  RNA_def_property_ui_text(
+      prop,
+      "Full Visible Surface",
+      "Seen directly by the camera (or in sharp mirrors and clear glass), the light shows its "
+      "whole surface at the brightness it has without Spread. The light it casts still uses "
+      "Spread. The light must be visible to the camera (Object > Visibility)");
+  RNA_def_property_update(prop, 0, "rna_Light_draw_update");
+
   RNA_define_lib_overridable(false);
 }
 

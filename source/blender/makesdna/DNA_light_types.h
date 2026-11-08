@@ -76,6 +76,8 @@ enum eLight_Mode : int {
   LA_SHADOW_JITTER = 1 << 23,
   LA_USE_TEMPERATURE = 1 << 24,
   LA_UNNORMALIZED = 1 << 25,
+  /** Area light: seen directly, the whole surface is shown at its brightness without spread. */
+  LA_FULL_VISIBLE_SURFACE = 1 << 26,
 };
 ENUM_OPERATORS(eLight_Mode)
 

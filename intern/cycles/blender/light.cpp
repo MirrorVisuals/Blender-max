@@ -26,6 +26,7 @@ void BlenderSync::sync_light(BObjectInfo &b_ob_info, Light *light)
   else if (AreaLight *area_light = dynamic_cast<AreaLight *>(light)) {
     area_light->set_sizeu(b_light.area_size);
     area_light->set_spread(b_light.area_spread);
+    area_light->set_full_visible_surface((b_light.mode & blender::LA_FULL_VISIBLE_SURFACE) != 0);
     if (b_light.area_shape == blender::LA_AREA_SQUARE ||
         b_light.area_shape == blender::LA_AREA_DISK)
     {

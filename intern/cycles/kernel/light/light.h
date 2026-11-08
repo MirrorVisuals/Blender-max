@@ -451,7 +451,7 @@ light_eval_from_intersection(KernelGlobals kg,
     return point_light_eval_from_intersection(klight, ray_P, ray_D, isect->t, N, path_flag);
   }
   if (type == LIGHT_AREA) {
-    return area_light_eval_from_intersection(klight, ray_P, ray_D, isect->t);
+    return area_light_eval_from_intersection(klight, ray_P, ray_D, isect->t, path_flag);
   }
 
   kernel_assert(!"Invalid lamp type in light_eval_from_intersection");
