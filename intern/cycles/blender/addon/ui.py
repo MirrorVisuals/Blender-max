@@ -1507,6 +1507,11 @@ class CYCLES_OBJECT_PT_visibility_ray_visibility(CyclesButtonsPanel, Panel):
         if ob.type != 'LIGHT':
             sub = col.column()
             sub.prop(ob, "visible_shadow", text="Shadow")
+        elif ob.data.type == 'AREA':
+            # Also here, because light add-ons often replace the Beam Shape panel.
+            sub = col.column()
+            sub.active = ob.visible_camera or ob.visible_glossy or ob.visible_transmission
+            sub.prop(ob.data, "use_full_visible_surface")
 
 
 class CYCLES_OBJECT_PT_visibility_culling(CyclesButtonsPanel, Panel):
