@@ -67,6 +67,7 @@ extern ModifierTypeInfo modifierType_Wireframe;
 extern ModifierTypeInfo modifierType_Weld;
 extern ModifierTypeInfo modifierType_EditPoly;
 extern ModifierTypeInfo modifierType_UVWMap;
+extern ModifierTypeInfo modifierType_Unwrap;
 extern ModifierTypeInfo modifierType_DataTransfer;
 extern ModifierTypeInfo modifierType_NormalEdit;
 extern ModifierTypeInfo modifierType_CorrectiveSmooth;

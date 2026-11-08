@@ -5,7 +5,8 @@
 """
 Edit Poly stack, phase 3: Tab edits an Edit Poly modifier level instead of the base mesh.
 
-When the active modifier is a UVW Map, Tab edits its gizmo instead (see uvw_map.py).
+When the active modifier is a UVW Map, Tab edits its gizmo instead (see uvw_map.py); when it is
+an Unwrap, Tab edits its UVs (see unwrap.py).
 Leaving a level stores its face selection, which is passed up the stack (e.g. to a UVW Map
 with Selected Faces Only).
 
@@ -374,13 +375,20 @@ class OBJECT_OT_edit_poly_tab(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        from bl_operators import uvw_map
+        from bl_operators import unwrap, uvw_map
         ob = context.active_object
         in_viewport = context.area is None or context.area.type == 'VIEW_3D'
 
         # Tab on a UVW Map gizmo returns to the object (the gizmo is like a sub-object).
         if uvw_map.is_gizmo(ob):
             uvw_map.finish_gizmo_edit(context, ob)
+            return {'FINISHED'}
+
+        # Tab in an Unwrap session stores the UVs.
+        if unwrap.in_session(ob):
+            warning = unwrap.commit_session(context, ob)
+            if warning:
+                self.report({'WARNING'}, warning)
             return {'FINISHED'}
 
         # Tab over a modifier panel in the Properties editor acts on that modifier.
@@ -393,6 +401,12 @@ class OBJECT_OT_edit_poly_tab(Operator):
         if (active is not None and active.type == 'UVW_MAP' and not in_session(ob) and
                 context.mode == 'OBJECT'):
             uvw_map.start_gizmo_edit(context, ob, active)
+            return {'FINISHED'}
+
+        # Tab on an Unwrap edits its UVs.
+        if (active is not None and active.type == 'UNWRAP' and not in_session(ob) and
+                context.mode == 'OBJECT' and ob.type == 'MESH'):
+            unwrap.start_session(context, ob, active)
             return {'FINISHED'}
 
         if in_session(ob):
@@ -506,8 +520,8 @@ class OBJECT_OT_edit_poly_collapse_to(Operator):
         ob = context.active_object
         if ob is None or ob.type != 'MESH' or context.mode != 'OBJECT':
             return False
-        if in_session(ob):
-            cls.poll_message_set("Leave the Edit Poly level first (Tab)")
+        if in_session(ob) or "_unwrap_mesh" in ob:
+            cls.poll_message_set("Leave the Edit Poly or Unwrap level first (Tab)")
             return False
         return True
 

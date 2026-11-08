@@ -22,6 +22,7 @@ _modules = [
     "copy_global_transform",
     "edit_poly",
     "uvw_map",
+    "unwrap",
     "file",
     "geometry_nodes",
     "grease_pencil",

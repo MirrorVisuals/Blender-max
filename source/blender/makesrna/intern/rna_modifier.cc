@@ -92,6 +92,12 @@ const EnumPropertyItem rna_enum_object_modifier_type_items[] = {
      "UVW Map",
      "Planar, box, cylindrical, spherical, shrink wrap or face mapping from a movable gizmo, "
      "optionally on selected faces only (as in 3ds Max)"},
+    {eModifierType_Unwrap,
+     "UNWRAP",
+     ICON_UV,
+     "Unwrap",
+     "UVs edited in a UV session, stored by stable element ID so they follow changes below "
+     "(experimental)"},
     {eModifierType_UVWarp,
      "UV_WARP",
      ICON_MOD_UVPROJECT,
@@ -889,6 +895,7 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 #  include "DEG_depsgraph_query.hh"
 
 #  include "MOD_edit_poly.hh"
+#  include "MOD_unwrap.hh"
 #  include "MOD_nodes.hh"
 
 #  include "NOD_nodes_srna.hh"
@@ -1100,6 +1107,16 @@ static void rna_ExplodeModifier_vgroup_set(PointerRNA *ptr, const char *value)
 RNA_MOD_UVLAYER_NAME_SET(MappingInfo, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(UVProject, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(UVWMap, uvmap_name);
+RNA_MOD_UVLAYER_NAME_SET(Unwrap, uvmap_name);
+
+/* As the X / Y / Z alignment buttons in 3ds Max: picking an axis turns the gizmo back to it
+ * (undoing View Align or a manual rotation). */
+static void rna_UVWMapModifier_axis_update(Main *bmain, Scene *scene, PointerRNA *ptr)
+{
+  UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
+  umd->gizmo_rotation[0] = umd->gizmo_rotation[1] = umd->gizmo_rotation[2] = 0.0f;
+  rna_Modifier_update(bmain, scene, ptr);
+}
 RNA_MOD_UVLAYER_NAME_SET(UVWarp, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(WeightVGEdit, mask_tex_uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(WeightVGMix, mask_tex_uvlayer_name);
@@ -1356,6 +1373,21 @@ static int rna_EditPolyModifier_patch_new_faces_get(PointerRNA *ptr)
 static int rna_EditPolyModifier_patch_removed_faces_get(PointerRNA *ptr)
 {
   return rna_EditPolyModifier_patch_header(ptr, 2);
+}
+
+static int rna_UnwrapModifier_session_commit(ID *id, UnwrapModifierData *umd, Mesh *mesh)
+{
+  const int count = blender::unwrap::session_commit(*umd, *mesh);
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
+  return count;
+}
+
+static void rna_UnwrapModifier_clear(ID *id, UnwrapModifierData *umd)
+{
+  blender::unwrap::clear(*umd);
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
 }
 
 static void rna_EditPolyModifier_patch_clear(ID *id, EditPolyModifierData *emd)
@@ -7685,8 +7717,11 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
 
   prop = RNA_def_property(srna, "axis", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_items(prop, axis_items);
-  RNA_def_property_ui_text(prop, "Alignment", "Gizmo axis the projection is aligned to");
-  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+  RNA_def_property_ui_text(
+      prop,
+      "Alignment",
+      "Gizmo axis the projection is aligned to; picking one resets the gizmo rotation");
+  RNA_def_property_update(prop, 0, "rna_UVWMapModifier_axis_update");
 
   prop = RNA_def_property(srna, "uv_layer", PROP_STRING, PROP_NONE);
   RNA_def_property_string_sdna(prop, nullptr, "uvmap_name");
@@ -7775,6 +7810,65 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
       prop, nullptr, "rna_UVWMapModifier_gizmo_object_set", nullptr, nullptr);
   RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_SELF_CHECK);
   RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
+
+  RNA_define_lib_overridable(false);
+}
+
+static void rna_def_modifier_unwrap(BlenderRNA *brna)
+{
+  StructRNA *srna;
+  PropertyRNA *prop;
+  FunctionRNA *func;
+  PropertyRNA *parm;
+
+  static const EnumPropertyItem new_faces_items[] = {
+      {MOD_UNWRAP_NEW_FILL,
+       "FILL",
+       0,
+       "Unwrap",
+       "Unwrap faces without stored UVs, attached to the stored UVs around them"},
+      {MOD_UNWRAP_NEW_KEEP, "KEEP", 0, "Keep", "Keep the UVs that arrive from below"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+
+  srna = RNA_def_struct(brna, "UnwrapModifier", "Modifier");
+  RNA_def_struct_ui_text(srna,
+                         "Unwrap Modifier",
+                         "UVs edited in a UV session, stored by stable element ID");
+  RNA_def_struct_sdna(srna, "UnwrapModifierData");
+  RNA_def_struct_ui_icon(srna, ICON_UV);
+
+  RNA_define_lib_overridable(true);
+
+  prop = RNA_def_property(srna, "uv_layer", PROP_STRING, PROP_NONE);
+  RNA_def_property_string_sdna(prop, nullptr, "uvmap_name");
+  RNA_def_property_ui_text(prop, "UV Map", "UV map to edit (empty: the active one)");
+  RNA_def_property_string_funcs(prop, nullptr, nullptr, "rna_UnwrapModifier_uvmap_name_set");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "new_faces", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_items(prop, new_faces_items);
+  RNA_def_property_ui_text(
+      prop, "New Faces", "What faces without stored UVs (new topology below) get");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "faces_num", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_sdna(prop, nullptr, "faces_num");
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop, "Stored Faces", "Faces whose UVs are stored");
+
+  func = RNA_def_function(srna, "session_commit", "rna_UnwrapModifier_session_commit");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(
+      func, "Store the UVs of a mesh edited in a UV session (a copy of this modifier's result)");
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "Edited session mesh");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_int(func, "count", 0, 0, INT_MAX, "", "Number of faces stored", 0, INT_MAX);
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "clear", "rna_UnwrapModifier_clear");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(func, "Remove all stored UVs");
 
   RNA_define_lib_overridable(false);
 }
@@ -12141,6 +12235,7 @@ void RNA_def_modifier(BlenderRNA *brna)
   rna_def_modifier_weld(brna);
   rna_def_modifier_edit_poly(brna);
   rna_def_modifier_uvw_map(brna);
+  rna_def_modifier_unwrap(brna);
   rna_def_modifier_wireframe(brna);
   rna_def_modifier_datatransfer(brna);
   rna_def_modifier_normaledit(brna);

@@ -127,6 +127,7 @@ enum ModifierType : int {
   eModifierType_GreasePencilTexture = 86,
   eModifierType_EditPoly = 87,
   eModifierType_UVWMap = 88,
+  eModifierType_Unwrap = 89,
   NUM_MODIFIER_TYPES,
 };
 
@@ -2271,6 +2272,33 @@ struct UVWMapModifierData {
   /** Real-world size: texture width / height in pixels. */
   int texture_size = 1024;
   char uvmap_name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68] = "";
+};
+
+/** Unwrap modifier: what faces without stored UVs get. */
+enum UnwrapModifierNewFaces {
+  /** Unwrapped, attached to the stored UVs around them. */
+  MOD_UNWRAP_NEW_FILL = 0,
+  /** Keep the UVs that arrive from below. */
+  MOD_UNWRAP_NEW_KEEP = 1,
+};
+
+/**
+ * Unwrap modifier (experimental, Edit Poly stack): UVs stored per face corner by stable IDs.
+ * Per stored face, `face_ints` holds: face ID (2), parent face ID (2), corner count n, has layout
+ * (0/1), then n vertex IDs (2 each); `face_floats` holds n UVs (2 each), then n subdivision
+ * layout positions (2 each) if it has a layout.
+ */
+struct UnwrapModifierData {
+  ModifierData modifier;
+  int *face_ints = nullptr;
+  float *face_floats = nullptr;
+  int face_ints_num = 0;
+  int face_floats_num = 0;
+  int faces_num = 0;
+  /** #UnwrapModifierNewFaces. */
+  int new_faces = 0;
+  char uvmap_name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68] = "";
+  char _pad[4] = {};
 };
 
 /** #DataTransferModifierData.flags */

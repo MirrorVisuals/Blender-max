@@ -104,6 +104,7 @@ set(SRC
   intern/MOD_util.cc
   intern/MOD_uvproject.cc
   intern/MOD_uvw_map.cc
+  intern/MOD_unwrap.cc
   intern/MOD_uvwarp.cc
   intern/MOD_volume_displace.cc
   intern/MOD_volume_to_mesh.cc
@@ -122,6 +123,7 @@ set(SRC
   intern/lineart/lineart_util.cc
 
   MOD_edit_poly.hh
+  MOD_unwrap.hh
   intern/MOD_edit_poly_ops.hh
   intern/MOD_edit_poly_patch.hh
   MOD_modifiertypes.hh
