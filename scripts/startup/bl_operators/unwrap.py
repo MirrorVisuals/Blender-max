@@ -52,7 +52,7 @@ def _open_uv_editor(context):
         print("Unwrap: could not open a UV Editor:", ex)
 
 
-def start_session(context, ob, level):
+def start_session(context, ob, level, open_editor=True, select_all=False):
     from bl_operators.edit_poly import evaluated_copy, enter_edit_mode_only
     mods = ob.modifiers[:]
     k = mods.index(level)
@@ -86,15 +86,16 @@ def start_session(context, ob, level):
     enter_edit_mode_only(context, ob)
     bm = bmesh.from_edit_mesh(ob.data)
     bm.faces.ensure_lookup_table()
-    new = set(new_faces)
+    new = set() if select_all else set(new_faces)
     for face in bm.faces:
         face.select_set(not new or face.index in new)
     bm.select_flush_mode()
     bmesh.update_edit_mesh(ob.data)
-    if new:
+    if new or select_all:
         # Show every face in the UV Editor, with the new ones selected.
         tool_settings.use_uv_select_sync = True
-    _open_uv_editor(context)
+    if open_editor:
+        _open_uv_editor(context)
     return len(new_faces)
 
 
@@ -180,7 +181,57 @@ class OBJECT_OT_unwrap_clear(_UnwrapOperator, Operator):
         return {'FINISHED'}
 
 
+class OBJECT_OT_unwrap_quick(_UnwrapOperator, Operator):
+    """Unwrap or pack all UVs of this level without a UV session"""
+    bl_idname = "object.unwrap_quick"
+    bl_label = "Quick Unwrap"
+
+    method: StringProperty(
+        name="Method",
+        description="SMART: Smart UV Project, UNWRAP: unwrap along the seams, PACK: pack islands",
+        default='SMART',
+    )
+
+    @classmethod
+    def description(cls, _context, properties):
+        return {
+            'SMART': "Smart UV Project all faces of this level (no seams needed)",
+            'UNWRAP': "Unwrap all faces of this level along their seams",
+            'PACK': "Pack the UV islands of this level into the 0..1 tile",
+        }.get(properties.method, cls.__doc__)
+
+    def execute(self, context):
+        from bl_operators import edit_poly
+        ob, mod = self.get(context)
+        if mod is None:
+            return {'CANCELLED'}
+        if in_session(ob) or edit_poly.in_session(ob):
+            self.report({'ERROR'}, "Leave the level being edited first (Tab)")
+            return {'CANCELLED'}
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        start_session(context, ob, mod, open_editor=False, select_all=True)
+        try:
+            if self.method == 'SMART':
+                bpy.ops.uv.smart_project()
+            elif self.method == 'UNWRAP':
+                bpy.ops.uv.unwrap()
+            elif self.method == 'PACK':
+                bpy.ops.uv.pack_islands()
+            else:
+                raise RuntimeError("Unknown method " + self.method)
+        except RuntimeError as ex:
+            if ob.mode == 'EDIT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            end_session(context, ob)
+            self.report({'ERROR'}, str(ex).strip())
+            return {'CANCELLED'}
+        commit_session(context, ob)
+        return {'FINISHED'}
+
+
 classes = (
     OBJECT_OT_unwrap_level_edit,
+    OBJECT_OT_unwrap_quick,
     OBJECT_OT_unwrap_clear,
 )

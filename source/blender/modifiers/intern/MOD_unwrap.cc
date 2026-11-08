@@ -302,6 +302,26 @@ static bool inside(const Span<float2> poly, const float2 p)
   return in;
 }
 
+/** Inside the polygon, or on its boundary. */
+static bool contains(const Span<float2> poly, const float2 p)
+{
+  if (inside(poly, p)) {
+    return true;
+  }
+  const int n = int(poly.size());
+  for (int i = 0; i < n; i++) {
+    const float2 a = poly[i];
+    const float2 b = poly[(i + 1) % n];
+    const float2 ab = b - a;
+    const float len2 = math::length_squared(ab);
+    const float t = len2 > 0.0f ? std::clamp(math::dot(p - a, ab) / len2, 0.0f, 1.0f) : 0.0f;
+    if (math::distance_squared(a + ab * t, p) < 1e-10f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Layout position of each corner of a stored face that is a subdivision base face. */
 static void base_face_layout(const Stored &stored, const StoredFace &f, MutableSpan<float2> r)
 {
@@ -422,30 +442,50 @@ static bool resolve_face(const Stored &stored,
         center += points[c];
       }
       center /= float(n);
-      const Candidate *best = nullptr;
-      float best_dist = FLT_MAX;
-      for (const Candidate &cand : candidates) {
-        if (inside(cand.layout, center)) {
-          best = &cand;
-          break;
-        }
+      Array<float2> centers(candidates.size());
+      Array<bool> holds_center(candidates.size());
+      for (const int i : candidates.index_range()) {
         float2 cc(0.0f);
-        for (const float2 &p : cand.layout) {
+        for (const float2 &p : candidates[i].layout) {
           cc += p;
         }
-        cc /= float(cand.layout.size());
-        const float d = math::distance_squared(cc, center);
-        if (d < best_dist) {
-          best_dist = d;
-          best = &cand;
-        }
+        centers[i] = cc / float(candidates[i].layout.size());
+        holds_center[i] = inside(candidates[i].layout, center);
       }
-      Array<float, 16> w(best->layout.size());
+      /* Each corner is interpolated in a stored face that contains it (the face is finer or
+       * coarser than the stored ones, so its corners can lie in different stored faces). Of the
+       * stored faces that contain a corner, the one that contains (or is nearest to) this face's
+       * center is used, so the face stays on one side of UV seams. */
       for (int c = 0; c < n; c++) {
-        mean_value_weights(best->layout, points[c], w);
+        int best = -1;
+        float best_score = FLT_MAX;
+        for (const int i : candidates.index_range()) {
+          if (!contains(candidates[i].layout, points[c])) {
+            continue;
+          }
+          const float score = holds_center[i] ? -1.0f :
+                                                math::distance_squared(centers[i], center);
+          if (score < best_score) {
+            best_score = score;
+            best = i;
+          }
+        }
+        if (best == -1) {
+          /* Outside all stored faces: the one nearest to the corner. */
+          for (const int i : candidates.index_range()) {
+            const float score = math::distance_squared(centers[i], points[c]);
+            if (score < best_score) {
+              best_score = score;
+              best = i;
+            }
+          }
+        }
+        const Candidate &cand = candidates[best];
+        Array<float, 16> w(cand.layout.size());
+        mean_value_weights(cand.layout, points[c], w);
         float2 uv(0.0f);
         for (const int k : w.index_range()) {
-          uv += w[k] * best->uvs[k];
+          uv += w[k] * cand.uvs[k];
         }
         r_uvs[c] = uv;
       }
@@ -762,6 +802,18 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   RNA_string_set(&op_ptr, "modifier", md->name);
   op_ptr = row->op("OBJECT_OT_unwrap_clear", IFACE_("Reset"), ICON_X);
   RNA_string_set(&op_ptr, "modifier", md->name);
+
+  /* Quick buttons: unwrap or pack without a UV session. */
+  row = &layout.row(true);
+  const struct {
+    const char *method;
+    const char *label;
+  } quick[] = {{"SMART", N_("Smart Project")}, {"UNWRAP", N_("Unwrap")}, {"PACK", N_("Pack")}};
+  for (const auto &q : quick) {
+    op_ptr = row->op("OBJECT_OT_unwrap_quick", IFACE_(q.label), ICON_NONE);
+    RNA_string_set(&op_ptr, "modifier", md->name);
+    RNA_string_set(&op_ptr, "method", q.method);
+  }
 
   layout.use_property_split_set(true);
   layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
