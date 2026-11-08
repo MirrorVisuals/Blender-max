@@ -412,9 +412,9 @@ static void cursor_point_draw(
       break;
     case SCE_SNAP_TO_FACE_MIDPOINT:
       imm_draw_circle_wire_3d(attr_pos, 0.0f, 0.0f, 1.0f, 24);
-      immBegin(GPU_PRIM_POINTS, 1);
-      immVertex3f(attr_pos, 0.0f, 0.0f, 0.0f);
-      immEnd();
+      /* Center dot as a small circle: points need a point shader (GPU_SHADER_3D_POINT_*), and
+       * drawing them with the uniform color shader asserts on Vulkan. */
+      imm_draw_circle_wire_3d(attr_pos, 0.0f, 0.0f, 0.12f, 8);
       break;
     case SCE_SNAP_TO_FACE:
     default:
