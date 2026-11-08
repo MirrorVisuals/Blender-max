@@ -17,6 +17,7 @@
 #include <cmath>
 
 #include "BLI_math_base.hh"
+#include "BLI_string.h"
 #include "BLI_math_euler.hh"
 #include "BLI_math_matrix.hh"
 #include "BLI_math_vector.hh"
@@ -77,28 +78,58 @@ static void update_depsgraph(ModifierData *md, const ModifierUpdateDepsgraphCont
 
 namespace uvw_map {
 
-/** Object space to gizmo space, where the gizmo box is [-1, 1] on every axis. */
-static float4x4 object_to_gizmo(const UVWMapModifierData &umd, const Object *ob)
+/** Gizmo space (the gizmo box is [-1, 1] on every axis) to object space. */
+static float4x4 gizmo_to_object(const UVWMapModifierData &umd, const Object *ob)
 {
-  float4x4 gizmo;
   if (umd.gizmo_object != nullptr && ob != nullptr) {
     const float size = umd.gizmo_object->type == OB_EMPTY ?
                            std::max(umd.gizmo_object->empty_drawsize, 1e-6f) :
                            1.0f;
-    gizmo = math::invert(ob->object_to_world()) * umd.gizmo_object->object_to_world() *
-            math::from_scale<float4x4>(float3(size));
+    return math::invert(ob->object_to_world()) * umd.gizmo_object->object_to_world() *
+           math::from_scale<float4x4>(float3(size));
   }
-  else {
-    float3 half;
-    for (int i = 0; i < 3; i++) {
-      const float s = umd.gizmo_size[i] * 0.5f;
-      half[i] = std::abs(s) < 1e-6f ? (s < 0.0f ? -1e-6f : 1e-6f) : s;
-    }
-    gizmo = math::from_loc_rot_scale<float4x4>(float3(umd.gizmo_location),
-                                               math::EulerXYZ(float3(umd.gizmo_rotation)),
-                                               half);
+  float3 half;
+  for (int i = 0; i < 3; i++) {
+    const float s = umd.gizmo_size[i] * 0.5f;
+    half[i] = std::abs(s) < 1e-6f ? (s < 0.0f ? -1e-6f : 1e-6f) : s;
   }
-  return math::invert(gizmo);
+  return math::from_loc_rot_scale<float4x4>(
+      float3(umd.gizmo_location), math::EulerXYZ(float3(umd.gizmo_rotation)), half);
+}
+
+/**
+ * Real-world size: how many texture tiles one gizmo length is, along the aligned U, V and W
+ * axes. (1, 1, 1) without real-world size.
+ */
+static float3 real_world_scale(const UVWMapModifierData &umd,
+                               const float4x4 &gizmo,
+                               const Object *ob)
+{
+  if ((umd.flag & MOD_UVWMAP_REAL_WORLD) == 0 || umd.texel_density <= 0.0f ||
+      umd.texture_size <= 0)
+  {
+    return float3(1.0f);
+  }
+  const float3x3 m = (ob ? float3x3(ob->object_to_world()) : float3x3::identity()) *
+                     float3x3(gizmo);
+  /* Full world length of each gizmo axis. */
+  const float3 len(2.0f * math::length(m.x_axis()),
+                   2.0f * math::length(m.y_axis()),
+                   2.0f * math::length(m.z_axis()));
+  const float tile = float(umd.texture_size) / umd.texel_density;
+  float3 aligned;
+  switch (umd.axis) {
+    case 0:
+      aligned = float3(len.y, len.z, len.x);
+      break;
+    case 1:
+      aligned = float3(len.x, len.z, len.y);
+      break;
+    default:
+      aligned = len;
+      break;
+  }
+  return aligned / tile;
 }
 
 /** Reorder gizmo axes so that the projection axis is the last one (right-handed). */
@@ -177,6 +208,7 @@ static float2 face_corner(const int k, const int n)
  */
 static void compute(const UVWMapModifierData &umd,
              const float4x4 &to_gizmo,
+             const float3 &scale,
              const Span<float3> positions,
              const OffsetIndices<int> faces,
              const Span<int> corner_verts,
@@ -194,6 +226,9 @@ static void compute(const UVWMapModifierData &umd,
     const IndexRange face = faces[f];
     const Span<int> verts = corner_verts.slice(face);
     MutableSpan<float2> uvs = r_uvs.slice(face);
+    /* Real-world size: tiles per unit of the 0..1 range, per face. */
+    const float around = PI_F * (scale.x + scale.y) * 0.5f;
+    float2 face_scale(scale.x, scale.y);
     switch (type) {
       case MOD_UVWMAP_PLANAR:
         for (const int i : verts.index_range()) {
@@ -204,6 +239,13 @@ static void compute(const UVWMapModifierData &umd,
         const float3 n = bke::mesh::face_normal_calc(q.as_span(), verts);
         for (const int i : verts.index_range()) {
           uvs[i] = box(q[verts[i]], n);
+        }
+        const float3 a = math::abs(n);
+        if (a.x >= a.y && a.x >= a.z) {
+          face_scale = float2(scale.y, scale.z);
+        }
+        else if (a.y >= a.z) {
+          face_scale = float2(scale.x, scale.z);
         }
         break;
       }
@@ -222,6 +264,7 @@ static void compute(const UVWMapModifierData &umd,
           uvs[i] = float2(wrap_u(p), (p.z + 1.0f) * 0.5f);
         }
         fix_seam(uvs);
+        face_scale = float2(around, scale.z);
         break;
       }
       case MOD_UVWMAP_SPHERICAL: {
@@ -253,6 +296,7 @@ static void compute(const UVWMapModifierData &umd,
             }
           }
         }
+        face_scale = float2(around, PI_F * scale.z * 0.5f);
         break;
       }
       case MOD_UVWMAP_SHRINKWRAP:
@@ -264,12 +308,14 @@ static void compute(const UVWMapModifierData &umd,
           const float phi = std::atan2(p.y, p.x);
           uvs[i] = float2(0.5f + 0.5f * r * std::cos(phi), 0.5f + 0.5f * r * std::sin(phi));
         }
+        face_scale = float2(around, around);
         break;
       case MOD_UVWMAP_FACE:
       default:
         for (const int i : verts.index_range()) {
           uvs[i] = face_corner(i, int(verts.size()));
         }
+        face_scale = float2(1.0f);
         break;
     }
 
@@ -280,6 +326,7 @@ static void compute(const UVWMapModifierData &umd,
       if (umd.flag & MOD_UVWMAP_FLIP_V) {
         uv.y = 1.0f - uv.y;
       }
+      uv *= face_scale;
       uv.x = uv.x * umd.tile[0] + umd.offset[0];
       uv.y = uv.y * umd.tile[1] + umd.offset[1];
     }
@@ -328,9 +375,11 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     return mesh;
   }
 
-  const float4x4 to_gizmo = uvw_map::object_to_gizmo(*umd, ctx->object);
+  const float4x4 gizmo = uvw_map::gizmo_to_object(*umd, ctx->object);
+  const float3 scale = uvw_map::real_world_scale(*umd, gizmo, ctx->object);
   uvw_map::compute(*umd,
-                   to_gizmo,
+                   math::invert(gizmo),
+                   scale,
                    mesh->vert_positions(),
                    mesh->faces(),
                    mesh->corner_verts(),
@@ -360,6 +409,20 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   layout.prop(ptr, "axis", ui::ITEM_R_EXPAND, std::nullopt, ICON_NONE);
   layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
   layout.prop(ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+
+  layout.prop(ptr, "use_real_world", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  if (RNA_boolean_get(ptr, "use_real_world")) {
+    ui::Layout *rw = &layout.column(true);
+    rw->prop(ptr, "texel_density", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    rw->prop(ptr, "texture_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+    const float density = RNA_float_get(ptr, "texel_density");
+    if (density > 0.0f) {
+      char label[64];
+      SNPRINTF(label, IFACE_("One texture tile = %.3g m"),
+               float(RNA_int_get(ptr, "texture_size")) / density);
+      layout.label(label, ICON_INFO);
+    }
+  }
 
   ui::Layout *col = &layout.column(true);
   col->prop(ptr, "tile", UI_ITEM_NONE, std::nullopt, ICON_NONE);

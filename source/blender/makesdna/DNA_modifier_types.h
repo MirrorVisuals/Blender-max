@@ -2246,6 +2246,8 @@ enum UVWMapModifierFlag {
   MOD_UVWMAP_FLIP_V = (1 << 1),
   MOD_UVWMAP_CAP = (1 << 2),
   MOD_UVWMAP_SELECTION = (1 << 3),
+  /** Map size from a texel density instead of the gizmo size. */
+  MOD_UVWMAP_REAL_WORLD = (1 << 4),
 };
 
 struct UVWMapModifierData {
@@ -2264,6 +2266,10 @@ struct UVWMapModifierData {
   int axis = 2;
   /** #UVWMapModifierFlag. */
   int flag = 0;
+  /** Real-world size: texture pixels per meter (world space). */
+  float texel_density = 1024.0f;
+  /** Real-world size: texture width / height in pixels. */
+  int texture_size = 1024;
   char uvmap_name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68] = "";
 };
 

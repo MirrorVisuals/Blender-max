@@ -16,13 +16,26 @@ Projects UVs from a gizmo box, as in 3ds Max.
 Seams: cylindrical / spherical faces that cross the seam get their low side moved by +1. Corners
 on a sphere pole take the average U of the face's other corners.
 
-## Gizmo editing (`scripts/startup/bl_operators/uvw_map.py`)
+## Real-world size (pixel density)
 
-- Tab when the active (or hovered) modifier is a UVW Map, or its Edit Gizmo button: an empty
-  (cube display, parented to the object, identity parent inverse) is made from the gizmo values
-  and set as Gizmo Object, then selected. G / R / S move the map live.
-- Tab on that empty (or Edit Gizmo again): its transform is stored back in the modifier and the
-  empty is removed. A Gizmo Object the user set by hand is never removed by Edit Gizmo.
+"Real-World Size" sizes the texture by Pixel Density (texture pixels per meter, world space) and
+Texture Size instead of by the gizmo; the gizmo then only places and turns the map. One tile is
+Texture Size / Pixel Density meters. Cylindrical and spherical U run around the gizmo's
+circumference, so they follow the same density.
+
+## Gizmo drawing and editing (`scripts/startup/bl_operators/uvw_map.py`)
+
+- The gizmo is drawn in the 3D Viewport while a UVW Map is the active modifier (plane with a
+  green right edge and an up tick, box, cylinder or sphere with a green seam). Brighter while
+  editing.
+- Tab when the active (or hovered) modifier is a UVW Map, or its Edit Gizmo button: a helper
+  point (tiny empty) is made at the gizmo and selected. It is NOT linked as Gizmo Object: the
+  mesh would then depend on it and transform snapping excludes objects that depend on what is
+  being moved. A depsgraph handler copies the helper's transform into the gizmo values instead,
+  so G / R / S, the Move / Rotate / Scale tools and snapping all work.
+- Tab on the helper (or Edit Gizmo again) stores it and removes it. A helper that is deselected,
+  or whose modifier was deleted, is removed by a timer after the depsgraph update.
+- A Gizmo Object the user sets by hand is just selected by Edit Gizmo, never removed.
 - Fit / Center: bounds of the faces the modifier maps (the selected ones with Selected Faces
   Only), measured in the gizmo's rotation, from the mesh as it arrives at the modifier.
 - View Align: turns the gizmo so its U, V and projection axes are the view's right, up, depth.

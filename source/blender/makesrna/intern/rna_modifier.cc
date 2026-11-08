@@ -7747,6 +7747,25 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
                            "mesh); other faces keep their UVs");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
+  prop = RNA_def_property(srna, "use_real_world", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_REAL_WORLD);
+  RNA_def_property_ui_text(prop,
+                           "Real-World Size",
+                           "Size the texture by pixel density instead of by the gizmo: the "
+                           "gizmo only places and turns the map");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "texel_density", PROP_FLOAT, PROP_NONE);
+  RNA_def_property_range(prop, 0.001, FLT_MAX);
+  RNA_def_property_ui_range(prop, 1.0, 100000.0, 100, 1);
+  RNA_def_property_ui_text(prop, "Pixel Density", "Texture pixels per meter (world space)");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "texture_size", PROP_INT, PROP_PIXEL);
+  RNA_def_property_range(prop, 1, 65536);
+  RNA_def_property_ui_text(prop, "Texture Size", "Width / height of the texture in pixels");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
   prop = RNA_def_property(srna, "gizmo_object", PROP_POINTER, PROP_NONE);
   RNA_def_property_ui_text(
       prop,
