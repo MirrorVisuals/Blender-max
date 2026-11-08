@@ -72,6 +72,9 @@ static void update_depsgraph(ModifierData *md, const ModifierUpdateDepsgraphCont
   if (umd->gizmo_object != nullptr) {
     DEG_add_object_relation(
         ctx->node, umd->gizmo_object, DEG_OB_COMP_TRANSFORM, "UVW Map Modifier");
+  }
+  /* The gizmo object is used relative to the object; real-world size uses its scale. */
+  if (umd->gizmo_object != nullptr || (umd->flag & MOD_UVWMAP_REAL_WORLD)) {
     DEG_add_depends_on_transform_relation(ctx->node, "UVW Map Modifier");
   }
 }
@@ -227,7 +230,8 @@ static void compute(const UVWMapModifierData &umd,
     const Span<int> verts = corner_verts.slice(face);
     MutableSpan<float2> uvs = r_uvs.slice(face);
     /* Real-world size: tiles per unit of the 0..1 range, per face. */
-    const float around = PI_F * (scale.x + scale.y) * 0.5f;
+    const bool real_world = (umd.flag & MOD_UVWMAP_REAL_WORLD) != 0;
+    const float around = real_world ? PI_F * (scale.x + scale.y) * 0.5f : 1.0f;
     float2 face_scale(scale.x, scale.y);
     switch (type) {
       case MOD_UVWMAP_PLANAR:
@@ -296,7 +300,7 @@ static void compute(const UVWMapModifierData &umd,
             }
           }
         }
-        face_scale = float2(around, PI_F * scale.z * 0.5f);
+        face_scale = float2(around, real_world ? PI_F * scale.z * 0.5f : 1.0f);
         break;
       }
       case MOD_UVWMAP_SHRINKWRAP:

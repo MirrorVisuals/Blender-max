@@ -372,6 +372,8 @@ static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
   attributes.remove(".select_poly");
   if (selected.is_empty()) {
+    attributes.remove(".select_vert");
+    attributes.remove(".select_edge");
     return;
   }
   /* Faces split from a selected face (e.g. by a Subdivision added below later) are selected. */
@@ -385,6 +387,9 @@ static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
                      ((parent.x != 0 || parent.y != 0) && selected.contains(key_of(parent)));
   }
   select.finish();
+  /* Vertices and edges of the selected faces too, so Edit Mode (in any select mode) shows the
+   * same selection. */
+  bke::mesh_select_face_flush(mesh);
 }
 
 static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)

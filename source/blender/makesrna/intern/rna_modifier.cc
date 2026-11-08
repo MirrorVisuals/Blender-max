@@ -7788,7 +7788,7 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
                            "Real-World Size",
                            "Size the texture by pixel density instead of by the gizmo: the "
                            "gizmo only places and turns the map");
-  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+  RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
 
   prop = RNA_def_property(srna, "texel_density", PROP_FLOAT, PROP_NONE);
   RNA_def_property_range(prop, 0.001, FLT_MAX);
