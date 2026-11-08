@@ -188,6 +188,30 @@ def sync(helper):
     _store(mod, location, rotation, half * 2.0)
 
 
+_last_matrix = {}
+
+
+def _flat(matrix):
+    return tuple(round(x, 6) for row in matrix for x in row)
+
+
+def _sync_both_ways(helper):
+    """Moving the helper moves the map; changing the gizmo in the panel (e.g. Alignment, which
+    resets the rotation) moves the helper."""
+    ob, mod = owner_of(helper)
+    if mod is None:
+        return
+    current = _flat(helper.matrix_world)
+    if _last_matrix.get(helper.name) != current:
+        sync(helper)
+    else:
+        expected = ob.matrix_world @ gizmo_matrix(ob, mod)
+        if _flat(expected) != current:
+            helper.matrix_world = expected
+            current = _flat(helper.matrix_world)
+    _last_matrix[helper.name] = current
+
+
 def start_gizmo_edit(context, ob, mod):
     """Select the gizmo of `mod`: its Gizmo Object, or a helper point that edits its values."""
     ob.modifiers.active = mod
@@ -257,6 +281,33 @@ def _cleanup_timer():
     return None
 
 
+def _transform_running():
+    try:
+        for window in bpy.context.window_manager.windows:
+            for op in window.modal_operators:
+                if op.bl_idname.startswith("TRANSFORM_OT_"):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+_sync_pending = [False]
+
+
+def _sync_after_transform():
+    if _transform_running():
+        return 0.05  # Check again shortly.
+    _sync_pending[0] = False
+    try:
+        active = bpy.context.view_layer.objects.active
+        if is_gizmo(active):
+            _sync_both_ways(active)
+    except Exception as ex:
+        print("UVW Map gizmo:", ex)
+    return None
+
+
 @persistent
 def _uvw_map_depsgraph_update(_scene, _depsgraph):
     try:
@@ -265,7 +316,15 @@ def _uvw_map_depsgraph_update(_scene, _depsgraph):
     except Exception:
         return
     if is_gizmo(active) and active.select_get():
-        sync(active)
+        if _transform_running():
+            # Changing the modifier while Move / Rotate / Scale runs makes Blender rebuild the mesh
+            # that snapping is reading from, which can crash. The gizmo is drawn from the helper,
+            # so it follows live; the map is updated as soon as the tool finishes.
+            if not _sync_pending[0]:
+                _sync_pending[0] = True
+                bpy.app.timers.register(_sync_after_transform, first_interval=0.05)
+        else:
+            _sync_both_ways(active)
     # Helpers that need putting away are removed outside the depsgraph update.
     if not _cleanup_pending[0]:
         for o in view_layer.objects:
