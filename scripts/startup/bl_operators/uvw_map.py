@@ -62,6 +62,10 @@ def set_gizmo(ob, mod, location, rotation, size):
 
 def _store(mod, location, rotation, size):
     """Write the gizmo values, only if they changed (avoids endless depsgraph updates)."""
+    import math
+    values = list(location) + list(rotation) + list(size)
+    if not all(math.isfinite(v) for v in values) or min(abs(v) for v in size) < 1e-6:
+        return  # A flat or broken gizmo (e.g. scaled to zero while snapping): keep the last good one.
     euler = rotation.to_euler('XYZ', Euler(mod.gizmo_rotation, 'XYZ'))
     def differs(a, b):
         return any(abs(x - y) > 1e-6 for x, y in zip(a, b))
@@ -281,33 +285,6 @@ def _cleanup_timer():
     return None
 
 
-def _transform_running():
-    try:
-        for window in bpy.context.window_manager.windows:
-            for op in window.modal_operators:
-                if op.bl_idname.startswith("TRANSFORM_OT_"):
-                    return True
-    except Exception:
-        pass
-    return False
-
-
-_sync_pending = [False]
-
-
-def _sync_after_transform():
-    if _transform_running():
-        return 0.05  # Check again shortly.
-    _sync_pending[0] = False
-    try:
-        active = bpy.context.view_layer.objects.active
-        if is_gizmo(active):
-            _sync_both_ways(active)
-    except Exception as ex:
-        print("UVW Map gizmo:", ex)
-    return None
-
-
 @persistent
 def _uvw_map_depsgraph_update(_scene, _depsgraph):
     try:
@@ -316,15 +293,7 @@ def _uvw_map_depsgraph_update(_scene, _depsgraph):
     except Exception:
         return
     if is_gizmo(active) and active.select_get():
-        if _transform_running():
-            # Changing the modifier while Move / Rotate / Scale runs makes Blender rebuild the mesh
-            # that snapping is reading from, which can crash. The gizmo is drawn from the helper,
-            # so it follows live; the map is updated as soon as the tool finishes.
-            if not _sync_pending[0]:
-                _sync_pending[0] = True
-                bpy.app.timers.register(_sync_after_transform, first_interval=0.05)
-        else:
-            _sync_both_ways(active)
+        _sync_both_ways(active)
     # Helpers that need putting away are removed outside the depsgraph update.
     if not _cleanup_pending[0]:
         for o in view_layer.objects:
