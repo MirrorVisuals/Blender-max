@@ -230,20 +230,21 @@ static wmOperatorStatus add_primitive_plane_exec(bContext *C, wmOperator *op)
 {
   MakePrimitiveData creation_data;
   Object *obedit;
-  float loc[3], rot[3];
+  float loc[3], rot[3], scale[3];
   bool enter_editmode;
   ushort local_view_bits;
   const bool calc_uvs = RNA_boolean_get(op->ptr, "calc_uvs");
 
   WM_operator_view3d_unit_defaults(C, op);
+  /* Read the scale like the cube does, so the interactive Add Plane tool keeps the drawn size. */
   ed::object::add_generic_get_opts(
-      C, op, 'Z', loc, rot, nullptr, &enter_editmode, &local_view_bits, nullptr);
+      C, op, 'Z', loc, rot, scale, &enter_editmode, &local_view_bits, nullptr);
   obedit = make_prim_init(C,
                           op,
                           CTX_DATA_(BLT_I18NCONTEXT_ID_MESH, "Plane"),
                           loc,
                           rot,
-                          nullptr,
+                          scale,
                           local_view_bits,
                           &creation_data);
 
