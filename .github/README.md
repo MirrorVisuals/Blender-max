@@ -62,6 +62,17 @@ below possible.
 - **Mute to switch off.** M on the node turns its edits off (they are kept); Tab skips muted
   nodes.
 
+### UVW Map node (Geometry Nodes)
+
+- **The UVW Map modifier as a node.** Shift+A > Mesh > UV > UVW Map. All the modifier's settings
+  (projection, alignment, map channel, material, size modes, tile, offset, flip, gizmo or gizmo
+  object) are in a UVW Map section of the Geometry Nodes modifier, stored per object.
+- **Selection input** instead of Selected Faces Only, e.g. Selected Faces of an Edit Poly node.
+- **Gizmo.** Drawn while the modifier is active; Edit Gizmo, Fit, Center and View Align work as
+  for the modifier, and Tab edits the gizmo when the UVW Map node is the active node.
+- **Never pauses.** The projection uses positions, so it keeps working whatever the nodes before
+  it do.
+
 ### UVW Map modifier
 
 - **Projections:** Planar, Box, Cylindrical (with optional Cap), Spherical, Shrink Wrap and Face.

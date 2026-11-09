@@ -813,7 +813,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   }
 
   layout.use_property_split_set(true);
-  modifier_uv_map_channel_draw(layout, ptr, &ob_ptr);
+  modifier_uv_map_channel_draw(layout, ptr, &ob_ptr, md->name, -1);
   layout.prop(ptr, "new_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "faces_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 

@@ -82,6 +82,7 @@
 #include "MOD_modifiertypes.hh"
 #include "MOD_nodes.hh"
 #include "MOD_ui_common.hh"
+#include "MOD_uvw_map.hh"
 
 #include "ED_node.hh"
 #include "ED_object.hh"
@@ -227,6 +228,21 @@ static void update_depsgraph(ModifierData *md, const ModifierUpdateDepsgraphCont
     }
   }
 
+  /* UVW Map nodes: a gizmo object, and real world sizes depend on the object's transform. */
+  for (const NodesModifierUVWMap &item : Span(nmd->uvw_maps, nmd->uvw_maps_num)) {
+    if (item.data == nullptr) {
+      continue;
+    }
+    if (item.data->gizmo_object) {
+      DEG_add_object_relation(
+          ctx->node, item.data->gizmo_object, DEG_OB_COMP_TRANSFORM, "Nodes Modifier UVW Map");
+      eval_deps.needs_own_transform = true;
+    }
+    if (item.data->size_mode != MOD_UVWMAP_SIZE_GIZMO) {
+      eval_deps.needs_own_transform = true;
+    }
+  }
+
   if (eval_deps.needs_own_transform) {
     DEG_add_depends_on_transform_relation(ctx->node, "Nodes Modifier");
   }
@@ -276,6 +292,12 @@ static void foreach_ID_link(ModifierData *md, Object *ob, IDWalkFunc walk, void 
     for (NodesModifierDataBlock &data_block : MutableSpan(bake.data_blocks, bake.data_blocks_num))
     {
       walk(user_data, ob, &data_block.id, IDWALK_CB_USER);
+    }
+  }
+
+  for (NodesModifierUVWMap &item : MutableSpan(nmd->uvw_maps, nmd->uvw_maps_num)) {
+    if (item.data) {
+      walk(user_data, ob, reinterpret_cast<ID **>(&item.data->gizmo_object), IDWALK_CB_NOP);
     }
   }
 }
@@ -388,6 +410,47 @@ static void update_bakes_from_node_group(NodesModifierData &nmd)
   remove_outdated_bake_caches(nmd);
 }
 
+/** One settings entry for every UVW Map node in the node tree (new ones get the defaults). */
+static void update_uvw_maps_from_node_group(NodesModifierData &nmd)
+{
+  Map<int, NodesModifierUVWMap *> old_by_id;
+  for (NodesModifierUVWMap &item : MutableSpan(nmd.uvw_maps, nmd.uvw_maps_num)) {
+    old_by_id.add(item.id, &item);
+  }
+  Vector<int> ids;
+  if (nmd.node_group && !ID_MISSING(nmd.node_group)) {
+    for (const bNestedNodeRef &ref : nmd.node_group->nested_node_refs_span()) {
+      const bNode *node = nmd.node_group->find_nested_node(ref.id);
+      if (node ? STREQ(node->idname, "GeometryNodeUVWMap") : old_by_id.contains(ref.id)) {
+        /* Missing nodes are kept, in case linked data is missing right now. */
+        ids.append(ref.id);
+      }
+    }
+  }
+  else if (nmd.node_group) {
+    return;
+  }
+  NodesModifierUVWMap *items = ids.is_empty() ?
+                                   nullptr :
+                                   MEM_new_array<NodesModifierUVWMap>(ids.size(), __func__);
+  for (const int i : ids.index_range()) {
+    items[i].id = ids[i];
+    if (NodesModifierUVWMap *old = old_by_id.pop_default(ids[i], nullptr)) {
+      items[i].data = old->data;
+      old->data = nullptr;
+    }
+    else {
+      items[i].data = uvw_map::data_new();
+    }
+  }
+  for (NodesModifierUVWMap &item : MutableSpan(nmd.uvw_maps, nmd.uvw_maps_num)) {
+    uvw_map::data_free(item.data);
+  }
+  MEM_SAFE_DELETE(nmd.uvw_maps);
+  nmd.uvw_maps = items;
+  nmd.uvw_maps_num = ids.size();
+}
+
 /** Remove stored edits of Edit Poly nodes that are not in the node tree anymore. */
 static void update_edit_polys_from_node_group(NodesModifierData &nmd)
 {
@@ -486,6 +549,7 @@ void MOD_nodes_update_interface(Main &bmain, Object *object, NodesModifierData *
   update_system_properties(bmain, *object, *nmd);
   update_bakes_from_node_group(*nmd);
   update_edit_polys_from_node_group(*nmd);
+  update_uvw_maps_from_node_group(*nmd);
   update_panels_from_node_group(*nmd);
   nmd->runtime->usage_cache.reset();
 
@@ -515,6 +579,21 @@ NodesModifierEditPoly *NodesModifierData::find_edit_poly(const int id)
 const NodesModifierEditPoly *NodesModifierData::find_edit_poly(const int id) const
 {
   for (const NodesModifierEditPoly &item : Span{this->edit_polys, this->edit_polys_num}) {
+    if (item.id == id) {
+      return &item;
+    }
+  }
+  return nullptr;
+}
+
+NodesModifierUVWMap *NodesModifierData::find_uvw_map(const int id)
+{
+  return const_cast<NodesModifierUVWMap *>(std::as_const(*this).find_uvw_map(id));
+}
+
+const NodesModifierUVWMap *NodesModifierData::find_uvw_map(const int id) const
+{
+  for (const NodesModifierUVWMap &item : Span{this->uvw_maps, this->uvw_maps_num}) {
     if (item.id == id) {
       return &item;
     }
@@ -1758,6 +1837,8 @@ int session_get(const Object &object, const NodesModifierData &nmd)
 class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
  private:
   const NodesModifierData &nmd_;
+  /** The evaluated object (for a UVW Map gizmo object and real world sizes). */
+  const Object &object_;
   edit_poly_node::Key key_;
   int session_id_ = -1;
   /** The input of the modifier, output by the node being edited in a session. */
@@ -1765,9 +1846,10 @@ class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
 
  public:
   NodesModifierEditPolyParams(const NodesModifierData &nmd,
+                              const Object &object,
                               const Object &object_orig,
                               const bke::GeometrySet &input)
-      : nmd_(nmd), key_(edit_poly_node::key_of(object_orig, nmd))
+      : nmd_(nmd), object_(object), key_(edit_poly_node::key_of(object_orig, nmd))
   {
     edit_poly_node::Registry &reg = edit_poly_node::registry();
     std::scoped_lock lock(reg.mutex);
@@ -1813,6 +1895,46 @@ class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
     }
     if (capture) {
       Mesh *result_copy = BKE_mesh_copy_for_eval(*result);
+      std::scoped_lock lock(reg.mutex);
+      edit_poly_node::Capture &found = reg.captures.lookup_or_add_default(key_);
+      edit_poly_node::capture_free(found);
+      found.id = id;
+      found.done = true;
+      found.input = input_copy;
+      found.result = result_copy;
+    }
+  }
+
+  void uvw_map(const int id,
+               Mesh &mesh,
+               const IndexMask &faces,
+               std::string &r_warning) const override
+  {
+    edit_poly_node::Registry &reg = edit_poly_node::registry();
+    bool capture = false;
+    {
+      std::scoped_lock lock(reg.mutex);
+      const edit_poly_node::Capture *found = reg.captures.lookup_ptr(key_);
+      capture = found && found->id == id;
+    }
+    /* Fit and Center need the mesh arriving at the node. */
+    Mesh *input_copy = capture ? BKE_mesh_copy_for_eval(mesh) : nullptr;
+
+    const NodesModifierUVWMap *item = nmd_.find_uvw_map(id);
+    if (item && item->data) {
+      /* The node's Selection input replaces Selected Faces Only. */
+      UVWMapModifierData settings = *item->data;
+      settings.flag &= ~MOD_UVWMAP_SELECTION;
+      r_warning = uvw_map::apply(settings, &object_, mesh, &faces);
+    }
+    else {
+      /* Not set up yet (the modifier updates its list when the node tree changes). */
+      static const UVWMapModifierData defaults{};
+      r_warning = uvw_map::apply(defaults, &object_, mesh, &faces);
+    }
+
+    if (capture) {
+      Mesh *result_copy = BKE_mesh_copy_for_eval(mesh);
       std::scoped_lock lock(reg.mutex);
       edit_poly_node::Capture &found = reg.captures.lookup_or_add_default(key_);
       edit_poly_node::capture_free(found);
@@ -2055,7 +2177,8 @@ static void modifyGeometry(ModifierData *md,
   call_data.simulation_params = &simulation_params;
   NodesModifierBakeParams bake_params{*nmd, *ctx};
   call_data.bake_params = &bake_params;
-  NodesModifierEditPolyParams edit_poly_params{*nmd, *DEG_get_original(ctx->object), geometry_set};
+  NodesModifierEditPolyParams edit_poly_params{
+      *nmd, *ctx->object, *DEG_get_original(ctx->object), geometry_set};
   call_data.edit_poly_params = &edit_poly_params;
 
   Set<ComputeContextHash> verbose_log_contexts;
@@ -2256,6 +2379,13 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
       edit_poly::data_blend_write(writer, *item.data);
     }
   }
+
+  writer->write_struct_array(nmd->uvw_maps_num, nmd->uvw_maps);
+  for (const NodesModifierUVWMap &item : Span(nmd->uvw_maps, nmd->uvw_maps_num)) {
+    if (item.data) {
+      uvw_map::data_blend_write(writer, *item.data);
+    }
+  }
 }
 
 static void blend_read(BlendDataReader *reader, ModifierData *md)
@@ -2326,6 +2456,14 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
     edit_poly::data_blend_read(reader, item.data);
   }
 
+  BLO_read_array_and_validate_size(reader, &nmd->uvw_maps, &nmd->uvw_maps_num);
+  if (nmd->uvw_maps == nullptr) {
+    nmd->uvw_maps_num = 0;
+  }
+  for (NodesModifierUVWMap &item : MutableSpan(nmd->uvw_maps, nmd->uvw_maps_num)) {
+    uvw_map::data_blend_read(reader, item.data);
+  }
+
   nmd->runtime = MEM_new<NodesModifierRuntime>(__func__);
   nmd->runtime->cache = std::make_shared<bake::ModifierCache>();
 }
@@ -2368,6 +2506,13 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
     tnmd->edit_polys = MEM_dupalloc(nmd->edit_polys);
     for (NodesModifierEditPoly &item : MutableSpan(tnmd->edit_polys, tnmd->edit_polys_num)) {
       item.data = item.data ? edit_poly::data_copy(*item.data) : nullptr;
+    }
+  }
+
+  if (nmd->uvw_maps) {
+    tnmd->uvw_maps = MEM_dupalloc(nmd->uvw_maps);
+    for (NodesModifierUVWMap &item : MutableSpan(tnmd->uvw_maps, tnmd->uvw_maps_num)) {
+      item.data = item.data ? uvw_map::data_copy(*item.data) : nullptr;
     }
   }
 
@@ -2457,6 +2602,11 @@ static void free_data(ModifierData *md)
     edit_poly::data_free(item.data);
   }
   MEM_SAFE_DELETE(nmd->edit_polys);
+
+  for (NodesModifierUVWMap &item : MutableSpan(nmd->uvw_maps, nmd->uvw_maps_num)) {
+    uvw_map::data_free(item.data);
+  }
+  MEM_SAFE_DELETE(nmd->uvw_maps);
 
   MEM_SAFE_DELETE(nmd->bake_directory);
   MEM_delete(nmd->runtime);

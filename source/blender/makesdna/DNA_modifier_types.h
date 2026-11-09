@@ -2586,6 +2586,7 @@ enum GeometryNodesModifierPanel : int {
   NODES_MODIFIER_PANEL_BAKE_DATA_BLOCKS = 4,
   NODES_MODIFIER_PANEL_WARNINGS = 5,
   NODES_MODIFIER_PANEL_EDIT_POLY = 6,
+  NODES_MODIFIER_PANEL_UVW_MAP = 7,
 };
 
 enum NodesModifierFlag : int8_t {
@@ -2701,6 +2702,15 @@ struct NodesModifierEditPoly {
   EditPolyModifierData *data = nullptr;
 };
 
+/** Settings of a UVW Map node, stored per object (see #NodesModifierData::uvw_maps). */
+struct NodesModifierUVWMap {
+  /** An id that references a nested UVW Map node in the node tree (#bNestedNodeRef). */
+  int id = 0;
+  char _pad[4] = {};
+  /** The settings of a UVW Map modifier (its modifier header is unused). */
+  UVWMapModifierData *data = nullptr;
+};
+
 struct NodesModifierData {
   ModifierData modifier;
   struct bNodeTree *node_group = nullptr;
@@ -2725,6 +2735,11 @@ struct NodesModifierData {
   /** Edits of the Edit Poly nodes in the node tree, for this object. */
   NodesModifierEditPoly *edit_polys = nullptr;
 
+  char _pad4[4] = {};
+  int uvw_maps_num = 0;
+  /** Settings of the UVW Map nodes in the node tree, for this object. */
+  NodesModifierUVWMap *uvw_maps = nullptr;
+
   NodesModifierRuntime *runtime = nullptr;
 
 #ifdef __cplusplus
@@ -2732,6 +2747,8 @@ struct NodesModifierData {
   const NodesModifierBake *find_bake(int id) const;
   NodesModifierEditPoly *find_edit_poly(int id);
   const NodesModifierEditPoly *find_edit_poly(int id) const;
+  NodesModifierUVWMap *find_uvw_map(int id);
+  const NodesModifierUVWMap *find_uvw_map(int id) const;
 #endif
 };
 

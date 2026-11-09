@@ -293,6 +293,7 @@ set(SRC
   nodes/node_geo_uv_pack_islands.cc
   nodes/node_geo_uv_tangent.cc
   nodes/node_geo_uv_unwrap.cc
+  nodes/node_geo_uvw_map.cc
   nodes/node_geo_viewer.cc
   nodes/node_geo_viewport_transform.cc
   nodes/node_geo_volume_cube.cc

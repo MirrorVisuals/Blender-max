@@ -88,9 +88,12 @@ static void set_modifier_expand_flag(const bContext * /*C*/, Panel *panel, short
 /* -------------------------------------------------------------------- */
 /** \name Modifier Panel Layouts
  * \{ */
-void modifier_uv_map_channel_draw(ui::Layout &layout, PointerRNA *ptr, PointerRNA *ob_ptr)
+void modifier_uv_map_channel_draw(ui::Layout &layout,
+                                  PointerRNA *ptr,
+                                  PointerRNA *ob_ptr,
+                                  const char *modifier_name,
+                                  const int node_id)
 {
-  const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
   PointerRNA obj_data_ptr = RNA_pointer_get(ob_ptr, "data");
 
   layout.prop(ptr, "map_channel", UI_ITEM_NONE, std::nullopt, ICON_NONE);
@@ -107,7 +110,8 @@ void modifier_uv_map_channel_draw(ui::Layout &layout, PointerRNA *ptr, PointerRN
       row.label(IFACE_("Not on the mesh"), ICON_INFO);
       PointerRNA op_ptr = row.op(
           "OBJECT_OT_uv_map_add_for_modifier", IFACE_("Add UV Map"), ICON_ADD);
-      RNA_string_set(&op_ptr, "modifier", md->name);
+      RNA_string_set(&op_ptr, "modifier", modifier_name);
+      RNA_int_set(&op_ptr, "node_id", node_id);
     }
   }
 
@@ -115,7 +119,8 @@ void modifier_uv_map_channel_draw(ui::Layout &layout, PointerRNA *ptr, PointerRN
   row.use_property_split_set(false);
   PointerRNA op_ptr = row.op(
       "OBJECT_OT_uv_map_connect_texture", IFACE_("Connect to Texture"), ICON_NODE_TEXTURE);
-  RNA_string_set(&op_ptr, "modifier", md->name);
+  RNA_string_set(&op_ptr, "modifier", modifier_name);
+  RNA_int_set(&op_ptr, "node_id", node_id);
 }
 
 void modifier_error_message_draw(ui::Layout &layout, PointerRNA *ptr)

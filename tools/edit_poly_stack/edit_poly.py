@@ -358,15 +358,26 @@ def start_session(context, ob, level):
     return None
 
 
-def node_level_id(ob):
-    """The Edit Poly node Tab edits in the active Geometry Nodes modifier: (modifier, id) or None."""
-    active = ob.modifiers.active
-    if active is None or active.type != 'NODES' or not active.show_viewport:
+def node_tab_target(ob):
+    """What Tab edits in the active Geometry Nodes modifier: ('EDIT_POLY' or 'UVW_MAP', modifier,
+    nested node ID), or None. The active node of the node tree decides when it is an Edit Poly or
+    UVW Map node; otherwise an Edit Poly node, else a UVW Map node (closest to the output)."""
+    mod = ob.modifiers.active
+    if mod is None or mod.type != 'NODES' or not mod.show_viewport or mod.node_group is None:
         return None
-    node_id = active.edit_poly_pick()
-    if node_id == -1:
-        return None
-    return active, node_id
+    active_node = mod.node_group.nodes.active
+    kind = getattr(active_node, "bl_idname", "")
+    if kind == 'GeometryNodeUVWMap' and not active_node.mute:
+        node_id = mod.uvw_map_pick()
+        if node_id != -1:
+            return 'UVW_MAP', mod, node_id
+    node_id = mod.edit_poly_pick()
+    if node_id != -1:
+        return 'EDIT_POLY', mod, node_id
+    node_id = mod.uvw_map_pick()
+    if node_id != -1:
+        return 'UVW_MAP', mod, node_id
+    return None
 
 
 def start_node_session(context, ob, mod, node_id):
@@ -470,9 +481,9 @@ def commit_session(context, ob):
     return None
 
 
-def _node_editor_edit_poly_active(context, ob):
+def _node_editor_tab_node_active(context, ob):
     """The node editor shows the active Geometry Nodes modifier of `ob`, at its top level, and its
-    active node is an Edit Poly node."""
+    active node is an Edit Poly or UVW Map node."""
     space = context.space_data
     if ob is None or ob.type != 'MESH' or getattr(space, "type", None) != 'NODE_EDITOR':
         return False
@@ -483,7 +494,8 @@ def _node_editor_edit_poly_active(context, ob):
     if tree is None or tree != mod.node_group or space.node_tree != mod.node_group:
         return False
     node = tree.nodes.active
-    return node is not None and node.bl_idname == 'GeometryNodeEditPoly' and not node.mute
+    return (node is not None and node.bl_idname in {'GeometryNodeEditPoly', 'GeometryNodeUVWMap'} and
+            not node.mute)
 
 
 class OBJECT_OT_edit_poly_tab(Operator):
@@ -498,11 +510,12 @@ class OBJECT_OT_edit_poly_tab(Operator):
         ob = context.active_object
         in_viewport = context.area is None or context.area.type == 'VIEW_3D'
 
-        # In the node editor Tab enters node groups. It edits an Edit Poly node only when that is
-        # the active node of the Geometry Nodes modifier's tree, and leaves a session.
+        # In the node editor Tab enters node groups. It edits an Edit Poly node (or the gizmo of a
+        # UVW Map node) only when that is the active node of the Geometry Nodes modifier's tree,
+        # and leaves a session.
         if context.area is not None and context.area.type == 'NODE_EDITOR':
             busy = ob is not None and (in_session(ob) or unwrap.in_session(ob) or uvw_map.is_gizmo(ob))
-            if not busy and not _node_editor_edit_poly_active(context, ob):
+            if not busy and not _node_editor_tab_node_active(context, ob):
                 return {'PASS_THROUGH'}
 
         # Tab on a UVW Map gizmo returns to the object (the gizmo is like a sub-object).
@@ -566,10 +579,15 @@ class OBJECT_OT_edit_poly_tab(Operator):
                 return {'PASS_THROUGH'}
             return classic_toggle()
 
-        # An Edit Poly node in the active Geometry Nodes modifier (only ever added by hand).
-        node_level = node_level_id(ob)
-        if node_level is not None:
-            error = start_node_session(context, ob, *node_level)
+        # An Edit Poly or UVW Map node in the active Geometry Nodes modifier (only ever added by
+        # hand): edit it, or the gizmo of the UVW Map.
+        target = node_tab_target(ob)
+        if target is not None:
+            kind, mod, node_id = target
+            if kind == 'UVW_MAP':
+                uvw_map.start_gizmo_edit(context, ob, mod, node_id)
+                return {'FINISHED'}
+            error = start_node_session(context, ob, mod, node_id)
             if error:
                 self.report({'ERROR'}, error)
                 return {'CANCELLED'}

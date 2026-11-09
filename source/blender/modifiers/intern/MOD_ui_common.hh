@@ -54,9 +54,14 @@ PointerRNA *modifier_panel_get_property_pointers(Panel *panel, PointerRNA *r_ob_
 /**
  * Draw the UV map of a modifier that writes one (`map_channel` and `uv_layer` properties):
  * channel, UV map, a button to add the UV map to the mesh when it is not there, and a button to
- * make the selected texture node read it.
+ * make the selected texture node read it. `modifier_name` and `node_id` (-1 for a modifier, else
+ * a UVW Map node in that Geometry Nodes modifier) are passed to the buttons.
  */
-void modifier_uv_map_channel_draw(ui::Layout &layout, PointerRNA *ptr, PointerRNA *ob_ptr);
+void modifier_uv_map_channel_draw(ui::Layout &layout,
+                                  PointerRNA *ptr,
+                                  PointerRNA *ob_ptr,
+                                  const char *modifier_name,
+                                  int node_id);
 
 /**
  * Create a panel in the context's region

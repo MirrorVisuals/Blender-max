@@ -29,6 +29,7 @@
 #include "ED_undo.hh"
 
 #include "MOD_nodes.hh"
+#include "MOD_uvw_map.hh"
 #include "NOD_caller_ui.hh"
 #include "NOD_eval_log.hh"
 #include "NOD_geometry.hh"
@@ -867,8 +868,9 @@ static void draw_manage_panel(const bContext *C,
   }
 }
 
-/** Edit Poly nodes in the node tree (nested references), in the order of the tree. */
-static Vector<const bNestedNodeRef *> edit_poly_node_refs(const bNodeTree *tree)
+/** Nodes of a type in the node tree (nested references), in the order of the tree. */
+static Vector<const bNestedNodeRef *> nested_node_refs_of_type(const bNodeTree *tree,
+                                                               const char *idname)
 {
   Vector<const bNestedNodeRef *> refs;
   if (tree == nullptr || ID_MISSING(tree)) {
@@ -876,7 +878,7 @@ static Vector<const bNestedNodeRef *> edit_poly_node_refs(const bNodeTree *tree)
   }
   for (const bNestedNodeRef &ref : tree->nested_node_refs_span()) {
     const bNode *node = tree->find_nested_node(ref.id);
-    if (node && STREQ(node->idname, "GeometryNodeEditPoly")) {
+    if (node && STREQ(node->idname, idname)) {
       refs.append(&ref);
     }
   }
@@ -888,6 +890,46 @@ static const char *node_display_name(const bNode &node)
   return node.label[0] ? node.label : node.name;
 }
 
+/** Name of a nested node, with its group node ("Group > Node") when it is in a node group. */
+static std::string nested_node_display_name(const bNodeTree &tree, const bNestedNodeRef &ref)
+{
+  const bNode *node = tree.find_nested_node(ref.id);
+  const bNode *top = tree.node_by_id(ref.path.node_id);
+  std::string name = node ? node_display_name(*node) : "";
+  if (top && top != node) {
+    name = std::string(node_display_name(*top)) + " > " + name;
+  }
+  return name;
+}
+
+/** Settings of each UVW Map node for this object, as in the UVW Map modifier. */
+static void draw_uvw_map_panel(const bContext &C,
+                               ui::Layout &layout,
+                               Object &object,
+                               NodesModifierData &nmd,
+                               const Span<const bNestedNodeRef *> refs)
+{
+  PointerRNA ob_ptr = RNA_id_pointer_create(&object.id);
+  for (const bNestedNodeRef *ref : refs) {
+    const std::string name = nested_node_display_name(*nmd.node_group, *ref);
+    ui::Layout *panel = refs.size() == 1 ?
+                            &layout :
+                            layout.panel(
+                                &C, "uvw_map_node_" + std::to_string(ref->id), false, name);
+    if (panel == nullptr) {
+      continue;
+    }
+    NodesModifierUVWMap *item = nmd.find_uvw_map(ref->id);
+    if (item == nullptr || item->data == nullptr) {
+      panel->label(RPT_("Not set up yet"), ICON_INFO);
+      continue;
+    }
+    PointerRNA settings_ptr = RNA_pointer_create_discrete(
+        &object.id, RNA_UVWMapModifier, item->data);
+    uvw_map::draw_settings(*panel, &settings_ptr, &ob_ptr, nmd.modifier.name, ref->id);
+  }
+}
+
 static void draw_edit_poly_panel(ui::Layout &layout,
                                  const NodesModifierData &nmd,
                                  const Span<const bNestedNodeRef *> refs)
@@ -896,10 +938,7 @@ static void draw_edit_poly_panel(ui::Layout &layout,
   for (const bNestedNodeRef *ref : refs) {
     const bNode *node = tree.find_nested_node(ref->id);
     const bNode *top = tree.node_by_id(ref->path.node_id);
-    std::string name = node_display_name(*node);
-    if (top && top != node) {
-      name = std::string(node_display_name(*top)) + " > " + name;
-    }
+    const std::string name = nested_node_display_name(tree, *ref);
     const bool muted = node->is_muted() || (top && top->is_muted());
 
     std::string info;
@@ -1028,12 +1067,23 @@ void draw_geometry_nodes_modifier_ui(const bContext &C,
     }
   }
 
-  const Vector<const bNestedNodeRef *> edit_poly_refs = edit_poly_node_refs(nmd.node_group);
+  const Vector<const bNestedNodeRef *> edit_poly_refs = nested_node_refs_of_type(
+      nmd.node_group, "GeometryNodeEditPoly");
   if (!edit_poly_refs.is_empty()) {
     if (ui::Layout *panel_layout = layout.panel_prop(
             &C, modifier_ptr, "open_edit_poly_panel", IFACE_("Edit Poly")))
     {
       draw_edit_poly_panel(*panel_layout, nmd, edit_poly_refs);
+    }
+  }
+
+  const Vector<const bNestedNodeRef *> uvw_map_refs = nested_node_refs_of_type(
+      nmd.node_group, "GeometryNodeUVWMap");
+  if (!uvw_map_refs.is_empty()) {
+    if (ui::Layout *panel_layout = layout.panel_prop(
+            &C, modifier_ptr, "open_uvw_map_panel", IFACE_("UVW Map")))
+    {
+      draw_uvw_map_panel(C, *panel_layout, object, nmd, uvw_map_refs);
     }
   }
 

@@ -8,6 +8,11 @@ UVW Map modifier tools, as in 3ds Max.
 The map gizmo is drawn in the 3D Viewport while a UVW Map is the active modifier: a plane,
 box, cylinder or sphere with the seam (or the right edge of a planar map) in green.
 
+UVW Map nodes in a Geometry Nodes tree have the same settings, stored per object in the
+Geometry Nodes modifier (`NodesModifier.uvw_map_settings(id)` gives them as a UVWMapModifier),
+so everything here works on either: functions take the settings as `mod`, and operators take the
+modifier's name and, for a node, its nested node ID.
+
 Tab over the modifier (or its Edit Gizmo button) edits the gizmo like a sub-object: a helper
 point is selected and the normal tools move, rotate and scale it, with snapping. The helper is
 not linked to the modifier (a linked object would stop snapping to the mesh, because the mesh
@@ -19,11 +24,13 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_rpt as rpt_
 from bpy.types import Operator
-from bpy.props import StringProperty
+from bpy.props import IntProperty, StringProperty
 from mathutils import Euler, Matrix, Vector
 
 KEY_GIZMO_FOR = "_uvw_gizmo_for"
 KEY_GIZMO_MODIFIER = "_uvw_gizmo_modifier"
+# Nested node ID of the UVW Map node, for the gizmo of a node (-1: a UVW Map modifier).
+KEY_GIZMO_NODE = "_uvw_gizmo_node"
 
 # Gizmo axes (x, y, z) from the aligned axes (u, v, w): the inverse of the modifier's alignment.
 _ALIGN_INV = {
@@ -31,6 +38,29 @@ _ALIGN_INV = {
     'Y': Matrix(((1, 0, 0, 0), (0, 0, -1, 0), (0, 1, 0, 0), (0, 0, 0, 1))),
     'Z': Matrix.Identity(4),
 }
+
+
+# -----------------------------------------------------------------------------
+# UVW Map modifiers and UVW Map nodes
+
+def map_settings(mod, node_id=-1):
+    """The UVW Map settings of a UVW Map modifier, or of a UVW Map node of a Geometry Nodes
+    modifier (`node_id` >= 0), or None."""
+    if mod is None:
+        return None
+    if node_id is None or node_id < 0:
+        return mod if mod.type == 'UVW_MAP' else None
+    if mod.type != 'NODES':
+        return None
+    return mod.uvw_map_settings(id=node_id)
+
+
+def node_target(ob, mod):
+    """The UVW Map node of an active Geometry Nodes modifier whose gizmo is shown and edited
+    (the active node if it is one, else the one closest to the output), as a node ID, or -1."""
+    if mod is None or mod.type != 'NODES' or not mod.show_viewport:
+        return -1
+    return mod.uvw_map_pick()
 
 
 # -----------------------------------------------------------------------------
@@ -87,8 +117,29 @@ def current_gizmo(ob, mod):
 # -----------------------------------------------------------------------------
 # The mesh as it arrives at the modifier
 
-def input_points(context, ob, mod):
-    """Object space positions of the vertices the modifier maps."""
+def _node_input_mesh(context, mod, node_id):
+    """Copy of the mesh arriving at a UVW Map node (kept by the node while the object evaluates),
+    or None. The caller removes it."""
+    mod.edit_poly_capture_request(id=node_id)
+    depsgraph = context.evaluated_depsgraph_get()
+    depsgraph.update()
+    try:
+        mesh, result = mod.edit_poly_capture_take(id=node_id)
+    except RuntimeError:
+        return None
+    bpy.data.meshes.remove(result)
+    return mesh
+
+
+def input_points(context, ob, mod, owner=None, node_id=-1):
+    """Object space positions of the vertices the modifier maps. For a UVW Map node, `mod` is its
+    settings and `owner` its Geometry Nodes modifier."""
+    if node_id >= 0:
+        mesh = _node_input_mesh(context, owner, node_id)
+        if mesh is None:
+            return []
+        # Nodes have a Selection input instead of Selected Faces Only.
+        return _mapped_points(mesh, False)
     mods = ob.modifiers[:]
     k = mods.index(mod)
     visible = [m.show_viewport for m in mods]
@@ -102,9 +153,14 @@ def input_points(context, ob, mod):
     finally:
         for m, v in zip(mods, visible):
             m.show_viewport = v
+    return _mapped_points(mesh, mod.use_selection)
+
+
+def _mapped_points(mesh, use_selection):
+    """Positions of the vertices of the (selected) faces of `mesh`, which is removed afterwards."""
     try:
         faces = mesh.polygons
-        if mod.use_selection:
+        if use_selection:
             faces = [f for f in faces if f.select]
         verts = {v for f in faces for v in f.vertices}
         if not verts:
@@ -114,8 +170,8 @@ def input_points(context, ob, mod):
         bpy.data.meshes.remove(mesh)
 
 
-def fit(context, ob, mod, keep_size):
-    points = input_points(context, ob, mod)
+def fit(context, ob, mod, keep_size, owner=None, node_id=-1):
+    points = input_points(context, ob, mod, owner, node_id)
     if not points:
         return False
     _location, rotation, size = current_gizmo(ob, mod)
@@ -159,20 +215,27 @@ def is_gizmo(ob):
 
 
 def owner_of(helper):
-    """(object, modifier) a helper edits, or (None, None)."""
+    """(object, UVW Map settings) a helper edits, or (None, None)."""
     ob = bpy.data.objects.get(helper.get(KEY_GIZMO_FOR, ""))
     if ob is None or ob.type != 'MESH':
         return None, None
     mod = ob.modifiers.get(helper.get(KEY_GIZMO_MODIFIER, ""))
-    if mod is None or mod.type != 'UVW_MAP':
-        return ob, None
-    return ob, mod
+    return ob, map_settings(mod, helper.get(KEY_GIZMO_NODE, -1))
+
+
+def owner_modifier_of(helper):
+    """The modifier (UVW Map, or the Geometry Nodes modifier of a UVW Map node) of a helper."""
+    ob = bpy.data.objects.get(helper.get(KEY_GIZMO_FOR, ""))
+    return ob.modifiers.get(helper.get(KEY_GIZMO_MODIFIER, "")) if ob is not None else None
 
 
 def helper_of(ob, mod):
+    """The helper editing the UVW Map settings `mod`, or None."""
     for o in bpy.data.objects:
-        if o.get(KEY_GIZMO_FOR) == ob.name and o.get(KEY_GIZMO_MODIFIER) == mod.name:
-            return o
+        if o.get(KEY_GIZMO_FOR) == ob.name:
+            settings = owner_of(o)[1]
+            if settings is not None and settings.as_pointer() == mod.as_pointer():
+                return o
     return None
 
 
@@ -219,9 +282,13 @@ def _sync_both_ways(helper):
     _last_matrix[helper.name] = current
 
 
-def start_gizmo_edit(context, ob, mod):
-    """Select the gizmo of `mod`: its Gizmo Object, or a helper point that edits its values."""
-    ob.modifiers.active = mod
+def start_gizmo_edit(context, ob, owner, node_id=-1):
+    """Select the gizmo of a UVW Map modifier, or of a UVW Map node of the Geometry Nodes modifier
+    `owner`: its Gizmo Object, or a helper point that edits its values."""
+    ob.modifiers.active = owner
+    mod = map_settings(owner, node_id)
+    if mod is None:
+        return None
     if mod.gizmo_object is not None:
         _select_only(context, mod.gizmo_object)
         return mod.gizmo_object
@@ -236,7 +303,8 @@ def start_gizmo_edit(context, ob, mod):
             collection.objects.link(helper)
         helper.matrix_world = ob.matrix_world @ Matrix.LocRotScale(location, rotation, size * 0.5)
         helper[KEY_GIZMO_FOR] = ob.name
-        helper[KEY_GIZMO_MODIFIER] = mod.name
+        helper[KEY_GIZMO_MODIFIER] = owner.name
+        helper[KEY_GIZMO_NODE] = node_id
     _select_only(context, helper)
     return helper
 
@@ -246,12 +314,13 @@ def finish_gizmo_edit(context, helper):
     ob, mod = owner_of(helper)
     if mod is not None:
         sync(helper)
+    owner = owner_modifier_of(helper)
     # Select the object before removing the helper: the view layer's object list is only
     # rebuilt at the next update, so walking it right after a removal meets an empty slot.
     if ob is not None and context is not None:
         _select_only(context, ob)
-        if mod is not None:
-            ob.modifiers.active = mod
+        if owner is not None:
+            ob.modifiers.active = owner
     _last_matrix.pop(helper.name, None)
     bpy.data.objects.remove(helper)
     return ob
@@ -385,7 +454,12 @@ def _draw_gizmo():
         if ob.type != 'MESH' or ob.mode != 'OBJECT':
             return
         mod = ob.modifiers.active
-        if mod is None or mod.type != 'UVW_MAP' or not mod.show_viewport:
+        if mod is not None and mod.type == 'NODES':
+            node_id = node_target(ob, mod)
+            mod = map_settings(mod, node_id) if node_id != -1 else None
+            if mod is None:
+                return
+        elif mod is None or mod.type != 'UVW_MAP' or not mod.show_viewport:
             return
         matrix = ob.matrix_world @ gizmo_matrix(ob, mod)
     matrix = matrix @ _ALIGN_INV[mod.axis]
@@ -409,17 +483,20 @@ class _UVWMapOperator:
     bl_options = {'REGISTER', 'UNDO'}
 
     modifier: StringProperty(name="Modifier")
+    node_id: IntProperty(name="Node ID", description="UVW Map node of a Geometry Nodes modifier", default=-1)
 
     def get(self, context):
+        """(object, modifier, UVW Map settings) or (None, None, None)."""
         ob = context.active_object
         if is_gizmo(ob):
             ob = owner_of(ob)[0]
         if ob is None or ob.type != 'MESH':
-            return None, None
-        mod = ob.modifiers.get(self.modifier) if self.modifier else ob.modifiers.active
-        if mod is None or mod.type != 'UVW_MAP':
-            return None, None
-        return ob, mod
+            return None, None, None
+        owner = ob.modifiers.get(self.modifier) if self.modifier else ob.modifiers.active
+        mod = map_settings(owner, self.node_id)
+        if mod is None:
+            return None, None, None
+        return ob, owner, mod
 
 
 class OBJECT_OT_uvw_map_gizmo_edit(_UVWMapOperator, Operator):
@@ -431,12 +508,12 @@ class OBJECT_OT_uvw_map_gizmo_edit(_UVWMapOperator, Operator):
         if is_gizmo(context.active_object):
             finish_gizmo_edit(context, context.active_object)
             return {'FINISHED'}
-        ob, mod = self.get(context)
+        ob, owner, mod = self.get(context)
         if mod is None:
             return {'CANCELLED'}
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        start_gizmo_edit(context, ob, mod)
+        start_gizmo_edit(context, ob, owner, self.node_id)
         return {'FINISHED'}
 
 
@@ -446,8 +523,8 @@ class OBJECT_OT_uvw_map_fit(_UVWMapOperator, Operator):
     bl_label = "Fit UVW Map Gizmo"
 
     def execute(self, context):
-        ob, mod = self.get(context)
-        if mod is None or not fit(context, ob, mod, keep_size=False):
+        ob, owner, mod = self.get(context)
+        if mod is None or not fit(context, ob, mod, keep_size=False, owner=owner, node_id=self.node_id):
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -458,8 +535,8 @@ class OBJECT_OT_uvw_map_center(_UVWMapOperator, Operator):
     bl_label = "Center UVW Map Gizmo"
 
     def execute(self, context):
-        ob, mod = self.get(context)
-        if mod is None or not fit(context, ob, mod, keep_size=True):
+        ob, owner, mod = self.get(context)
+        if mod is None or not fit(context, ob, mod, keep_size=True, owner=owner, node_id=self.node_id):
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -470,10 +547,10 @@ class OBJECT_OT_uvw_map_view_align(_UVWMapOperator, Operator):
     bl_label = "View Align UVW Map Gizmo"
 
     def execute(self, context):
-        ob, mod = self.get(context)
+        _ob, _owner, mod = self.get(context)
         if mod is None:
             return {'CANCELLED'}
-        if not view_align(context, ob, mod):
+        if not view_align(context, _ob, mod):
             self.report({'ERROR'}, rpt_("No 3D Viewport to align to"))
             return {'CANCELLED'}
         return {'FINISHED'}
@@ -525,13 +602,16 @@ def _vector_socket_to_connect(node):
     return socket
 
 
-def _uv_modifier_from_operator(context, name):
+def _uv_modifier_from_operator(context, name, node_id=-1):
+    """(object, UVW Map / Unwrap modifier or UVW Map node settings) or (None, None)."""
     ob = context.active_object
     if is_gizmo(ob):
         ob = owner_of(ob)[0]
     if ob is None or ob.type != 'MESH':
         return None, None
     mod = ob.modifiers.get(name) if name else ob.modifiers.active
+    if node_id >= 0:
+        return ob, map_settings(mod, node_id)
     if mod is None or mod.type not in {'UVW_MAP', 'UNWRAP'}:
         return None, None
     return ob, mod
@@ -544,9 +624,10 @@ class OBJECT_OT_uv_map_add_for_modifier(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     modifier: StringProperty(name="Modifier")
+    node_id: IntProperty(name="Node ID", description="UVW Map node of a Geometry Nodes modifier", default=-1)
 
     def execute(self, context):
-        ob, mod = _uv_modifier_from_operator(context, self.modifier)
+        ob, mod = _uv_modifier_from_operator(context, self.modifier, self.node_id)
         if mod is None:
             return {'CANCELLED'}
         ensure_modifier_uv_map(ob, mod)
@@ -561,9 +642,10 @@ class OBJECT_OT_uv_map_connect_texture(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     modifier: StringProperty(name="Modifier")
+    node_id: IntProperty(name="Node ID", description="UVW Map node of a Geometry Nodes modifier", default=-1)
 
     def execute(self, context):
-        ob, mod = _uv_modifier_from_operator(context, self.modifier)
+        ob, mod = _uv_modifier_from_operator(context, self.modifier, self.node_id)
         if mod is None:
             return {'CANCELLED'}
         # The texture should find its UV map on the mesh (it can also come from the modifier).

@@ -1971,7 +1971,8 @@ class NodeTreeMainUpdater {
        * Those are the nodes that we want to store settings or data for at a higher level. */
       for (const UString idname : {"GeometryNodeSimulationOutput"_ustr,
                                    "GeometryNodeBake"_ustr,
-                                   "GeometryNodeEditPoly"_ustr})
+                                   "GeometryNodeEditPoly"_ustr,
+                                   "GeometryNodeUVWMap"_ustr})
       {
         for (const bNode *node : ntree.nodes_by_type(idname)) {
           nested_node_paths.append({node->identifier, -1});

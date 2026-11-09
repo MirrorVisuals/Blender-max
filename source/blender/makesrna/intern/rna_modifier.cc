@@ -2431,7 +2431,9 @@ static bool rna_NodesModifier_is_input_used(PointerRNA nmd_ptr,
 
 /* Edit Poly nodes: sessions on a node's edits, stored per object in the modifier. */
 
-static int rna_NodesModifier_edit_poly_pick(NodesModifierData *nmd)
+/** The node of a type that Tab edits: the active node of the node tree if it has that type, else
+ * the one closest to the output. Muted nodes are skipped. -1 if none. */
+static int nodes_modifier_pick(const NodesModifierData *nmd, const char *idname)
 {
   bNodeTree *ntree = nmd->node_group;
   if (ntree == nullptr || ID_MISSING(ntree)) {
@@ -2444,7 +2446,7 @@ static int rna_NodesModifier_edit_poly_pick(NodesModifierData *nmd)
   for (const bNestedNodeRef &ref : ntree->nested_node_refs_span()) {
     const bNode *node = ntree->find_nested_node(ref.id);
     const bNode *top = ntree->node_by_id(ref.path.node_id);
-    if (node == nullptr || top == nullptr || !STREQ(node->idname, "GeometryNodeEditPoly")) {
+    if (node == nullptr || top == nullptr || !STREQ(node->idname, idname)) {
       continue;
     }
     if (node->is_muted() || top->is_muted()) {
@@ -2463,6 +2465,23 @@ static int rna_NodesModifier_edit_poly_pick(NodesModifierData *nmd)
     }
   }
   return best_id;
+}
+
+static int rna_NodesModifier_edit_poly_pick(NodesModifierData *nmd)
+{
+  return nodes_modifier_pick(nmd, "GeometryNodeEditPoly");
+}
+
+static int rna_NodesModifier_uvw_map_pick(NodesModifierData *nmd)
+{
+  return nodes_modifier_pick(nmd, "GeometryNodeUVWMap");
+}
+
+static UVWMapModifierData *rna_NodesModifier_uvw_map_settings(NodesModifierData *nmd,
+                                                              const int node_id)
+{
+  NodesModifierUVWMap *item = nmd->find_uvw_map(node_id);
+  return item ? item->data : nullptr;
 }
 
 static bool rna_NodesModifier_edit_poly_has_edits(NodesModifierData *nmd, const int node_id)
@@ -9428,6 +9447,22 @@ static void rna_def_modifier_nodes(BlenderRNA *brna)
   parm = RNA_def_int(func, "id", -1, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
   RNA_def_function_return(func, parm);
 
+  func = RNA_def_function(srna, "uvw_map_pick", "rna_NodesModifier_uvw_map_pick");
+  RNA_def_function_ui_description(func,
+                                  "The UVW Map node whose gizmo Tab edits: the active node if it "
+                                  "is one, else the one closest to the output; muted nodes are "
+                                  "skipped (-1 if none)");
+  parm = RNA_def_int(func, "id", -1, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "uvw_map_settings", "rna_NodesModifier_uvw_map_settings");
+  RNA_def_function_ui_description(
+      func, "The settings of a UVW Map node for this object (None if the node is not known yet)");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "settings", "UVWMapModifier", "", "");
+  RNA_def_function_return(func, parm);
+
   func = RNA_def_function(srna, "edit_poly_has_edits", "rna_NodesModifier_edit_poly_has_edits");
   RNA_def_function_ui_description(func, "Whether edits are stored for an Edit Poly node");
   parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
@@ -9524,6 +9559,7 @@ static void rna_def_modifier_nodes(BlenderRNA *brna)
       srna, "open_output_attributes_panel", NODES_MODIFIER_PANEL_OUTPUT_ATTRIBUTES);
   rna_def_modifier_panel_open_prop(srna, "open_manage_panel", NODES_MODIFIER_PANEL_MANAGE);
   rna_def_modifier_panel_open_prop(srna, "open_edit_poly_panel", NODES_MODIFIER_PANEL_EDIT_POLY);
+  rna_def_modifier_panel_open_prop(srna, "open_uvw_map_panel", NODES_MODIFIER_PANEL_UVW_MAP);
   rna_def_modifier_panel_open_prop(srna, "open_bake_panel", NODES_MODIFIER_PANEL_BAKE);
   rna_def_modifier_panel_open_prop(
       srna, "open_named_attributes_panel", NODES_MODIFIER_PANEL_NAMED_ATTRIBUTES);

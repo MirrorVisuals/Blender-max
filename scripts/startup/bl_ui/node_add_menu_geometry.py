@@ -909,6 +909,7 @@ class NODE_MT_gn_mesh_uv_base(node_add_menu.NodeMenu):
         self.node_operator(layout, "GeometryNodeUVPackIslands")
         self.node_operator(layout, "GeometryNodeUVTangent")
         self.node_operator(layout, "GeometryNodeUVUnwrap")
+        self.node_operator(layout, "GeometryNodeUVWMap")
 
         self.draw_assets_for_catalog(layout, self.menu_path)
 

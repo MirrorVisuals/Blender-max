@@ -142,7 +142,10 @@ class GeoNodesBakeParams {
   virtual BakeNodeBehavior *get(const int id) const = 0;
 };
 
-/** Evaluation of Edit Poly nodes, whose edits are stored per object by the caller. */
+/**
+ * Evaluation of Edit Poly and UVW Map nodes, whose edits and settings are stored per object by
+ * the caller (the Geometry Nodes modifier).
+ */
 class GeoNodesEditPolyParams {
  public:
   virtual ~GeoNodesEditPolyParams() = default;
@@ -157,6 +160,14 @@ class GeoNodesEditPolyParams {
                        bke::GeometrySet &geometry,
                        std::string &r_warning,
                        bool &r_has_selection) const = 0;
+  /**
+   * Project UVs for the UVW Map node with the nested node ID `id`, with its settings for this
+   * object, on the faces of `mesh` in `faces`. `r_warning` gets a message, if any.
+   */
+  virtual void uvw_map(int id,
+                       Mesh &mesh,
+                       const IndexMask &faces,
+                       std::string &r_warning) const = 0;
 };
 
 struct GeoNodesSideEffectNodes {

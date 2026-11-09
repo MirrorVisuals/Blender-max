@@ -10885,6 +10885,7 @@ static void rna_def_nodes(BlenderRNA *brna)
   define("GeometryNode", "GeometryNodeUVPackIslands");
   define("GeometryNode", "GeometryNodeUVTangent");
   define("GeometryNode", "GeometryNodeUVUnwrap");
+  define("GeometryNode", "GeometryNodeUVWMap");
   define("GeometryNode", "GeometryNodeVertexOfCorner");
   define("GeometryNode", "GeometryNodeViewer", rna_def_geo_viewer);
   define("GeometryNode", "GeometryNodeViewportTransform");

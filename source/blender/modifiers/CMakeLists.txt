@@ -124,6 +124,7 @@ set(SRC
   intern/lineart/lineart_util.cc
 
   MOD_edit_poly.hh
+  MOD_uvw_map.hh
   MOD_edit_poly_attrs.hh
   MOD_unwrap.hh
   intern/MOD_edit_poly_ops.hh

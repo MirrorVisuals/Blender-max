@@ -36,6 +36,10 @@
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
 
+#include "BLO_read_write.hh"
+
+#include "MEM_guardedalloc.h"
+
 #include "UI_interface_layout.hh"
 #include "UI_resources.hh"
 
@@ -44,6 +48,7 @@
 
 #include "MOD_modifiertypes.hh"
 #include "MOD_ui_common.hh"
+#include "MOD_uvw_map.hh"
 
 #include "DEG_depsgraph_build.hh"
 
@@ -354,82 +359,104 @@ static void compute(const UVWMapModifierData &umd,
 
 }  // namespace uvw_map
 
-static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
+namespace uvw_map {
+
+std::string apply(const UVWMapModifierData &umd,
+                  const Object *ob,
+                  Mesh &mesh,
+                  const IndexMask *face_selection)
 {
-  UVWMapModifierData *umd = reinterpret_cast<UVWMapModifierData *>(md);
-  if (mesh->faces_num == 0) {
-    return mesh;
+  if (mesh.faces_num == 0) {
+    return "";
   }
 
   /* Which faces. */
   IndexMaskMemory memory;
-  IndexMask face_mask = IndexMask(mesh->faces_num);
-  if (umd->flag & MOD_UVWMAP_SELECTION) {
-    const bke::AttributeAccessor attributes = mesh->attributes();
-    const VArray<bool> select = *attributes.lookup_or_default<bool>(
+  IndexMask face_mask = face_selection ? *face_selection : IndexMask(mesh.faces_num);
+  if (face_mask.is_empty()) {
+    return "No faces in the selection";
+  }
+  if (umd.flag & MOD_UVWMAP_SELECTION) {
+    const bke::AttributeAccessor attributes = mesh.attributes();
+    const VArraySpan<bool> select = *attributes.lookup_or_default<bool>(
         ".select_poly", bke::AttrDomain::Face, false);
-    face_mask = IndexMask::from_bools(select, memory);
+    face_mask = IndexMask::from_predicate(
+        face_mask, memory, [&](const int f) { return select[f]; });
     if (face_mask.is_empty()) {
-      BKE_modifier_set_warning(ctx->object, md, "No selected faces");
-      return mesh;
+      return "No selected faces";
     }
   }
-  if (umd->flag & MOD_UVWMAP_MATERIAL) {
+  if (umd.flag & MOD_UVWMAP_MATERIAL) {
     /* Only faces with one material (as a material ID in 3ds Max). */
-    const VArraySpan<int> material = *mesh->attributes().lookup_or_default<int>(
+    const VArraySpan<int> material = *mesh.attributes().lookup_or_default<int>(
         "material_index", bke::AttrDomain::Face, 0);
-    const int wanted = umd->material_index;
+    const int wanted = umd.material_index;
     face_mask = IndexMask::from_predicate(
         face_mask, memory, [&](const int f) { return material[f] == wanted; });
     if (face_mask.is_empty()) {
-      BKE_modifier_set_warning(ctx->object, md, "No faces with this material");
-      return mesh;
+      return "No faces with this material";
     }
   }
 
   /* Which UV map. */
-  std::string name = umd->uvmap_name;
+  std::string name = umd.uvmap_name;
   bool make_active = false;
   if (name.empty()) {
-    name = mesh->active_or_default_uv_map_name();
+    name = mesh.active_or_default_uv_map_name();
     if (name.empty()) {
       name = "UVMap";
       make_active = true;
     }
   }
-  bke::MutableAttributeAccessor attributes = mesh->attributes_for_write();
+  bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
   bke::SpanAttributeWriter<float2> uv = attributes.lookup_or_add_for_write_span<float2>(
       name, bke::AttrDomain::Corner);
   if (!uv) {
-    BKE_modifier_set_warning(
-        ctx->object, md, "\"%s\" is not a UV map (face corner 2D vector)", name.c_str());
-    return mesh;
+    return "\"" + name + "\" is not a UV map (face corner 2D vector)";
   }
 
-  const float4x4 gizmo = uvw_map::gizmo_to_object(*umd, ctx->object);
-  const uvw_map::Sizing size = uvw_map::sizing(*umd, gizmo, ctx->object);
-  uvw_map::compute(*umd,
-                   math::invert(gizmo),
-                   size,
-                   mesh->vert_positions(),
-                   mesh->faces(),
-                   mesh->corner_verts(),
-                   face_mask,
-                   uv.span);
+  const float4x4 gizmo = gizmo_to_object(umd, ob);
+  const Sizing size = sizing(umd, gizmo, ob);
+  compute(umd,
+          math::invert(gizmo),
+          size,
+          mesh.vert_positions(),
+          mesh.faces(),
+          mesh.corner_verts(),
+          face_mask,
+          uv.span);
   uv.finish();
-  if (make_active && mesh->active_uv_map_name().is_empty()) {
-    mesh->uv_maps_active_set(name);
-    mesh->uv_maps_default_set(name);
+  if (make_active && mesh.active_uv_map_name().is_empty()) {
+    mesh.uv_maps_active_set(name);
+    mesh.uv_maps_default_set(name);
+  }
+  return "";
+}
+
+}  // namespace uvw_map
+
+static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
+{
+  const UVWMapModifierData *umd = reinterpret_cast<const UVWMapModifierData *>(md);
+  const std::string warning = uvw_map::apply(*umd, ctx->object, *mesh, nullptr);
+  if (!warning.empty()) {
+    BKE_modifier_set_warning(ctx->object, md, "%s", warning.c_str());
   }
   return mesh;
 }
 
-static void panel_draw(const bContext * /*C*/, Panel *panel)
+namespace uvw_map {
+
+void draw_settings(ui::Layout &layout,
+                   PointerRNA *ptr,
+                   PointerRNA *ob_ptr,
+                   const char *modifier_name,
+                   const int node_id)
 {
-  ui::Layout &layout = *panel->layout;
-  PointerRNA ob_ptr;
-  PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
-  const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
+  const auto set_target = [&](PointerRNA &op_ptr) {
+    RNA_string_set(&op_ptr, "modifier", modifier_name);
+    RNA_int_set(&op_ptr, "node_id", node_id);
+  };
 
   layout.use_property_split_set(true);
   layout.prop(ptr, "map_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
@@ -437,8 +464,11 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
     layout.prop(ptr, "use_cap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   layout.prop(ptr, "axis", ui::ITEM_R_EXPAND, std::nullopt, ICON_NONE);
-  modifier_uv_map_channel_draw(layout, ptr, &ob_ptr);
-  layout.prop(ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  modifier_uv_map_channel_draw(layout, ptr, ob_ptr, modifier_name, node_id);
+  if (node_id < 0) {
+    /* A UVW Map node has a Selection input instead. */
+    layout.prop(ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
 
   {
     ui::Layout &row_mat = layout.row(true, IFACE_("Material"));
@@ -488,13 +518,13 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   row = &layout.row(true);
   PointerRNA op_ptr = row->op(
       "OBJECT_OT_uvw_map_gizmo_edit", IFACE_("Edit Gizmo"), ICON_OBJECT_ORIGIN);
-  RNA_string_set(&op_ptr, "modifier", md->name);
+  set_target(op_ptr);
   op_ptr = row->op("OBJECT_OT_uvw_map_fit", IFACE_("Fit"), ICON_NONE);
-  RNA_string_set(&op_ptr, "modifier", md->name);
+  set_target(op_ptr);
   op_ptr = row->op("OBJECT_OT_uvw_map_center", IFACE_("Center"), ICON_NONE);
-  RNA_string_set(&op_ptr, "modifier", md->name);
+  set_target(op_ptr);
   op_ptr = row->op("OBJECT_OT_uvw_map_view_align", IFACE_("View Align"), ICON_NONE);
-  RNA_string_set(&op_ptr, "modifier", md->name);
+  set_target(op_ptr);
   layout.use_property_split_set(true);
 
   layout.prop(ptr, "gizmo_object", UI_ITEM_NONE, std::nullopt, ICON_NONE);
@@ -505,7 +535,17 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   col->prop(ptr, "gizmo_location", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   col->prop(ptr, "gizmo_rotation", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   col->prop(ptr, "gizmo_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+}
 
+}  // namespace uvw_map
+
+static void panel_draw(const bContext * /*C*/, Panel *panel)
+{
+  ui::Layout &layout = *panel->layout;
+  PointerRNA ob_ptr;
+  PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
+  const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
+  uvw_map::draw_settings(layout, ptr, &ob_ptr, md->name, -1);
   modifier_error_message_draw(layout, ptr);
 }
 
@@ -513,6 +553,47 @@ static void panel_register(ARegionType *region_type)
 {
   modifier_panel_register(region_type, eModifierType_UVWMap, panel_draw);
 }
+
+namespace uvw_map {
+
+UVWMapModifierData *data_new()
+{
+  UVWMapModifierData *umd = MEM_new<UVWMapModifierData>(__func__);
+  umd->modifier.type = eModifierType_UVWMap;
+  return umd;
+}
+
+UVWMapModifierData *data_copy(const UVWMapModifierData &src)
+{
+  UVWMapModifierData *umd = data_new();
+  BKE_modifier_copydata_generic(&src.modifier, &umd->modifier, 0);
+  return umd;
+}
+
+void data_free(UVWMapModifierData *umd)
+{
+  MEM_delete(umd);
+}
+
+void data_blend_write(BlendWriter *writer, const UVWMapModifierData &umd)
+{
+  writer->write_struct(&umd);
+}
+
+void data_blend_read(BlendDataReader *reader, UVWMapModifierData *&umd)
+{
+  BLO_read_struct(reader, UVWMapModifierData, &umd);
+  if (umd) {
+    umd->modifier.next = nullptr;
+    umd->modifier.prev = nullptr;
+    umd->modifier.type = eModifierType_UVWMap;
+    umd->modifier.error = nullptr;
+    umd->modifier.system_properties = nullptr;
+    umd->modifier.runtime = nullptr;
+  }
+}
+
+}  // namespace uvw_map
 
 ModifierTypeInfo modifierType_UVWMap = {
     /*idname*/ "UVWMap",

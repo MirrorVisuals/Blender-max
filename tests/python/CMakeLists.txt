@@ -666,6 +666,11 @@ add_blender_test_allow_error(
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_node_edit_poly.py
 )
 
+add_blender_test(
+  node_uvw_map
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_node_uvw_map.py
+)
+
 # Rendered with Cycles (CPU).
 if(WITH_CYCLES)
   add_blender_test(
