@@ -661,6 +661,11 @@ add_blender_test(
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_mesh_extrude_manifold_solid.py
 )
 
+add_blender_test(
+  node_edit_poly
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_node_edit_poly.py
+)
+
 # Rendered with Cycles (CPU).
 if(WITH_CYCLES)
   add_blender_test(

@@ -578,11 +578,12 @@ static void write_selection(const EditPolyModifierData &emd,
   write_selection_vertex_group(mesh);
 }
 
-static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
+namespace edit_poly {
+
+Mesh *apply(const EditPolyModifierData &emd_ref, Mesh *mesh, std::string &warning)
 {
   using namespace bke::stable_id;
-  EditPolyModifierData *emd = reinterpret_cast<EditPolyModifierData *>(md);
-  std::string warning;
+  const EditPolyModifierData *emd = &emd_ref;
 
   /* 1. Topology patch. */
   Mesh *result = mesh;
@@ -685,6 +686,16 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     write_selection(*emd, *result, vert_ids, face_ids);
   }
 
+  return result;
+}
+
+}  // namespace edit_poly
+
+static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
+{
+  const EditPolyModifierData *emd = reinterpret_cast<const EditPolyModifierData *>(md);
+  std::string warning;
+  Mesh *result = edit_poly::apply(*emd, mesh, warning);
   if (!warning.empty()) {
     BKE_modifier_set_warning(ctx->object, md, "%s", warning.c_str());
   }
@@ -800,6 +811,63 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
     emd->attr_floats_num = 0;
   }
 }
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Edits Stored Outside a Modifier Stack (Edit Poly Nodes)
+ * \{ */
+
+namespace edit_poly {
+
+/** The header is not part of a modifier stack: no links, errors or properties. */
+static void clear_header(EditPolyModifierData &emd)
+{
+  emd.modifier.next = nullptr;
+  emd.modifier.prev = nullptr;
+  emd.modifier.type = eModifierType_EditPoly;
+  emd.modifier.error = nullptr;
+  emd.modifier.system_properties = nullptr;
+  emd.modifier.runtime = nullptr;
+}
+
+EditPolyModifierData *data_new()
+{
+  EditPolyModifierData *emd = MEM_new<EditPolyModifierData>(__func__);
+  clear_header(*emd);
+  return emd;
+}
+
+EditPolyModifierData *data_copy(const EditPolyModifierData &src)
+{
+  EditPolyModifierData *emd = data_new();
+  copy_data(&src.modifier, &emd->modifier, 0);
+  return emd;
+}
+
+void data_free(EditPolyModifierData *emd)
+{
+  if (emd) {
+    free_data(&emd->modifier);
+    MEM_delete(emd);
+  }
+}
+
+void data_blend_write(BlendWriter *writer, const EditPolyModifierData &emd)
+{
+  blend_write(writer, nullptr, &emd.modifier);
+}
+
+void data_blend_read(BlendDataReader *reader, EditPolyModifierData *&emd)
+{
+  BLO_read_struct(reader, EditPolyModifierData, &emd);
+  if (emd) {
+    clear_header(*emd);
+    blend_read(reader, &emd->modifier);
+  }
+}
+
+}  // namespace edit_poly
 
 /** \} */
 

@@ -894,6 +894,8 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 #  include "DEG_depsgraph_build.hh"
 #  include "DEG_depsgraph_query.hh"
 
+#  include "BKE_mesh.h"
+
 #  include "MOD_edit_poly.hh"
 #  include "MOD_edit_poly_attrs.hh"
 #  include "MOD_nodes.hh"
@@ -2425,6 +2427,156 @@ static bool rna_NodesModifier_is_input_used(PointerRNA nmd_ptr,
 
   BKE_reportf(reports, RPT_ERROR, "Input '%s' not found", identifier);
   return false;
+}
+
+/* Edit Poly nodes: sessions on a node's edits, stored per object in the modifier. */
+
+static int rna_NodesModifier_edit_poly_pick(NodesModifierData *nmd)
+{
+  bNodeTree *ntree = nmd->node_group;
+  if (ntree == nullptr || ID_MISSING(ntree)) {
+    return -1;
+  }
+  ntree->ensure_topology_cache();
+  const bNode *active = blender::bke::node_get_active(*ntree);
+  int best_id = -1;
+  int best_index = -1;
+  for (const bNestedNodeRef &ref : ntree->nested_node_refs_span()) {
+    const bNode *node = ntree->find_nested_node(ref.id);
+    const bNode *top = ntree->node_by_id(ref.path.node_id);
+    if (node == nullptr || top == nullptr || !STREQ(node->idname, "GeometryNodeEditPoly")) {
+      continue;
+    }
+    if (node->is_muted() || top->is_muted()) {
+      /* Muted (M): the node is switched off, its edits are kept but not edited. */
+      continue;
+    }
+    if (top == active && ref.path.id_in_node == -1) {
+      return ref.id;
+    }
+    /* The node closest to the output of the node tree (a node in a group counts where its group
+     * node is). */
+    const int index = top->runtime->toposort_left_to_right_index;
+    if (index >= best_index) {
+      best_index = index;
+      best_id = ref.id;
+    }
+  }
+  return best_id;
+}
+
+static bool rna_NodesModifier_edit_poly_has_edits(NodesModifierData *nmd, const int node_id)
+{
+  const NodesModifierEditPoly *item = nmd->find_edit_poly(node_id);
+  return item && item->data;
+}
+
+static void rna_NodesModifier_edit_poly_capture_request(ID *id,
+                                                        NodesModifierData *nmd,
+                                                        const int node_id)
+{
+  blender::edit_poly_node::capture_request(*id_cast<Object *>(id), *nmd, node_id);
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+}
+
+static Mesh *edit_poly_mesh_to_main(Main *bmain, Mesh *mesh, const char *name)
+{
+  Mesh *result = BKE_mesh_add(bmain, name);
+  id_us_min(&result->id);
+  BKE_mesh_nomain_to_mesh(mesh, result, nullptr);
+  return result;
+}
+
+static void rna_NodesModifier_edit_poly_capture_take(ID *id,
+                                                     NodesModifierData *nmd,
+                                                     Main *bmain,
+                                                     ReportList *reports,
+                                                     const int node_id,
+                                                     Mesh **r_input,
+                                                     Mesh **r_result)
+{
+  Mesh *input = nullptr;
+  Mesh *result = nullptr;
+  *r_input = nullptr;
+  *r_result = nullptr;
+  if (!blender::edit_poly_node::capture_take(
+          *id_cast<Object *>(id), *nmd, node_id, &input, &result))
+  {
+    BKE_report(reports,
+               RPT_ERROR,
+               "The Edit Poly node was not evaluated (is its result used by the node tree?)");
+    return;
+  }
+  *r_input = edit_poly_mesh_to_main(bmain, input, "Edit Poly input");
+  *r_result = edit_poly_mesh_to_main(bmain, result, "Edit Poly");
+}
+
+static void rna_NodesModifier_edit_poly_session_set(ID *id,
+                                                    NodesModifierData *nmd,
+                                                    const int node_id)
+{
+  blender::edit_poly_node::session_set(*id_cast<Object *>(id), *nmd, node_id);
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+}
+
+static int rna_NodesModifier_edit_poly_session_get(ID *id, NodesModifierData *nmd)
+{
+  return blender::edit_poly_node::session_get(*id_cast<Object *>(id), *nmd);
+}
+
+static void rna_NodesModifier_edit_poly_session_prepare(NodesModifierData * /*nmd*/,
+                                                        Mesh *input,
+                                                        Mesh *mesh)
+{
+  blender::edit_poly::session_prepare(*input, *mesh);
+}
+
+static void rna_NodesModifier_edit_poly_session_check(NodesModifierData *nmd,
+                                                      ReportList *reports,
+                                                      const int node_id,
+                                                      Mesh *input)
+{
+  const NodesModifierEditPoly *item = nmd->find_edit_poly(node_id);
+  if (item == nullptr || item->data == nullptr) {
+    return;
+  }
+  const std::string reason = blender::edit_poly::session_check(*item->data, *input);
+  if (!reason.empty()) {
+    BKE_report(reports, RPT_ERROR, reason.c_str());
+  }
+}
+
+static bool rna_NodesModifier_edit_poly_session_commit(ID *id,
+                                                       NodesModifierData *nmd,
+                                                       ReportList *reports,
+                                                       const int node_id,
+                                                       Mesh *input,
+                                                       Mesh *mesh,
+                                                       const char *operations)
+{
+  NodesModifierEditPoly *item = nmd->find_edit_poly(node_id);
+  if (item == nullptr) {
+    NodesModifierEditPoly *items = MEM_new_array<NodesModifierEditPoly>(nmd->edit_polys_num + 1,
+                                                                        __func__);
+    std::copy_n(nmd->edit_polys, nmd->edit_polys_num, items);
+    MEM_SAFE_DELETE(nmd->edit_polys);
+    nmd->edit_polys = items;
+    item = &items[nmd->edit_polys_num];
+    item->id = node_id;
+    nmd->edit_polys_num++;
+  }
+  if (item->data == nullptr) {
+    item->data = blender::edit_poly::data_new();
+  }
+  const std::string error = blender::edit_poly::session_commit(
+      *item->data, *input, *mesh, operations ? operations : "");
+  if (!error.empty()) {
+    BKE_report(reports, RPT_ERROR, error.c_str());
+    return false;
+  }
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
+  return true;
 }
 
 static void rna_Lineart_start_level_set(PointerRNA *ptr, int value)
@@ -9254,6 +9406,100 @@ static void rna_def_modifier_nodes(BlenderRNA *brna)
   parm = RNA_def_string(func, "identifier", "Identifier", 0, "", "The identifier of the input");
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
   parm = RNA_def_boolean(func, "result", false, "Result", "");
+  RNA_def_function_return(func, parm);
+
+  /* Edit Poly nodes. */
+  func = RNA_def_function(srna, "edit_poly_pick", "rna_NodesModifier_edit_poly_pick");
+  RNA_def_function_ui_description(func,
+                                  "The Edit Poly node that Tab edits: the active node if it is "
+                                  "one, else the one closest to the output (-1 if none)");
+  parm = RNA_def_int(func, "id", -1, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(srna, "edit_poly_has_edits", "rna_NodesModifier_edit_poly_has_edits");
+  RNA_def_function_ui_description(func, "Whether edits are stored for an Edit Poly node");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_boolean(func, "result", false, "", "");
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(
+      srna, "edit_poly_capture_request", "rna_NodesModifier_edit_poly_capture_request");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(
+      func,
+      "Keep a copy of the mesh arriving at an Edit Poly node and of its result at the next "
+      "evaluation (see edit_poly_capture_take)");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+
+  func = RNA_def_function(
+      srna, "edit_poly_capture_take", "rna_NodesModifier_edit_poly_capture_take");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID | FUNC_USE_MAIN | FUNC_USE_REPORTS);
+  RNA_def_function_ui_description(func,
+                                  "New meshes with the captured input and result of an Edit Poly "
+                                  "node (after edit_poly_capture_request and an evaluation)");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Mesh arriving at the node");
+  RNA_def_function_output(func, parm);
+  parm = RNA_def_pointer(func, "result", "Mesh", "", "Result of the node");
+  RNA_def_function_output(func, parm);
+
+  func = RNA_def_function(
+      srna, "edit_poly_session_set", "rna_NodesModifier_edit_poly_session_set");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(
+      func,
+      "While an Edit Poly node is edited, it outputs the input of the modifier (the edited mesh). "
+      "-1 ends the session");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+
+  func = RNA_def_function(
+      srna, "edit_poly_session_get", "rna_NodesModifier_edit_poly_session_get");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(func, "The Edit Poly node being edited, or -1");
+  parm = RNA_def_int(func, "id", -1, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_function_return(func, parm);
+
+  func = RNA_def_function(
+      srna, "edit_poly_session_prepare", "rna_NodesModifier_edit_poly_session_prepare");
+  RNA_def_function_ui_description(
+      func, "Give the input mesh stable IDs and stamp the mesh to edit (see Edit Poly modifier)");
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Mesh arriving at the node");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "Copy of the node's result, to edit");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+
+  func = RNA_def_function(
+      srna, "edit_poly_session_check", "rna_NodesModifier_edit_poly_session_check");
+  RNA_def_function_flag(func, FUNC_USE_REPORTS);
+  RNA_def_function_ui_description(
+      func, "Raise an error if the node cannot be edited (its topology edits are paused)");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Mesh arriving at the node");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+
+  func = RNA_def_function(
+      srna, "edit_poly_session_commit", "rna_NodesModifier_edit_poly_session_commit");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID | FUNC_USE_REPORTS);
+  RNA_def_function_ui_description(func,
+                                  "Record the edits of a session mesh for an Edit Poly node");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "input", "Mesh", "", "Input mesh of the session");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_pointer(func, "mesh", "Mesh", "", "Edited session mesh");
+  RNA_def_parameter_flags(parm, PROP_NEVER_NULL, PARM_REQUIRED);
+  parm = RNA_def_string(func,
+                        "operations",
+                        nullptr,
+                        0,
+                        "Operations",
+                        "Log of extrude / inset / bevel used in the session (text format)");
+  parm = RNA_def_boolean(func, "ok", false, "", "False if nothing was recorded (see report)");
   RNA_def_function_return(func, parm);
 
   rna_def_modifier_panel_open_prop(

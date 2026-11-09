@@ -16,6 +16,7 @@
 
 #include "BLI_listbase.h"
 #include "BLI_multi_value_map.hh"
+#include "BLI_mutex.hh"
 #include "BLI_set.hh"
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
@@ -45,6 +46,7 @@
 #include "BKE_lib_id.hh"
 #include "BKE_lib_query.hh"
 #include "BKE_main.hh"
+#include "BKE_mesh.h"
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
 #include "BKE_node_legacy_types.hh"
@@ -76,6 +78,7 @@
 #include "DEG_depsgraph_query.hh"
 #include "DEG_depsgraph_writeback_sync.hh"
 
+#include "MOD_edit_poly.hh"
 #include "MOD_modifiertypes.hh"
 #include "MOD_nodes.hh"
 #include "MOD_ui_common.hh"
@@ -385,6 +388,42 @@ static void update_bakes_from_node_group(NodesModifierData &nmd)
   remove_outdated_bake_caches(nmd);
 }
 
+/** Remove stored edits of Edit Poly nodes that are not in the node tree anymore. */
+static void update_edit_polys_from_node_group(NodesModifierData &nmd)
+{
+  if (nmd.edit_polys_num == 0) {
+    return;
+  }
+  Set<int> ids;
+  if (nmd.node_group && !ID_MISSING(nmd.node_group)) {
+    for (const bNestedNodeRef &ref : nmd.node_group->nested_node_refs_span()) {
+      const bNode *node = nmd.node_group->find_nested_node(ref.id);
+      if (node == nullptr || STREQ(node->idname, "GeometryNodeEditPoly")) {
+        /* Missing nodes are kept, in case linked data is missing right now. */
+        ids.add(ref.id);
+      }
+    }
+  }
+  else if (nmd.node_group) {
+    return;
+  }
+  Vector<NodesModifierEditPoly> kept;
+  for (NodesModifierEditPoly &item : MutableSpan(nmd.edit_polys, nmd.edit_polys_num)) {
+    if (ids.contains(item.id)) {
+      kept.append(item);
+    }
+    else {
+      edit_poly::data_free(item.data);
+    }
+  }
+  MEM_SAFE_DELETE(nmd.edit_polys);
+  nmd.edit_polys_num = kept.size();
+  if (!kept.is_empty()) {
+    nmd.edit_polys = MEM_new_array<NodesModifierEditPoly>(kept.size(), __func__);
+    std::copy(kept.begin(), kept.end(), nmd.edit_polys);
+  }
+}
+
 static void update_panels_from_node_group(NodesModifierData &nmd)
 {
   Map<int, NodesModifierPanel *> old_panel_by_id;
@@ -446,6 +485,7 @@ void MOD_nodes_update_interface(Main &bmain, Object *object, NodesModifierData *
 {
   update_system_properties(bmain, *object, *nmd);
   update_bakes_from_node_group(*nmd);
+  update_edit_polys_from_node_group(*nmd);
   update_panels_from_node_group(*nmd);
   nmd->runtime->usage_cache.reset();
 
@@ -462,6 +502,21 @@ const NodesModifierBake *NodesModifierData::find_bake(const int id) const
   for (const NodesModifierBake &bake : Span{this->bakes, this->bakes_num}) {
     if (bake.id == id) {
       return &bake;
+    }
+  }
+  return nullptr;
+}
+
+NodesModifierEditPoly *NodesModifierData::find_edit_poly(const int id)
+{
+  return const_cast<NodesModifierEditPoly *>(std::as_const(*this).find_edit_poly(id));
+}
+
+const NodesModifierEditPoly *NodesModifierData::find_edit_poly(const int id) const
+{
+  for (const NodesModifierEditPoly &item : Span{this->edit_polys, this->edit_polys_num}) {
+    if (item.id == id) {
+      return &item;
     }
   }
   return nullptr;
@@ -1599,6 +1654,170 @@ class NodesModifierBakeParams : public nodes::GeoNodesBakeParams {
   }
 };
 
+/* -------------------------------------------------------------------- */
+/** \name Edit Poly Nodes
+ *
+ * The edits of Edit Poly nodes are stored per object in #NodesModifierData::edit_polys. Sessions
+ * (editing a node's result in Edit Mode) need the mesh arriving at a node and its result (a
+ * capture), and while editing, the node outputs the edited mesh, which is the input of the
+ * modifier then. Both are requested on the original object and read during evaluation.
+ * \{ */
+
+namespace edit_poly_node {
+
+using Key = std::pair<const void *, int>;
+
+struct Capture {
+  int id = -1;
+  bool done = false;
+  Mesh *input = nullptr;
+  Mesh *result = nullptr;
+};
+
+struct Registry {
+  Mutex mutex;
+  Map<Key, int> session_by_modifier;
+  Map<Key, Capture> captures;
+};
+
+static Registry &registry()
+{
+  static Registry registry;
+  return registry;
+}
+
+static Key key_of(const Object &object_orig, const NodesModifierData &nmd)
+{
+  return {&object_orig, nmd.modifier.persistent_uid};
+}
+
+static void capture_free(Capture &capture)
+{
+  if (capture.input) {
+    BKE_id_free(nullptr, capture.input);
+  }
+  if (capture.result) {
+    BKE_id_free(nullptr, capture.result);
+  }
+  capture.input = nullptr;
+  capture.result = nullptr;
+}
+
+void capture_request(const Object &object, const NodesModifierData &nmd, const int id)
+{
+  Registry &reg = registry();
+  std::scoped_lock lock(reg.mutex);
+  Capture &capture = reg.captures.lookup_or_add_default(key_of(object, nmd));
+  capture_free(capture);
+  capture.id = id;
+  capture.done = false;
+}
+
+bool capture_take(const Object &object,
+                  const NodesModifierData &nmd,
+                  const int id,
+                  Mesh **r_input,
+                  Mesh **r_result)
+{
+  Registry &reg = registry();
+  std::scoped_lock lock(reg.mutex);
+  std::optional<Capture> capture = reg.captures.pop_try(key_of(object, nmd));
+  if (!capture) {
+    return false;
+  }
+  if (capture->id != id || !capture->done || !capture->input || !capture->result) {
+    capture_free(*capture);
+    return false;
+  }
+  *r_input = capture->input;
+  *r_result = capture->result;
+  return true;
+}
+
+void session_set(const Object &object, const NodesModifierData &nmd, const int id)
+{
+  Registry &reg = registry();
+  std::scoped_lock lock(reg.mutex);
+  if (id == -1) {
+    reg.session_by_modifier.remove(key_of(object, nmd));
+  }
+  else {
+    reg.session_by_modifier.add_overwrite(key_of(object, nmd), id);
+  }
+}
+
+int session_get(const Object &object, const NodesModifierData &nmd)
+{
+  Registry &reg = registry();
+  std::scoped_lock lock(reg.mutex);
+  return reg.session_by_modifier.lookup_default(key_of(object, nmd), -1);
+}
+
+}  // namespace edit_poly_node
+
+class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
+ private:
+  const NodesModifierData &nmd_;
+  edit_poly_node::Key key_;
+  int session_id_ = -1;
+  /** The input of the modifier, output by the node being edited in a session. */
+  bke::GeometrySet session_input_;
+
+ public:
+  NodesModifierEditPolyParams(const NodesModifierData &nmd,
+                              const Object &object_orig,
+                              const bke::GeometrySet &input)
+      : nmd_(nmd), key_(edit_poly_node::key_of(object_orig, nmd))
+  {
+    edit_poly_node::Registry &reg = edit_poly_node::registry();
+    std::scoped_lock lock(reg.mutex);
+    session_id_ = reg.session_by_modifier.lookup_default(key_, -1);
+    if (session_id_ != -1) {
+      session_input_ = input;
+    }
+  }
+
+  void execute(const int id, bke::GeometrySet &geometry, std::string &r_warning) const override
+  {
+    if (id == session_id_) {
+      geometry = session_input_;
+      return;
+    }
+    edit_poly_node::Registry &reg = edit_poly_node::registry();
+    bool capture = false;
+    {
+      std::scoped_lock lock(reg.mutex);
+      const edit_poly_node::Capture *found = reg.captures.lookup_ptr(key_);
+      capture = found && found->id == id;
+    }
+    Mesh *mesh = geometry.get_mesh_for_write();
+    if (mesh == nullptr) {
+      return;
+    }
+    Mesh *input_copy = capture ? BKE_mesh_copy_for_eval(*mesh) : nullptr;
+    Mesh *result = mesh;
+    const NodesModifierEditPoly *item = nmd_.find_edit_poly(id);
+    if (item && item->data) {
+      result = edit_poly::apply(*item->data, mesh, r_warning);
+      if (result != mesh) {
+        geometry.replace_mesh(result);
+      }
+    }
+    if (capture) {
+      Mesh *result_copy = BKE_mesh_copy_for_eval(*result);
+      std::scoped_lock lock(reg.mutex);
+      edit_poly_node::Capture &found = reg.captures.lookup_or_add_default(key_);
+      edit_poly_node::capture_free(found);
+      found.id = id;
+      found.done = true;
+      found.input = input_copy;
+      found.result = result_copy;
+    }
+  }
+};
+
+/** \} */
+
 static void add_missing_data_block_mappings(
     NodesModifierBake &bake,
     const Span<bake::BakeDataBlockID> missing,
@@ -1828,6 +2047,8 @@ static void modifyGeometry(ModifierData *md,
   call_data.simulation_params = &simulation_params;
   NodesModifierBakeParams bake_params{*nmd, *ctx};
   call_data.bake_params = &bake_params;
+  NodesModifierEditPolyParams edit_poly_params{*nmd, *DEG_get_original(ctx->object), geometry_set};
+  call_data.edit_poly_params = &edit_poly_params;
 
   Set<ComputeContextHash> verbose_log_contexts;
   if (logging_enabled(ctx)) {
@@ -2020,6 +2241,13 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
     }
   }
   writer->write_struct_array(nmd->panels_num, nmd->panels);
+
+  writer->write_struct_array(nmd->edit_polys_num, nmd->edit_polys);
+  for (const NodesModifierEditPoly &item : Span(nmd->edit_polys, nmd->edit_polys_num)) {
+    if (item.data) {
+      edit_poly::data_blend_write(writer, *item.data);
+    }
+  }
 }
 
 static void blend_read(BlendDataReader *reader, ModifierData *md)
@@ -2082,6 +2310,14 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
   }
   BLO_read_array_and_validate_size(reader, &nmd->panels, &nmd->panels_num);
 
+  BLO_read_array_and_validate_size(reader, &nmd->edit_polys, &nmd->edit_polys_num);
+  if (nmd->edit_polys == nullptr) {
+    nmd->edit_polys_num = 0;
+  }
+  for (NodesModifierEditPoly &item : MutableSpan(nmd->edit_polys, nmd->edit_polys_num)) {
+    edit_poly::data_blend_read(reader, item.data);
+  }
+
   nmd->runtime = MEM_new<NodesModifierRuntime>(__func__);
   nmd->runtime->cache = std::make_shared<bake::ModifierCache>();
 }
@@ -2118,6 +2354,13 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
 
   if (nmd->panels) {
     tnmd->panels = MEM_dupalloc(nmd->panels);
+  }
+
+  if (nmd->edit_polys) {
+    tnmd->edit_polys = MEM_dupalloc(nmd->edit_polys);
+    for (NodesModifierEditPoly &item : MutableSpan(tnmd->edit_polys, tnmd->edit_polys_num)) {
+      item.data = item.data ? edit_poly::data_copy(*item.data) : nullptr;
+    }
   }
 
   tnmd->runtime = MEM_new<NodesModifierRuntime>(__func__);
@@ -2201,6 +2444,11 @@ static void free_data(ModifierData *md)
   MEM_SAFE_DELETE(nmd->bakes);
 
   MEM_SAFE_DELETE(nmd->panels);
+
+  for (NodesModifierEditPoly &item : MutableSpan(nmd->edit_polys, nmd->edit_polys_num)) {
+    edit_poly::data_free(item.data);
+  }
+  MEM_SAFE_DELETE(nmd->edit_polys);
 
   MEM_SAFE_DELETE(nmd->bake_directory);
   MEM_delete(nmd->runtime);

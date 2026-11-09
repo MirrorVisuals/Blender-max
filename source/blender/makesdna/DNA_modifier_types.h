@@ -2684,6 +2684,15 @@ struct NodesModifierPanel {
   NodesModifierPanelFlag flag = {};
 };
 
+/** Edits of an Edit Poly node, stored per object (see #NodesModifierData::edit_polys). */
+struct NodesModifierEditPoly {
+  /** An id that references a nested Edit Poly node in the node tree (#bNestedNodeRef). */
+  int id = 0;
+  char _pad[4] = {};
+  /** The edits, in the format of an Edit Poly modifier level (its modifier header is unused). */
+  EditPolyModifierData *data = nullptr;
+};
+
 struct NodesModifierData {
   ModifierData modifier;
   struct bNodeTree *node_group = nullptr;
@@ -2703,11 +2712,18 @@ struct NodesModifierData {
   int panels_num = 0;
   NodesModifierPanel *panels = nullptr;
 
+  char _pad3[4] = {};
+  int edit_polys_num = 0;
+  /** Edits of the Edit Poly nodes in the node tree, for this object. */
+  NodesModifierEditPoly *edit_polys = nullptr;
+
   NodesModifierRuntime *runtime = nullptr;
 
 #ifdef __cplusplus
   NodesModifierBake *find_bake(int id);
   const NodesModifierBake *find_bake(int id) const;
+  NodesModifierEditPoly *find_edit_poly(int id);
+  const NodesModifierEditPoly *find_edit_poly(int id) const;
 #endif
 };
 

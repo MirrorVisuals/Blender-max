@@ -142,6 +142,17 @@ class GeoNodesBakeParams {
   virtual BakeNodeBehavior *get(const int id) const = 0;
 };
 
+/** Evaluation of Edit Poly nodes, whose edits are stored per object by the caller. */
+class GeoNodesEditPolyParams {
+ public:
+  virtual ~GeoNodesEditPolyParams() = default;
+  /**
+   * Apply the edits of the Edit Poly node with the nested node ID `id` to the mesh in `geometry`
+   * (the geometry arriving at the node). `r_warning` gets a message about paused edits.
+   */
+  virtual void execute(int id, bke::GeometrySet &geometry, std::string &r_warning) const = 0;
+};
+
 struct GeoNodesSideEffectNodes {
   MultiValueMap<ComputeContextHash, const lf::FunctionNode *> nodes_by_context;
   /**
@@ -225,6 +236,10 @@ struct GeoNodesCallData {
    * Optional injected behavior for bake nodes.
    */
   GeoNodesBakeParams *bake_params = nullptr;
+  /**
+   * Optional injected behavior for Edit Poly nodes. Without it, they pass the geometry through.
+   */
+  const GeoNodesEditPolyParams *edit_poly_params = nullptr;
   /**
    * Some nodes should be executed even when their output is not used (e.g. active viewer nodes and
    * the node groups they are contained in).

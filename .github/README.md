@@ -44,6 +44,18 @@ below possible.
 - **Collapse to Here** (modifier menu) bakes everything up to a modifier into the mesh while
   keeping the stable IDs.
 
+### Edit Poly node (Geometry Nodes)
+
+- **The same edits inside a node tree.** Add it with Shift+A (Mesh > Operations > Edit Poly) at
+  any point of a Geometry Nodes tree. It is never added automatically.
+- **Tab edits the node.** With the Geometry Nodes modifier active, Tab edits the mesh as it
+  arrives at the active Edit Poly node, or else the one closest to the output, with any tool.
+  The nodes after it update live. Without Edit Poly nodes, Tab works as before.
+- **Stored per object.** The edits are stored in each object's Geometry Nodes modifier (like
+  baked data), so objects sharing a node group keep their own edits.
+- **Mute to switch off.** M on the node turns its edits off (they are kept); Tab skips muted
+  nodes.
+
 ### UVW Map modifier
 
 - **Projections:** Planar, Box, Cylindrical (with optional Cap), Spherical, Shrink Wrap and Face.

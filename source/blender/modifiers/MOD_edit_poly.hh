@@ -18,6 +18,8 @@
 
 #include <string>
 
+struct BlendDataReader;
+struct BlendWriter;
 struct EditPolyModifierData;
 struct Mesh;
 
@@ -62,5 +64,24 @@ std::string session_commit(EditPolyModifierData &emd,
                            const Mesh &input,
                            const Mesh &mesh,
                            const std::string &operations);
+
+/**
+ * Apply the edits stored in `emd` to `mesh` (the mesh as it arrives at the level): topology patch
+ * (or re-run operations when it is paused), moves, element data and selection. Returns `mesh` or
+ * a new mesh; `r_warning` gets a message about paused edits, if any.
+ */
+Mesh *apply(const EditPolyModifierData &emd, Mesh *mesh, std::string &r_warning);
+
+/**
+ * Edits stored outside a modifier stack (by Edit Poly nodes, in the Geometry Nodes modifier). The
+ * modifier header of such data is unused.
+ */
+EditPolyModifierData *data_new();
+EditPolyModifierData *data_copy(const EditPolyModifierData &src);
+void data_free(EditPolyModifierData *emd);
+/** Writes the struct and its arrays. */
+void data_blend_write(BlendWriter *writer, const EditPolyModifierData &emd);
+/** Reads the struct a pointer refers to, and its arrays. */
+void data_blend_read(BlendDataReader *reader, EditPolyModifierData *&emd);
 
 }  // namespace blender::edit_poly

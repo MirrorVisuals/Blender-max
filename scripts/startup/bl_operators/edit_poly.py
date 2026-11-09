@@ -24,6 +24,12 @@ button), records the current level and switches to that one. Tab over a modifier
 that modifier. Tab again records how far each vertex moved as moves of the level and puts the
 original mesh back. The base mesh is never edited.
 
+Edit Poly nodes: when the active modifier is a Geometry Nodes modifier with Edit Poly nodes, Tab
+edits one of them (the active node if it is one, otherwise the one closest to the output) and never
+adds an Edit Poly modifier. Its edits are stored per object in the Geometry Nodes modifier. The
+session edits the node's result; the modifiers below are hidden, and while editing the node
+outputs the edited mesh, so the nodes after it and the modifiers above show the result.
+
 Any tool can be used. Moves of existing vertices become moves; topology changes become the
 level's patch: removed elements and new geometry anchored to the vertices of the mesh below, so
 it follows when the mesh below is deformed. If the topology below changes (e.g. a Subdivision
@@ -41,6 +47,8 @@ KEY_MESH = "_edit_poly_mesh"
 KEY_INPUT = "_edit_poly_input"
 KEY_MODIFIER = "_edit_poly_modifier"
 KEY_HIDDEN = "_edit_poly_hidden"
+# Nested node ID of the Edit Poly node being edited (sessions on a node, see below).
+KEY_NODE = "_edit_poly_node"
 
 SELECTION_GROUP = "Edit Poly Selection"
 
@@ -337,17 +345,80 @@ def start_session(context, ob, level):
     return None
 
 
+def node_level_id(ob):
+    """The Edit Poly node Tab edits in the active Geometry Nodes modifier: (modifier, id) or None."""
+    active = ob.modifiers.active
+    if active is None or active.type != 'NODES' or not active.show_viewport:
+        return None
+    node_id = active.edit_poly_pick()
+    if node_id == -1:
+        return None
+    return active, node_id
+
+
+def start_node_session(context, ob, mod, node_id):
+    """Edit the result of an Edit Poly node. Returns an error message, or None."""
+    mods = ob.modifiers[:]
+    k = mods.index(mod)
+
+    # The mesh arriving at the node and its result, kept by the node while the object evaluates.
+    mod.edit_poly_capture_request(id=node_id)
+    depsgraph = context.evaluated_depsgraph_get()
+    depsgraph.update()
+    try:
+        input_mesh, session_mesh = mod.edit_poly_capture_take(id=node_id)
+    except RuntimeError as ex:
+        return str(ex).strip()
+    try:
+        mod.edit_poly_session_check(id=node_id, input=input_mesh)
+    except RuntimeError as ex:
+        bpy.data.meshes.remove(input_mesh)
+        bpy.data.meshes.remove(session_mesh)
+        return str(ex).strip()
+    mod.edit_poly_session_prepare(input=input_mesh, mesh=session_mesh)
+
+    original = ob.data
+    if len(session_mesh.materials) == 0:
+        for material in original.materials:
+            session_mesh.materials.append(material)
+    input_mesh.name = original.name + " (Edit Poly input)"
+    session_mesh.name = original.name + " (Edit Poly)"
+
+    # The modifiers below are in the node's input already. The Geometry Nodes modifier stays: the
+    # node outputs the edited mesh, so the nodes after it run on it.
+    hidden = [m.name for m in mods[:k] if m.show_viewport]
+    for m in mods[:k]:
+        m.show_viewport = False
+
+    ob[KEY_MESH] = original
+    ob[KEY_INPUT] = input_mesh
+    ob[KEY_MODIFIER] = mod.name
+    ob[KEY_HIDDEN] = hidden
+    ob[KEY_NODE] = node_id
+    ob.data = session_mesh
+    mod.edit_poly_session_set(id=node_id)
+    ob.modifiers.active = mod
+
+    enter_edit_mode_only(context, ob)
+    _start_capture(ob)
+    return None
+
+
 def end_session(ob):
     """Put the original mesh and modifier visibility back."""
     session_mesh = ob.data
     input_mesh = ob.get(KEY_INPUT)
+    if KEY_NODE in ob:
+        mod = ob.modifiers.get(ob[KEY_MODIFIER])
+        if mod is not None and mod.type == 'NODES':
+            mod.edit_poly_session_set(id=-1)
     ob.data = ob[KEY_MESH]
     for name in ob[KEY_HIDDEN]:
         mod = ob.modifiers.get(name)
         if mod is not None:
             mod.show_viewport = True
     _capture.pop(ob.name, None)
-    for key in (KEY_MESH, KEY_INPUT, KEY_MODIFIER, KEY_HIDDEN):
+    for key in (KEY_MESH, KEY_INPUT, KEY_MODIFIER, KEY_HIDDEN, KEY_NODE):
         if key in ob:
             del ob[key]
     for mesh in (session_mesh, input_mesh):
@@ -360,6 +431,17 @@ def commit_session(context, ob):
     if ob.mode == 'EDIT':
         bpy.ops.object.mode_set(mode='OBJECT')
     level = ob.modifiers.get(ob[KEY_MODIFIER])
+    if KEY_NODE in ob:
+        if level is None or level.type != 'NODES':
+            end_session(ob)
+            return None  # The modifier was removed while editing: nothing to record into.
+        try:
+            level.edit_poly_session_commit(
+                id=ob[KEY_NODE], input=ob[KEY_INPUT], mesh=ob.data, operations=_capture_text(ob))
+        except RuntimeError as ex:
+            return str(ex).strip()
+        end_session(ob)
+        return None
     if level is None or level.type != 'EDIT_POLY':
         end_session(ob)
         return None  # The level was removed while editing: nothing to record into.
@@ -447,6 +529,15 @@ class OBJECT_OT_edit_poly_tab(Operator):
             if not in_viewport:
                 return {'PASS_THROUGH'}
             return classic_toggle()
+
+        # An Edit Poly node in the active Geometry Nodes modifier (only ever added by hand).
+        node_level = node_level_id(ob)
+        if node_level is not None:
+            error = start_node_session(context, ob, *node_level)
+            if error:
+                self.report({'ERROR'}, error)
+                return {'CANCELLED'}
+            return {'FINISHED'}
 
         level = pick_level(ob)
         if level is None:
