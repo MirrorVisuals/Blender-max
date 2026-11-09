@@ -33,12 +33,19 @@ def driver(ob):
     bpy.ops.object.modifier_move_to_index(modifier=d.name, index=0)
     return d
 
+def evaluate(objects):
+    """Evaluate and read the result: Blender delays some work (e.g. a Subdivision at the end
+    of the stack) until the mesh is read, so reading it is part of the time."""
+    update()
+    dg = bpy.context.evaluated_depsgraph_get()
+    return sum(len(o.evaluated_get(dg).data.polygons) for o in objects)
+
 def eval_median(ob, drv, repeats=5):
     times = []
     for i in range(repeats):
         drv.strength = 0.001 * (i + 1)
         t0 = time.perf_counter()
-        update()
+        evaluate([ob])
         times.append(ms(t0))
     return statistics.median(times)
 
@@ -90,8 +97,9 @@ ob = grid(500, "EditPoly")
 n = len(ob.data.polygons)
 t_in = tab()
 bm = bmesh.from_edit_mesh(ob.data)
+bm.verts.ensure_lookup_table()
 step = max(1, len(bm.verts) // 1000)
-for v in bm.verts[::step]:
+for v in list(bm.verts)[::step]:
     v.co.z += 0.01
 bm.normal_update()
 bmesh.update_edit_mesh(ob.data)
@@ -113,10 +121,12 @@ overhead("Edit Poly replay (moves + patch)", ob, drv, [ep])
 # 3. Edit Poly element data and selection --------------------------------------------------
 tab()
 bm = bmesh.from_edit_mesh(ob.data)
+bm.edges.ensure_lookup_table()
+bm.faces.ensure_lookup_table()
 bw = bm.edges.layers.float.get("bevel_weight_edge") or bm.edges.layers.float.new("bevel_weight_edge")
-for e in bm.edges[::20]:
+for e in list(bm.edges)[::20]:
     e[bw] = 1.0
-for f in bm.faces[::10]:
+for f in list(bm.faces)[::10]:
     f.select_set(True)
 bmesh.update_edit_mesh(ob.data)
 t_out3 = tab()
@@ -181,15 +191,14 @@ for i in range(count):
     objects.append(o)
 build_ms = ms(t0)
 t0 = time.perf_counter()
-update()
+faces = evaluate(objects)
 first = ms(t0)
-faces = sum(faces_of(o) for o in objects)
 single(f"{count} objects: first evaluation (full stacks)", faces, first)
 for o in objects:
     for m in o.modifiers[1:]:
         m.show_viewport = False
 t0 = time.perf_counter()
-update()
+evaluate(objects)
 plain = ms(t0)
 single(f"{count} objects: Subdivision only", faces, plain)
 rows.append((f"{count} objects: cost of our modifiers", faces, first, max(first - plain, 0.0)))
