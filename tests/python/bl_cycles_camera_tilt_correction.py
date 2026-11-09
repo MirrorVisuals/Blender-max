@@ -1,10 +1,16 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Camera Tilt Correction check (Cycles): a camera tilted up at a tall box.
 # Automatic: the box's sides stay parallel (same width at its top and bottom) and the point the
 # camera aims at stays in the middle of the image; half the amount is in between; off, the sides
 # converge as before. Manual: a vertical tilt equal to the camera's does the same, and a
 # horizontal tilt straightens a wall seen from the side.
-# Run with CHECK_CAMERA_CORRECTION.bat (Blender in background mode).
-import math, os
+# ./blender.bin --background --factory-startup --python tests/python/bl_cycles_camera_tilt_correction.py
+import sys
+import math
+import os
 import bpy
 from mathutils import Vector
 
@@ -149,7 +155,9 @@ marker.location = cam.location + aim * 8
 
 def wall_heights(rows, w, h):
     cols = [x for x in range(w) if sum(1 for y in range(h) if 0.5 < rows[y][x] < 5.0) > 0]
-    height = lambda x: sum(1 for y in range(h) if 0.5 < rows[y][x] < 5.0)
+
+    def height(x):
+        return sum(1 for y in range(h) if 0.5 < rows[y][x] < 5.0)
     return height(cols[0] + 3), height(cols[-1] - 3), cols
 
 
@@ -182,3 +190,5 @@ check(abs(w_auto[0] - w_off[0]) <= 1 and abs(w_auto[1] - w_off[1]) <= 1,
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

@@ -1,12 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Phase 3 check: Tab edits an Edit Poly level; moves are recorded in the modifier, never in the base mesh.
-# Run with CHECK_EDIT_POLY_TAB.bat (Blender in background mode).
-import bpy, bmesh
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_edit_poly_tab.py
+import sys
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -14,6 +23,7 @@ def tab():
     except RuntimeError as ex:
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
+
 
 def points(ob):
     bpy.context.view_layer.update()
@@ -26,6 +36,7 @@ def points(ob):
     ev.to_mesh_clear()
     return out
 
+
 def move_top_vertex(ob, dz):
     """In Edit Mode: move the vertex nearest the top centre by dz."""
     bm = bmesh.from_edit_mesh(ob.data)
@@ -34,6 +45,7 @@ def move_top_vertex(ob, dz):
     bm.normal_update()
     bmesh.update_edit_mesh(ob.data)
     return v.index
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add()
@@ -109,7 +121,7 @@ check([tuple(v.co) for v in base.vertices] == base_co, "base mesh is still untou
 print("Tab rules")
 ob.modifiers.active = sub
 tab()
-check(ob[ "_edit_poly_modifier"] == low.name, "active = Subdivision: Tab edits the nearest Edit Poly below it")
+check(ob["_edit_poly_modifier"] == low.name, "active = Subdivision: Tab edits the nearest Edit Poly below it")
 tab()
 
 print("Switching levels while editing")
@@ -133,3 +145,5 @@ check(emp.mode == 'OBJECT', "Tab on an empty does nothing special")
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

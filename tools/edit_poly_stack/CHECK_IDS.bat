@@ -1,4 +1,4 @@
 @echo off
-rem Run check_stable_ids.py inside the built Blender (no window).
-"%~dp0build_windows_x64_vc17_Release\bin\Release\blender.exe" --background --factory-startup --python "%~dp0check_stable_ids.py"
+rem Run bl_stable_ids_subdivision.py (in blender\tests\python) inside the built Blender (no window).
+"%~dp0build_windows_x64_vc17_Release\bin\Release\blender.exe" --background --factory-startup --python "%~dp0blender\tests\python\bl_stable_ids_subdivision.py"
 pause

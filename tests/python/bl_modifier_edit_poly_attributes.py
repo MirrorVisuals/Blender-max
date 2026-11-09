@@ -1,13 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Edit Poly check: bevel weights, creases, sharp edges and materials edited in a level are stored
 # in it (by stable ID), not lost when leaving the level, and the base mesh is not changed.
-# Run with CHECK_EDIT_POLY_ATTRS.bat (Blender in background mode).
-import bpy, bmesh
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_edit_poly_attributes.py
+import sys
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -16,11 +25,13 @@ def tab():
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
 
+
 def evaluated(ob):
     bpy.context.view_layer.update()
     dg = bpy.context.evaluated_depsgraph_get()
     ev = ob.evaluated_get(dg)
     me = ev.to_mesh()
+
     def values(name):
         a = me.attributes.get(name)
         return [d.value for d in a.data] if a else None
@@ -34,8 +45,10 @@ def evaluated(ob):
     ev.to_mesh_clear()
     return out
 
+
 def top_edge(bm_edge):
     return all(v.co.z > 0.9 for v in bm_edge.verts)
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add()
@@ -59,7 +72,10 @@ top_face.material_index = 1
 bmesh.update_edit_mesh(ob.data)
 tab()
 check(ob.mode == 'OBJECT' and ob.data == base, "Tab again: back to the base mesh")
-check(ep.attribute_edits_num == 6, f"6 edits stored: 4 edge weights, 1 vertex crease, 1 material ({ep.attribute_edits_num})")
+check(
+    ep.attribute_edits_num == 6,
+    f"6 edits stored: 4 edge weights, 1 vertex crease, 1 material ({
+        ep.attribute_edits_num})")
 base_bw = base.attributes.get("bevel_weight_edge")
 check(base_bw is None or all(d.value == 0 for d in base_bw.data), "the base mesh has no bevel weights")
 
@@ -104,3 +120,5 @@ check(ep.moves_num == 1 and ep.attribute_edits_num == 5, "a move is added, the d
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

@@ -1,13 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Item 3 check: Mirror and Array give stable IDs, so Edit Poly levels above them keep their
 # edits when the mirror axes or the array count change.
-# Run with CHECK_MIRROR_ARRAY.bat (Blender in background mode).
-import bpy, bmesh
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_mirror_array_stable_ids.py
+import sys
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def points(ob):
     bpy.context.view_layer.update()
@@ -21,10 +30,12 @@ def points(ob):
     ev.to_mesh_clear()
     return out, len(ids), n
 
+
 def unique_ok(ob, label):
     pts, nids, n = points(ob)
     check(nids == n and len(pts) == n, f"{label}: every vertex has a unique ID ({n} vertices)")
     return pts
+
 
 def moved_ok(ob, edit, sid, expected, label):
     edit.show_viewport = False
@@ -34,6 +45,7 @@ def moved_ok(ob, edit, sid, expected, label):
     ok = sid in before and sid in after and all(
         abs(after[sid][k] - before[sid][k] - expected[k]) < 1e-5 for k in range(3))
     check(ok, label)
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -109,11 +121,14 @@ bpy.context.view_layer.objects.active = ob
 ep.moves_clear()
 ob.modifiers.active = ep
 bpy.ops.object.edit_poly_tab()
-bpy.ops.mesh.select_mode(type='FACE'); bpy.ops.mesh.select_all(action='DESELECT')
+bpy.ops.mesh.select_mode(type='FACE')
+bpy.ops.mesh.select_all(action='DESELECT')
 bm = bmesh.from_edit_mesh(ob.data)
 f = max(bm.faces, key=lambda f: -f.calc_center_median().x + 3 * f.normal.z)  # top of mirrored cube
 f.select_set(True)
-bm.select_flush_mode(); bmesh.update_edit_mesh(ob.data); bpy.context.view_layer.update()
+bm.select_flush_mode()
+bmesh.update_edit_mesh(ob.data)
+bpy.context.view_layer.update()
 bpy.ops.mesh.extrude_region_move('EXEC_DEFAULT', True, TRANSFORM_OT_translate={"value": (0, 0, 0.6)})
 bpy.context.view_layer.update()
 bpy.ops.object.edit_poly_tab()
@@ -127,3 +142,5 @@ check(n_xy == plain_xy + (n_x - 16), f"the extrusion is still there with X + Y (
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

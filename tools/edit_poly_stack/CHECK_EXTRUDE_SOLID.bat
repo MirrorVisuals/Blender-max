@@ -1,4 +1,4 @@
 @echo off
-rem Run check_extrude_solid.py inside the built Blender (no window).
-"%~dp0build_windows_x64_vc17_Release\bin\Release\blender.exe" --background --factory-startup --python "%~dp0check_extrude_solid.py"
+rem Run bl_mesh_extrude_manifold_solid.py (in blender\tests\python) inside the built Blender (no window).
+"%~dp0build_windows_x64_vc17_Release\bin\Release\blender.exe" --background --factory-startup --python "%~dp0blender\tests\python\bl_mesh_extrude_manifold_solid.py"
 pause

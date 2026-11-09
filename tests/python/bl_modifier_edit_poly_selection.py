@@ -1,13 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Edit Poly selection check: edges / vertices selected in a level are passed up the stack, Bevel with
 # Limit Method Selection bevels only them, and the selection is written to the vertex group
 # "Edit Poly Selection" for other modifiers. Run with CHECK_EDIT_POLY_SELECTION.bat.
-import bpy, bmesh
+import sys
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -15,6 +24,7 @@ def tab():
     except RuntimeError as ex:
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
+
 
 def evaluated(ob):
     bpy.context.view_layer.update()
@@ -31,6 +41,7 @@ def evaluated(ob):
     ev.to_mesh_clear()
     return out
 
+
 def select_only(ob, mode, pick):
     bpy.context.tool_settings.mesh_select_mode = (mode == 'VERT', mode == 'EDGE', mode == 'FACE')
     bm = bmesh.from_edit_mesh(ob.data)
@@ -43,6 +54,7 @@ def select_only(ob, mode, pick):
     pick(bm).select_set(True)
     bm.select_flush_mode()
     bmesh.update_edit_mesh(ob.data)
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add()
@@ -68,7 +80,10 @@ bev.limit_method = 'NONE'
 all_verts = evaluated(ob)["verts"]
 bev.limit_method = 'SELECTION'
 data = evaluated(ob)
-check(data["verts"] == 10, f"Bevel, Limit Method Selection: only the selected edge is beveled ({data['verts']} vertices, all edges: {all_verts})")
+check(
+    data["verts"] == 10,
+    f"Bevel, Limit Method Selection: only the selected edge is beveled ({
+        data['verts']} vertices, all edges: {all_verts})")
 
 print("Select one vertex instead")
 ob.modifiers.active = ep
@@ -79,7 +94,10 @@ select_only(ob, 'VERT', lambda bm: max(bm.verts, key=lambda v: v.co.x + v.co.y +
 tab()
 bev.affect = 'VERTICES'
 data = evaluated(ob)
-check(data["verts"] == 10, f"Bevel on Vertices, Limit Method Selection: one corner is beveled ({data['verts']} vertices)")
+check(
+    data["verts"] == 10,
+    f"Bevel on Vertices, Limit Method Selection: one corner is beveled ({
+        data['verts']} vertices)")
 
 print("Faces still reach the UVW Map")
 ob.modifiers.active = ep
@@ -96,3 +114,5 @@ check(data["verts"] == 12 and data["faces"] == 10,
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

@@ -1,12 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Phase 2 check: an Edit Poly move stays on the same point when the Subdivision below changes.
-# Run with CHECK_EDIT_POLY.bat (Blender in background mode).
-import bpy, os, tempfile
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_edit_poly.py
+import sys
+import bpy
+import os
+import tempfile
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def points(obj):
     """{stable_id: (x, y, z)} of the evaluated mesh."""
@@ -23,6 +33,7 @@ def points(obj):
     ev.to_mesh_clear()
     return out
 
+
 def moved_by(obj, edit, sid, expected):
     edit.show_viewport = False
     before = points(obj)
@@ -33,6 +44,7 @@ def moved_by(obj, edit, sid, expected):
     d = [after[sid][k] - before[sid][k] for k in range(3)]
     others_same = all(after[k] == before[k] for k in before if k != sid)
     return all(abs(d[k] - expected[k]) < 1e-5 for k in range(3)) and others_same
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add()
@@ -92,3 +104,5 @@ check(edit.moves_num == 0, "moves_clear removes all moves")
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

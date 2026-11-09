@@ -1,15 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Phase 4b check: extrude / inset / bevel inside an Edit Poly level are re-applied when the
 # Subdivision level below changes, instead of pausing.
-# Run with CHECK_EDIT_POLY_OPS.bat (Blender in background mode).
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_edit_poly_operations.py
 # Tools are called with undo=True ('EXEC_DEFAULT', True), as the UI does: only then does Blender
 # record them in its operator history, which is what the Edit Poly session watches.
-import bpy, bmesh
+import sys
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -18,8 +27,10 @@ def tab():
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
 
+
 def update():
     bpy.context.view_layer.update()
+
 
 def evaluated(ob):
     update()
@@ -32,6 +43,7 @@ def evaluated(ob):
     ev.to_mesh_clear()
     return info
 
+
 def plain(ob, levels):
     ep = ob.modifiers["Edit Poly"]
     sub = ob.modifiers["Subdivision"]
@@ -40,6 +52,7 @@ def plain(ob, levels):
     info = evaluated(ob)
     ep.show_viewport = True
     return info
+
 
 def select_faces(ob, pred):
     bpy.ops.mesh.select_mode(type='FACE')
@@ -55,6 +68,7 @@ def select_faces(ob, pred):
     update()  # Lets the session see the selection, as a click in the viewport would.
     return n
 
+
 def new_cube():
     bpy.ops.object.select_all(action='DESELECT') if bpy.context.object else None
     bpy.ops.mesh.primitive_cube_add()
@@ -63,7 +77,10 @@ def new_cube():
     sub.levels = 1
     return ob, sub
 
-top4 = lambda f: f.normal.z > 0.5 and f.calc_center_median().z > 0.5
+
+def top4(f):
+    return f.normal.z > 0.5 and f.calc_center_median().z > 0.5
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -141,3 +158,5 @@ check(evaluated(ob)["verts"] == base["verts"], "level 2: paused (plain result), 
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

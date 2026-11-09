@@ -1,14 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Full Visible Surface check (Cycles): an area light with a narrow Spread, seen from outside its
 # beam, shows its whole surface only with the option on; nothing else in the image changes.
-# Run with CHECK_LIGHT_SURFACE.bat (Blender in background mode).
-import math, os
+# ./blender.bin --background --factory-startup --python tests/python/bl_cycles_area_light_full_visible_surface.py
+import sys
+import math
+import os
 import bpy
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -39,6 +48,7 @@ light.location = (0, 0, 0.5)
 light.rotation_euler = (math.radians(-60), 0, 0)   # Faces 30 degrees away from the camera.
 light.visible_camera = True
 
+
 def render(name):
     path = os.path.join(bpy.app.tempdir, name + ".exr")
     scene.render.filepath = path
@@ -47,6 +57,7 @@ def render(name):
     px = list(img.pixels)
     bpy.data.images.remove(img)
     return [sum(px[i:i + 3]) / 3.0 for i in range(0, len(px), 4)]
+
 
 check(hasattr(light_data, "use_full_visible_surface"), "the light has the Full Visible Surface option")
 light_data.use_full_visible_surface = False
@@ -72,3 +83,5 @@ check(len(changed) < 0.25 * len(off), "the rest of the image (the light it casts
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

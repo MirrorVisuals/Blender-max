@@ -1,6 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Checks that Subdivision gives the same stable IDs to the same points at every level.
-# Run with CHECK_IDS.bat (Blender in background mode).
+# ./blender.bin --background --factory-startup --python tests/python/bl_stable_ids_subdivision.py
+import sys
 import bpy
+
 
 def ids(obj, domain_attr):
     dg = bpy.context.evaluated_depsgraph_get()
@@ -10,6 +16,7 @@ def ids(obj, domain_attr):
     obj.evaluated_get(dg).to_mesh_clear()
     return out
 
+
 def ids_at_levels(obj, mod, levels):
     result = {}
     for lv in levels:
@@ -18,11 +25,15 @@ def ids_at_levels(obj, mod, levels):
         result[lv] = ids(obj, ".stable_id_point")
     return result
 
+
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 for name, add in [("cube (quads)", lambda: bpy.ops.mesh.primitive_cube_add()),
@@ -52,3 +63,5 @@ for name, add in [("cube (quads)", lambda: bpy.ops.mesh.primitive_cube_add()),
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

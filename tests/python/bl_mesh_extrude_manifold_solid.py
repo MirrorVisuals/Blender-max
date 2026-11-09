@@ -1,8 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Extrude Manifold (solid) check: on a closed mesh, pushing faces in cuts the volume they sweep
 # (clean walls, a hole when it goes through) and pulling out adds it; an open mesh, or Solid
 # turned off, extrudes as Blender's Extrude Manifold always did; other parts of the mesh are
 # left alone.
-# Run with CHECK_EXTRUDE_SOLID.bat (Blender in background mode).
+# ./blender.bin --background --factory-startup --python tests/python/bl_mesh_extrude_manifold_solid.py
+import sys
 import bmesh
 import bpy
 from mathutils import Vector
@@ -52,7 +57,9 @@ def run(name, build, pick, move, solid=True, stock=False):
     bm = bmesh.from_edit_mesh(ob.data)
     if pick == 'NEAREST_CENTER':
         nearest = min(bm.faces, key=lambda f: center(f).length)
-        pick = lambda f: f == nearest
+
+        def pick(f):
+            return f == nearest
     for f in bm.faces:
         f.select_set(pick(f))
     bm.select_flush_mode()
@@ -98,9 +105,18 @@ def center(f):
     return f.calc_center_median()
 
 
-corner = lambda f: f.normal.z > 0.9 and center(f).x > 0.5 and center(f).y > 0.5
-edge_row = lambda f: f.normal.z > 0.9 and center(f).x > 0.5
-side = lambda f: f.normal.x > 0.9 and abs(center(f).y) < 0.1 and abs(center(f).z) < 0.1
+def corner(f):
+    return f.normal.z > 0.9 and center(f).x > 0.5 and center(f).y > 0.5
+
+
+def edge_row(f):
+    return f.normal.z > 0.9 and center(f).x > 0.5
+
+
+def side(f):
+    return f.normal.x > 0.9 and abs(center(f).y) < 0.1 and abs(center(f).z) < 0.1
+
+
 cell = 2.0 / 3.0
 
 
@@ -149,6 +165,8 @@ check(through_off['euler'] != 0,
       "with Solid on it does (tested above)")
 
 print("Other parts of the mesh")
+
+
 def cube_and_far_cube(bm):
     grid_cube(bm)
     far = bmesh.new()
@@ -159,6 +177,8 @@ def cube_and_far_cube(bm):
     far.free()
     bm.from_mesh(me)
     bpy.data.meshes.remove(me)
+
+
 r = run("Corner pushed, with a second cube in the mesh", cube_and_far_cube,
         lambda f: corner(f) and center(f).x < 5, (0, 0, -cell))
 check(r['open_edges'] == 0, f"the result is closed (open edges: {r['open_edges']})")
@@ -176,3 +196,5 @@ check(not any(n.startswith(".extrude_solid") for n in r['layers']),
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

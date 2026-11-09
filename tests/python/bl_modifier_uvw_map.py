@@ -1,14 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # UVW Map check: projections, gizmo (values, gizmo object, Tab editing, Fit), and Selected Faces
 # Only with the face selection passed up from an Edit Poly level.
-# Run with CHECK_UVW_MAP.bat (Blender in background mode).
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_uvw_map.py
+import sys
 import math
-import bpy, bmesh
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -16,6 +25,7 @@ def tab():
     except RuntimeError as ex:
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
+
 
 def faces_uv(ob):
     """[(corner positions, corner uvs, face normal)] of the evaluated mesh, active UV map."""
@@ -32,13 +42,16 @@ def faces_uv(ob):
     ev.to_mesh_clear()
     return out
 
+
 def close(a, b, eps=1e-4):
     return abs(a - b) < eps
+
 
 def new_object(kind, **kw):
     bpy.ops.object.select_all(action='DESELECT')
     getattr(bpy.ops.mesh, "primitive_" + kind + "_add")(**kw)
     return bpy.context.active_object
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -256,12 +269,16 @@ print("Size modes")
 cube_s = new_object("cube", location=(0, 12, 0))   # 2 m wide
 sm = cube_s.modifiers.new("UVW Map", 'UVW_MAP')
 sm.gizmo_size = (10.0, 10.0, 10.0)                   # The gizmo size must not matter.
+
+
 def spans(ob):
     data = faces_uv(ob)
     top = [d for d in data if d[2][2] > 0.9][0]
     us = [u for u, _ in top[1]]
     vs = [v for _, v in top[1]]
     return max(us) - min(us), max(vs) - min(vs)
+
+
 check(sm.size_mode == 'GIZMO', "the default size is the gizmo")
 sm.size_mode = 'REAL_WORLD'
 sm.real_size = (1.0, 1.0)
@@ -296,3 +313,5 @@ check(len(mapped) == 1 and mapped[0][2][2] > 0.9, "only the face with material B
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

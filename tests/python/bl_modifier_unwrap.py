@@ -1,14 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Unwrap check: UVs edited in a Tab session are stored by stable ID and follow the mesh below
 # (Subdivision added / raised / lowered, Mirror copies); new faces are unwrapped and flagged.
-# Run with CHECK_UNWRAP.bat (Blender in background mode).
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_unwrap.py
+import sys
 import math
-import bpy, bmesh
+import bpy
+import bmesh
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -17,9 +26,11 @@ def tab():
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
 
+
 def f(co):
     """The UVs painted in the sessions: a linear function of the position."""
     return (0.1 * co[0] + 0.05 * co[2] + 0.5, 0.1 * co[1] - 0.03 * co[2] + 0.5)
+
 
 def evaluated(ob):
     """[(face index, [(position, uv)], is_new)] of the evaluated mesh."""
@@ -37,6 +48,7 @@ def evaluated(ob):
     ev.to_mesh_clear()
     return out
 
+
 def all_match(data, fn=f, faces=None, eps=1e-4):
     for i, corners, _new in data:
         if faces is not None and i not in faces:
@@ -47,6 +59,7 @@ def all_match(data, fn=f, faces=None, eps=1e-4):
                 return False
     return True
 
+
 def paint_session(ob):
     """In an Unwrap session: set every UV to f(position)."""
     bm = bmesh.from_edit_mesh(ob.data)
@@ -56,10 +69,12 @@ def paint_session(ob):
             loop[uv].uv = f(loop.vert.co)
     bmesh.update_edit_mesh(ob.data)
 
+
 def new_object(location=(0, 0, 0)):
     bpy.ops.object.select_all(action='DESELECT')
     bpy.ops.mesh.primitive_cube_add(location=location)
     return bpy.context.active_object
+
 
 def unwrap_and_paint(ob):
     mod = ob.modifiers.new("Unwrap", 'UNWRAP')
@@ -70,6 +85,7 @@ def unwrap_and_paint(ob):
     tab()
     check(ob.mode == 'OBJECT' and not ob.data.name.endswith("(Unwrap)"), "Tab again: back to the original mesh")
     return mod
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -203,3 +219,5 @@ check(all(-1e-4 <= u <= 1 + 1e-4 and -1e-4 <= v <= 1 + 1e-4 for u, v in us) and
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

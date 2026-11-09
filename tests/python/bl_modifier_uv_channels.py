@@ -1,8 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # UV map channels check: Map Channel on UVW Map and Unwrap (1 = default UV map, N = "UVChannel_N";
 # setting it does not change the mesh, the modifier writes the UV map to its result, Add UV Map
 # adds it to the mesh), two UVW Maps on different channels with different sizes, and Connect to
 # Texture (a UV Map node in front of the selected texture node, the UV map added to the mesh).
-# Run with CHECK_UV_CHANNELS.bat (Blender in background mode).
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_uv_channels.py
+import sys
 import bpy
 
 failures = []
@@ -48,10 +53,14 @@ detail.size_mode = 'GIZMO'
 detail.gizmo_size = [s * 0.25 for s in base.gizmo_size]
 dg = bpy.context.evaluated_depsgraph_get()
 ev = ob.evaluated_get(dg).data
+
+
 def uv_extent(name):
     data = ev.attributes[name].data
     us = [d.vector[0] for d in data]
     return max(us) - min(us)
+
+
 ext_base, ext_detail = uv_extent("UVMap"), uv_extent("UVChannel_2")
 check(abs(ext_detail - 4 * ext_base) < 1e-3,
       f"the two maps have their own sizes (U range {ext_base:.3f} and {ext_detail:.3f})")
@@ -117,3 +126,5 @@ check(result == {'CANCELLED'}, "a selected node without a Vector input is refuse
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

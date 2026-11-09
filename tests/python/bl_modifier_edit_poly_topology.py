@@ -1,12 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Phase 4a check: topology edits (any tool) are stored as a patch in the Edit Poly level.
-# Run with CHECK_EDIT_POLY_TOPOLOGY.bat (Blender in background mode).
-import bpy, bmesh, os, tempfile
+# ./blender.bin --background --factory-startup --python tests/python/bl_modifier_edit_poly_topology.py
+import sys
+import bpy
+import bmesh
+import os
+import tempfile
 
 failures = []
+
+
 def check(cond, msg):
     print(("  ok    " if cond else "  FAIL  ") + msg)
     if not cond:
         failures.append(msg)
+
 
 def tab():
     try:
@@ -14,6 +25,7 @@ def tab():
     except RuntimeError as ex:
         print("        (reported:", str(ex).strip().splitlines()[-1], ")")
         return {'CANCELLED'}
+
 
 def evaluated(ob):
     bpy.context.view_layer.update()
@@ -25,6 +37,7 @@ def evaluated(ob):
             "co": sorted(tuple(round(c, 4) for c in v.co) for v in me.vertices)}
     ev.to_mesh_clear()
     return info
+
 
 def select_faces(ob, pred):
     bpy.ops.mesh.select_mode(type='FACE')
@@ -38,6 +51,7 @@ def select_faces(ob, pred):
     bm.normal_update()
     bmesh.update_edit_mesh(ob.data)
     return n
+
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add()
@@ -153,3 +167,5 @@ check(evaluated(ob)["co"] == plain["co"], "patch_clear + moves_clear give the pl
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
+# A non-zero exit code makes the test fail when run by CTest.
+sys.exit(1 if failures else 0)

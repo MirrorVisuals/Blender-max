@@ -593,6 +593,86 @@ add_blender_test(
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_geometry_attributes.py
 )
 
+# ------------------------------------------------------------------------------
+# Edit Poly stack: stable IDs, Edit Poly, UVW Map, Unwrap, Extrude Manifold (solid).
+
+add_blender_test(
+  stable_ids_subdivision
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_stable_ids_subdivision.py
+)
+
+add_blender_test(
+  modifier_edit_poly
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly.py
+)
+
+add_blender_test(
+  modifier_edit_poly_tab
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly_tab.py
+)
+
+add_blender_test_allow_error(
+  modifier_edit_poly_topology
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly_topology.py
+)
+
+add_blender_test(
+  modifier_edit_poly_operations
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly_operations.py
+)
+
+add_blender_test(
+  modifier_edit_poly_collapse
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly_collapse.py
+)
+
+add_blender_test(
+  modifier_edit_poly_attributes
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly_attributes.py
+)
+
+add_blender_test(
+  modifier_edit_poly_selection
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_edit_poly_selection.py
+)
+
+add_blender_test(
+  modifier_mirror_array_stable_ids
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_mirror_array_stable_ids.py
+)
+
+add_blender_test(
+  modifier_uvw_map
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_uvw_map.py
+)
+
+add_blender_test(
+  modifier_unwrap
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_unwrap.py
+)
+
+add_blender_test_allow_error(
+  modifier_uv_channels
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_modifier_uv_channels.py
+)
+
+add_blender_test(
+  mesh_extrude_manifold_solid
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_mesh_extrude_manifold_solid.py
+)
+
+# Rendered with Cycles (CPU).
+if(WITH_CYCLES)
+  add_blender_test(
+    cycles_area_light_full_visible_surface
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_area_light_full_visible_surface.py
+  )
+  add_blender_test(
+    cycles_camera_tilt_correction
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_camera_tilt_correction.py
+  )
+endif()
+
 add_blender_test(
   geo_node_file_reporting
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_geo_node_file_reporting.py
