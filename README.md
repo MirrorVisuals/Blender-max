@@ -8,8 +8,8 @@ Blender-max
 ===========
 
 An experimental fork of **Blender 5.2.3 LTS** that brings a 3ds Max style modifier workflow to
-Blender: editable modeling levels in the modifier stack, UVW Map and Unwrap modifiers, and a
-few rendering extras. Branch: `edit-poly-stack`. Experimental and unofficial: not affiliated
+Blender: editable modeling levels in the modifier stack, UVW Map and Unwrap modifiers, a solid
+Extrude Manifold, camera tilt correction, and a few rendering extras. Branch: `edit-poly-stack`. Experimental and unofficial: not affiliated
 with the Blender Foundation.
 
 What is different from Blender 5.2.3
@@ -35,8 +35,12 @@ below possible.
   changes (for example a Subdivision level), they are re-applied to the matching faces.
 - **Several levels.** You can stack several Edit Poly levels and edit any of them. Click a level
   (or hover its panel) and press Tab.
-- **Selection passing.** The faces selected when you leave a level are passed up the stack,
-  as with Edit Poly in 3ds Max (see UVW Map: Selected Faces Only).
+- **Element data.** Bevel weights, creases, sharp edges, seams, sharp faces and material
+  indices set in a level are stored in it by stable ID, like the moves.
+- **Selection passing.** The vertices, edges and faces selected when you leave a level are
+  passed up the stack, as with Edit Poly in 3ds Max (see UVW Map: Selected Faces Only and Bevel:
+  Selection). They are also in a vertex group, "Edit Poly Selection", so any modifier with a
+  vertex group field (Solidify, Displace, Smooth...) can work on the selection.
 - **Collapse to Here** (modifier menu) bakes everything up to a modifier into the mesh while
   keeping the stable IDs.
 
@@ -44,10 +48,14 @@ below possible.
 
 - **Projections:** Planar, Box, Cylindrical (with optional Cap), Spherical, Shrink Wrap and Face.
 - **Map controls:** X / Y / Z alignment, tile, offset and flip.
-- **Real-World Size:** sets the map size from pixel density (px/m) and texture size.
+- **Size:** from the gizmo, as a Real-World Size (metres per texture tile), or as a Pixel
+  Density (px/m for a texture size), with presets for common texture sizes and densities.
+- **Material ID:** maps only the faces of one material slot of the object.
 - **Selected Faces Only:** maps only the faces passed up by the Edit Poly level below.
 - **Gizmo:** drawn in the viewport. Tab (or Edit Gizmo) lets you move, rotate and scale it,
-  with snapping. Fit, Center and View Align are available.
+  with snapping, and the texture follows live. Fit, Center and View Align are available, and
+  the alignment buttons reset the gizmo rotation. With several UVW Maps, Tab over another
+  map's panel switches to its gizmo.
 
 ### Unwrap modifier
 
@@ -59,6 +67,43 @@ below possible.
   around them, or keep the UVs that arrive from below. Either way they are flagged and
   pre-selected in the next session.
 - **Quick buttons:** Smart Project, Unwrap and Pack, without a session.
+
+### Bevel modifier: Limit Method Selection
+
+Bevels only the edges (or vertices) selected in the Edit Poly level below.
+
+### Extrude Manifold: solid extrude, as in 3ds Max
+
+On a closed mesh, Extrude Manifold now works on the volume:
+
+- **Pushing faces in** cuts away the volume they pass through. Side walls that end up against
+  existing faces disappear, at any depth, and pushing through the mesh opens a hole.
+- **Pulling faces out** adds the volume, merging with any part of the mesh it runs into.
+- **Open meshes,** or the **Solid** option turned off (in the operator panel), work exactly as
+  Blender's Extrude Manifold always did.
+
+It uses the fast Manifold Boolean solver (with the exact solver as a fallback) on the
+connected part being edited only. With 50,000 faces it takes about 0.15 s; other parts of the
+mesh add almost nothing.
+
+### Add Plane tool
+
+The Add tool in the toolbar (Object and Edit Mode) can draw a plane, like the cube and the
+other primitives: drag its base and it is added with the size drawn.
+
+### Camera: Tilt Correction
+
+Keeps lines parallel when the camera is tilted (two-point perspective), like a shift lens or
+the tilt correction of 3ds Max's Physical Camera. It is in the camera's Lens panel.
+
+- **Automatic:** corrects the camera's own tilt up or down, so vertical lines stay vertical.
+  It follows the camera as it moves or is animated. **Amount** sets how much is corrected.
+- **Manual:** corrects by the angles given, **Tilt Vertical** and **Horizontal** (for a wall
+  seen from the side), whatever the camera's direction.
+
+The point the camera aims at stays in the middle of the frame. The camera's rotation and its
+own Shift are not changed. It works in the camera view, Cycles, EEVEE and Workbench, and the
+camera can still be tilted with Fly/Walk navigation or Lock Camera to View.
 
 ### Cycles: Full Visible Surface for area lights
 
@@ -72,13 +117,19 @@ Visibility.
 `BUILD_WINDOWS.bat` builds the Cycles CUDA kernels for RTX 50 series cards (sm_120) when
 CUDA 12.8 or newer is installed.
 
+### Fixes
+
+- Vulkan: no crash when snapping with Face Midpoint (the snap cursor's midpoint dot).
+
 Documentation and tests
 -----------------------
 
 - **Design notes:** [`doc/edit_poly_stack/`](doc/edit_poly_stack/).
 - **Build and check scripts (Windows):** [`tools/edit_poly_stack/`](tools/edit_poly_stack/).
   `BUILD_WINDOWS.bat` builds Blender. `RUN_ALL_CHECKS.bat` runs the unit tests and one check
-  per feature in background Blender.
+  per feature in background Blender. `BENCHMARK.bat` times the features on big scenes (meshes
+  of up to a million faces, 400 objects with full stacks, Extrude Manifold on up to 200,000
+  faces) and appends the results to `benchmark_results.txt`.
 
 Status
 ------
