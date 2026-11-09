@@ -159,11 +159,16 @@ class DATA_PT_lens(CameraButtonsPanel, Panel):
 
         if cam.type == 'PERSP':
             col.separator()
-            row = col.row(heading="Vertical Correction")
-            row.prop(cam, "use_vertical_correction", text="")
-            sub = row.row()
-            sub.active = cam.use_vertical_correction
-            sub.prop(cam, "vertical_correction", text="Amount", slider=True)
+            col.prop(cam, "use_tilt_correction")
+            sub = col.column()
+            sub.active = cam.use_tilt_correction
+            sub.prop(cam, "tilt_correction_mode", text="Mode")
+            if cam.tilt_correction_mode == 'AUTO':
+                sub.prop(cam, "tilt_correction_amount", slider=True)
+            else:
+                sub2 = sub.column(align=True)
+                sub2.prop(cam, "tilt_vertical", text="Tilt Vertical")
+                sub2.prop(cam, "tilt_horizontal", text="Horizontal")
 
         col.separator()
         sub = col.column(align=True)

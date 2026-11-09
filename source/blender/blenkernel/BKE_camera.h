@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "BLI_math_vector_types.hh"
+
 #include "DNA_vec_types.h"
 
 namespace blender {
@@ -81,18 +83,18 @@ void BKE_camera_params_init(CameraParams *params);
 void BKE_camera_params_from_object(CameraParams *params, const struct Object *cam_ob);
 
 /**
- * Vertical (tilt) correction, see #CAM_VERTICAL_CORRECTION: a perspective camera with it renders
- * as if it were turned level, with the lens shifted up or down to keep looking at the same place,
- * so vertical lines stay vertical.
+ * Tilt correction, see #CAM_TILT_CORRECTION: a perspective camera with it renders as if it were
+ * turned by the correction (level, for the automatic mode), with the lens shifted to keep looking
+ * at the same place, so lines stay parallel (two-point perspective).
  *
- * The angle (radians) the camera is turned by: its tilt times the amount, positive when it looks
- * up, limited to 80 degrees. Zero when the correction is off.
+ * The correction as angles (radians): x is the vertical one (positive for a camera looking up),
+ * y the horizontal one (positive for a camera turned right). Zero when off.
  */
-float BKE_camera_vertical_correction_angle(const struct Object *camera);
-/** Lens shift Y added by the vertical correction (in the units of #Camera.shifty). */
-float BKE_camera_vertical_correction_shift(const struct Object *camera);
-/** Turn a camera model matrix (camera to world) level by the vertical correction. */
-void BKE_camera_vertical_correction_apply(const struct Object *camera, float r_modelmat[4][4]);
+blender::float2 BKE_camera_tilt_correction_angles(const struct Object *camera);
+/** Lens shift added by the tilt correction (in the units of #Camera.shiftx, #Camera.shifty). */
+blender::float2 BKE_camera_tilt_correction_shift(const struct Object *camera);
+/** Turn a camera model matrix (camera to world) by the tilt correction. */
+void BKE_camera_tilt_correction_apply(const struct Object *camera, float r_modelmat[4][4]);
 void BKE_camera_params_from_view3d(CameraParams *params,
                                    const struct Depsgraph *depsgraph,
                                    const struct View3D *v3d,

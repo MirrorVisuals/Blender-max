@@ -384,8 +384,9 @@ void BKE_camera_params_from_object(CameraParams *params, const Object *cam_ob)
     params->lens = cam->lens;
     params->ortho_scale = cam->ortho_scale;
 
-    params->shiftx = cam->shiftx;
-    params->shifty = cam->shifty + BKE_camera_vertical_correction_shift(cam_ob);
+    const float2 tilt_shift = BKE_camera_tilt_correction_shift(cam_ob);
+    params->shiftx = cam->shiftx + tilt_shift.x;
+    params->shifty = cam->shifty + tilt_shift.y;
 
     params->sensor_x = cam->sensor_x;
     params->sensor_y = cam->sensor_y;
@@ -412,52 +413,74 @@ void BKE_camera_params_from_object(CameraParams *params, const Object *cam_ob)
   params->clip_end = math::max(params->clip_end, params->clip_start + 1e-3f);
 }
 
-float BKE_camera_vertical_correction_angle(const Object *camera)
+float2 BKE_camera_tilt_correction_angles(const Object *camera)
 {
   if (camera == nullptr || camera->type != OB_CAMERA) {
-    return 0.0f;
+    return float2(0.0f);
   }
   const Camera *cam = id_cast<const Camera *>(camera->data);
-  if (!(cam->flag & CAM_VERTICAL_CORRECTION) || cam->type != CAM_PERSP) {
-    return 0.0f;
+  if (!(cam->flag & CAM_TILT_CORRECTION) || cam->type != CAM_PERSP) {
+    return float2(0.0f);
   }
-  const float amount = math::clamp(cam->vertical_correction, 0.0f, 1.0f);
+  const float limit = DEG2RADF(80.0f);
+  if (cam->tilt_correction_mode == CAM_TILT_CORRECTION_MANUAL) {
+    return float2(math::clamp(cam->tilt_vertical, -limit, limit),
+                  math::clamp(cam->tilt_horizontal, -limit, limit));
+  }
+  const float amount = math::clamp(cam->tilt_correction_amount, 0.0f, 1.0f);
   /* The camera looks along its -Z axis. */
   const float3 view = -math::normalize(float3(camera->object_to_world().ptr()[2]));
   const float tilt = asinf(math::clamp(view.z, -1.0f, 1.0f));
-  const float limit = DEG2RADF(80.0f);
-  return math::clamp(tilt, -limit, limit) * amount;
+  return float2(math::clamp(tilt, -limit, limit) * amount, 0.0f);
 }
 
-float BKE_camera_vertical_correction_shift(const Object *camera)
+/** The correction as a rotation in camera space (applied after the camera's own). */
+static bool camera_tilt_correction_rotation(const Object *camera, float r_rot[3][3])
 {
-  const float angle = BKE_camera_vertical_correction_angle(camera);
-  if (angle == 0.0f) {
-    return 0.0f;
+  const float2 angles = BKE_camera_tilt_correction_angles(camera);
+  if (angles.x == 0.0f && angles.y == 0.0f) {
+    unit_m3(r_rot);
+    return false;
+  }
+  /* A turn about X by a positive angle tilts the view (-Z) up (towards +Y), about Y by a
+   * positive angle turns it left (towards -X): undo the camera's tilt and turn. */
+  float rot_x[3][3], rot_y[3][3];
+  axis_angle_to_mat3_single(rot_x, 'X', -angles.x);
+  axis_angle_to_mat3_single(rot_y, 'Y', angles.y);
+  mul_m3_m3m3(r_rot, rot_x, rot_y);
+  return true;
+}
+
+float2 BKE_camera_tilt_correction_shift(const Object *camera)
+{
+  float rot[3][3];
+  if (!camera_tilt_correction_rotation(camera, rot)) {
+    return float2(0.0f);
   }
   const Camera *cam = id_cast<const Camera *>(camera->data);
-  /* Turned level, the point the camera looked at is `lens * tan(angle)` above the sensor centre;
-   * the shift is in units of the fitted sensor size. */
+  /* Where the original view direction lands in the turned camera: the lens is shifted by that
+   * much (in units of the fitted sensor size), so the camera keeps looking at the same place. */
+  float rot_inv[3][3];
+  transpose_m3_m3(rot_inv, rot);
+  float view[3] = {0.0f, 0.0f, -1.0f};
+  mul_m3_v3(rot_inv, view);
+  if (view[2] > -1e-4f) {
+    return float2(0.0f);
+  }
   const float sensor_size = BKE_camera_sensor_size(cam->sensor_fit, cam->sensor_x, cam->sensor_y);
-  return tanf(angle) * cam->lens / math::max(sensor_size, 1e-6f);
+  const float fac = cam->lens / math::max(sensor_size, 1e-6f) / -view[2];
+  return float2(view[0] * fac, view[1] * fac);
 }
 
-void BKE_camera_vertical_correction_apply(const Object *camera, float r_modelmat[4][4])
+void BKE_camera_tilt_correction_apply(const Object *camera, float r_modelmat[4][4])
 {
-  const float angle = BKE_camera_vertical_correction_angle(camera);
-  if (angle == 0.0f) {
+  float rot[3][3];
+  if (!camera_tilt_correction_rotation(camera, rot)) {
     return;
   }
-  /* Turn about the camera's own X axis, down by the angle (a turn about X by a positive angle
-   * tilts the view, -Z, towards +Y). */
-  float rot[4][4];
-  unit_m4(rot);
-  const float c = cosf(-angle), s = sinf(-angle);
-  rot[1][1] = c;
-  rot[1][2] = s;
-  rot[2][1] = -s;
-  rot[2][2] = c;
-  mul_m4_m4m4(r_modelmat, r_modelmat, rot);
+  float rot4[4][4];
+  copy_m4_m3(rot4, rot);
+  mul_m4_m4m4(r_modelmat, r_modelmat, rot4);
 }
 
 void BKE_camera_params_from_view3d(CameraParams *params,
@@ -1128,7 +1151,7 @@ void BKE_camera_multiview_model_matrix_scaled(const RenderData *rd,
     const bool is_left = camera_is_left(viewname);
     camera_stereo3d_model_matrix(camera, is_left, r_modelmat);
   }
-  BKE_camera_vertical_correction_apply(camera, r_modelmat);
+  BKE_camera_tilt_correction_apply(camera, r_modelmat);
 }
 
 void BKE_camera_multiview_window_matrix(const RenderData *rd,
@@ -1276,17 +1299,19 @@ float BKE_camera_multiview_shift_x(const RenderData *rd,
 
   BLI_assert(camera->type == OB_CAMERA);
 
+  /* The horizontal shift of the tilt correction is added to every view. */
+  const float tilt_shift = BKE_camera_tilt_correction_shift(camera).x;
   if (!is_multiview) {
-    return data->shiftx;
+    return data->shiftx + tilt_shift;
   }
   if (rd->views_format == SCE_VIEWS_FORMAT_MULTIVIEW) {
-    return data->shiftx;
+    return data->shiftx + tilt_shift;
   }
   if (data->type == CAM_PANO) {
     return data->shiftx;
   }
   /* SCE_VIEWS_SETUP_BASIC */
-  return camera_stereo3d_shift_x(camera, viewname);
+  return camera_stereo3d_shift_x(camera, viewname) + tilt_shift;
 }
 
 void BKE_camera_multiview_params(const RenderData *rd,

@@ -75,9 +75,18 @@ enum eCamera_Flag : short {
   CAM_SHOWSENSOR = (1 << 8),
   CAM_SHOW_SAFE_CENTER = (1 << 9),
   CAM_SHOW_BG_IMAGE = (1 << 10),
-  /** Vertical (tilt) correction: render as if held level, with the lens shifted to keep the
-   * view, so vertical lines stay vertical (two-point perspective). */
-  CAM_VERTICAL_CORRECTION = (1 << 11),
+  /** Tilt correction: render as if the camera were turned (level, for the automatic mode),
+   * with the lens shifted to keep the view, so vertical lines stay vertical (two-point
+   * perspective). See #Camera.tilt_correction_mode. */
+  CAM_TILT_CORRECTION = (1 << 11),
+};
+
+/* Camera.tilt_correction_mode */
+enum eCamera_TiltCorrectionMode : char {
+  /** From the camera's own tilt, times #Camera.tilt_correction_amount. */
+  CAM_TILT_CORRECTION_AUTO = 0,
+  /** The angles #Camera.tilt_vertical and #Camera.tilt_horizontal. */
+  CAM_TILT_CORRECTION_MANUAL = 1,
 };
 ENUM_OPERATORS(eCamera_Flag)
 
@@ -226,7 +235,8 @@ struct Camera {
 
   eCamera_SensorFit sensor_fit = {};
   eCamera_PanoType panorama_type = CAM_PANORAMA_FISHEYE_EQUISOLID;
-  char _pad2[6] = {};
+  eCamera_TiltCorrectionMode tilt_correction_mode = CAM_TILT_CORRECTION_AUTO;
+  char _pad2[5] = {};
 
   /* Fish-eye properties. */
   float fisheye_fov = M_PI;
@@ -245,8 +255,8 @@ struct Camera {
   float central_cylindrical_range_v_min = -1.0f;
   float central_cylindrical_range_v_max = 1.0f;
   float central_cylindrical_radius = 1.0f;
-  /** How much of the tilt the vertical correction removes (0 to 1). */
-  float vertical_correction = 1.0f;
+  /** How much of the camera's tilt the automatic tilt correction removes (0 to 1). */
+  float tilt_correction_amount = 1.0f;
 
   /* Custom Camera properties. */
   struct Text *custom_shader = nullptr;
@@ -270,6 +280,9 @@ struct Camera {
 
   /* Compositional guide overlay color */
   float composition_guide_color[4] = {0.5f, 0.5f, 0.5f, 1.0f};
+
+  /** Manual tilt correction angles (radians): up/down and left/right. */
+  float tilt_vertical = 0.0f, tilt_horizontal = 0.0f;
 
   /** Runtime data (keep last). */
   Camera_Runtime runtime;

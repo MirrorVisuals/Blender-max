@@ -285,7 +285,9 @@ static void view3d_stereo3d_setup(
     shiftx = data_eval->shiftx;
 
     BLI_thread_lock(LOCK_VIEW3D);
-    data_eval->shiftx = BKE_camera_multiview_shift_x(&scene->r, v3d->camera, viewname);
+    /* (Without the tilt correction's shift, which the camera params add.) */
+    data_eval->shiftx = BKE_camera_multiview_shift_x(&scene->r, v3d->camera, viewname) -
+                        BKE_camera_tilt_correction_shift(v3d->camera).x;
 
     BKE_camera_multiview_view_matrix(&scene->r, v3d->camera, is_left, viewmat);
     view3d_main_region_setup_view(depsgraph, scene, v3d, region, viewmat, nullptr, rect);

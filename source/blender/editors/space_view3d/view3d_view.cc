@@ -385,7 +385,7 @@ static void obmat_to_viewmat(RegionView3D *rv3d, Object *ob)
   rv3d->view = RV3D_VIEW_USER; /* don't show the grid */
 
   normalize_m4_m4(bmat, ob->object_to_world().ptr());
-  BKE_camera_vertical_correction_apply(ob, bmat);
+  BKE_camera_tilt_correction_apply(ob, bmat);
   invert_m4_m4(rv3d->viewmat, bmat);
 
   /* view quat calculation, needed for add object */

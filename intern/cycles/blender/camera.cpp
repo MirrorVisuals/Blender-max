@@ -325,7 +325,7 @@ static void blender_camera_from_object(BlenderCamera *bcam,
     else {
       bcam->shift.x = RE_engine_get_camera_shift_x(&b_engine, &b_ob, bcam->use_spherical_stereo);
     }
-    bcam->shift.y = b_camera.shifty + BKE_camera_vertical_correction_shift(&b_ob);
+    bcam->shift.y = b_camera.shifty + BKE_camera_tilt_correction_shift(&b_ob).y;
 
     bcam->sensor_width = b_camera.sensor_x;
     bcam->sensor_height = b_camera.sensor_y;
