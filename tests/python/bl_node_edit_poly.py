@@ -153,6 +153,16 @@ second.mute = True
 check(mod.edit_poly_pick() == first_id, "a muted Edit Poly node is skipped")
 second.mute = False
 
+print("Edit and Reset buttons")
+bpy.context.view_layer.objects.active = ob
+bpy.ops.object.edit_poly_node_edit(modifier=mod.name, node_id=second_id)
+check(ob.mode == 'EDIT' and mod.edit_poly_session_get() == second_id, "Edit starts a session on that node")
+tab()
+check(ob.mode == 'OBJECT', "Tab leaves it")
+bpy.ops.object.edit_poly_node_reset(modifier=mod.name, node_id=node_id)
+check(not mod.edit_poly_has_edits(id=node_id), "Reset removes the stored edits")
+check(evaluated(ob)["verts"] == 8 and evaluated(ob)["max_z"] == 2.0, "the node passes the cube through again")
+
 print("Without Edit Poly nodes Tab behaves as before")
 bpy.ops.mesh.primitive_cube_add(location=(-4.0, 0.0, 0.0))
 plain_ob = bpy.context.active_object
@@ -170,11 +180,19 @@ check(plain_ob.mode == 'OBJECT', "Tab leaves that level")
 
 print("Removing the node")
 bpy.context.view_layer.objects.active = ob
+tab()
+bm = bmesh.from_edit_mesh(ob.data)
+for v in bm.verts:
+    v.co.z += 0.25
+bmesh.update_edit_mesh(ob.data)
+tab()
+check(evaluated(ob)["max_z"] == 2.25, "Tab edits the node closest to the output (moved up 0.25)")
 group_in = next(n for n in tree.nodes if n.bl_idname == 'NodeGroupInput')
 tree.nodes.remove(first)
 tree.links.new(group_in.outputs[0], transform.inputs[0])
 info = evaluated(ob)
-check(info["verts"] == 8, "without the node its edits are not applied (no crash)")
+check(info["verts"] == 8 and info["max_z"] == 2.25,
+      "removing the first node: the other node's edits still apply (no crash)")
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")

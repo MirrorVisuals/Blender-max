@@ -41,7 +41,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_rpt as rpt_
 from bpy.types import Operator
-from bpy.props import StringProperty
+from bpy.props import IntProperty, StringProperty
 
 KEY_MESH = "_edit_poly_mesh"
 KEY_INPUT = "_edit_poly_input"
@@ -603,6 +603,62 @@ class OBJECT_OT_edit_poly_level_edit(Operator):
         return {'FINISHED'}
 
 
+class OBJECT_OT_edit_poly_node_edit(Operator):
+    """Edit the mesh at this Edit Poly node (the edits are stored in this modifier)"""
+    bl_idname = "object.edit_poly_node_edit"
+    bl_label = "Edit Edit Poly Node"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier: StringProperty(name="Modifier")
+    node_id: IntProperty(name="Node ID")
+
+    def execute(self, context):
+        ob = context.active_object
+        if ob is None or ob.type != 'MESH':
+            return {'CANCELLED'}
+        mod = ob.modifiers.get(self.modifier)
+        if mod is None or mod.type != 'NODES':
+            return {'CANCELLED'}
+        if in_session(ob):
+            if ob.get(KEY_NODE) == self.node_id and ob[KEY_MODIFIER] == mod.name:
+                return {'CANCELLED'}  # Already editing this node.
+            error = commit_session(context, ob)
+            if error:
+                self.report({'ERROR'}, error)
+                if ob.mode != 'EDIT':
+                    enter_edit_mode_only(context, ob)
+                return {'CANCELLED'}
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        ob.modifiers.active = mod
+        error = start_node_session(context, ob, mod, self.node_id)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class OBJECT_OT_edit_poly_node_reset(Operator):
+    """Remove the edits stored for this Edit Poly node"""
+    bl_idname = "object.edit_poly_node_reset"
+    bl_label = "Reset Edit Poly Node"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier: StringProperty(name="Modifier")
+    node_id: IntProperty(name="Node ID")
+
+    def execute(self, context):
+        ob = context.active_object
+        mod = ob.modifiers.get(self.modifier) if ob is not None else None
+        if mod is None or mod.type != 'NODES':
+            return {'CANCELLED'}
+        if in_session(ob) and ob.get(KEY_NODE) == self.node_id and ob[KEY_MODIFIER] == mod.name:
+            self.report({'ERROR'}, rpt_("Leave the Edit Poly session (Tab) before resetting this node"))
+            return {'CANCELLED'}
+        mod.edit_poly_reset(id=self.node_id)
+        return {'FINISHED'}
+
+
 # Attributes that describe the history of a mesh rather than the mesh itself. A collapsed mesh
 # has no history: its elements keep their stable IDs, but not their parents or footprints.
 _HISTORY_ATTRIBUTES = (
@@ -674,6 +730,8 @@ class OBJECT_OT_edit_poly_collapse_to(Operator):
 classes = (
     OBJECT_OT_edit_poly_tab,
     OBJECT_OT_edit_poly_session_discard,
+    OBJECT_OT_edit_poly_node_edit,
+    OBJECT_OT_edit_poly_node_reset,
     OBJECT_OT_edit_poly_level_edit,
     OBJECT_OT_edit_poly_collapse_to,
 )

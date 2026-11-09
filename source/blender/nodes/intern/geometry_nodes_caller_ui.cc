@@ -867,6 +867,92 @@ static void draw_manage_panel(const bContext *C,
   }
 }
 
+/** Edit Poly nodes in the node tree (nested references), in the order of the tree. */
+static Vector<const bNestedNodeRef *> edit_poly_node_refs(const bNodeTree *tree)
+{
+  Vector<const bNestedNodeRef *> refs;
+  if (tree == nullptr || ID_MISSING(tree)) {
+    return refs;
+  }
+  for (const bNestedNodeRef &ref : tree->nested_node_refs_span()) {
+    const bNode *node = tree->find_nested_node(ref.id);
+    if (node && STREQ(node->idname, "GeometryNodeEditPoly")) {
+      refs.append(&ref);
+    }
+  }
+  return refs;
+}
+
+static const char *node_display_name(const bNode &node)
+{
+  return node.label[0] ? node.label : node.name;
+}
+
+static void draw_edit_poly_panel(ui::Layout &layout,
+                                 const NodesModifierData &nmd,
+                                 const Span<const bNestedNodeRef *> refs)
+{
+  const bNodeTree &tree = *nmd.node_group;
+  for (const bNestedNodeRef *ref : refs) {
+    const bNode *node = tree.find_nested_node(ref->id);
+    const bNode *top = tree.node_by_id(ref->path.node_id);
+    std::string name = node_display_name(*node);
+    if (top && top != node) {
+      name = std::string(node_display_name(*top)) + " > " + name;
+    }
+    const bool muted = node->is_muted() || (top && top->is_muted());
+
+    std::string info;
+    const NodesModifierEditPoly *item = nmd.find_edit_poly(ref->id);
+    const EditPolyModifierData *emd = item ? item->data : nullptr;
+    if (muted) {
+      info = RPT_("Muted");
+    }
+    else if (emd == nullptr) {
+      info = RPT_("No edits");
+    }
+    else {
+      Vector<std::string> parts;
+      if (emd->moves_num > 0) {
+        parts.append(fmt::format(fmt::runtime(RPT_("{} moves")), emd->moves_num));
+      }
+      if (emd->patch_ints_num > 0) {
+        parts.append(RPT_("topology"));
+      }
+      if (emd->attr_ints_num > 0) {
+        parts.append(RPT_("element data"));
+      }
+      if (emd->sel_faces_num > 0 || emd->sel_verts_num > 0) {
+        parts.append(RPT_("selection"));
+      }
+      if (parts.is_empty()) {
+        info = RPT_("No edits");
+      }
+      for (const int i : parts.index_range()) {
+        info += (i == 0 ? "" : ", ") + parts[i];
+      }
+    }
+
+    ui::Layout &row = layout.row(true);
+    row.label(name, ICON_EDITMODE_HLT);
+    ui::Layout &info_row = row.row(true);
+    info_row.active_set(false);
+    info_row.label(info, ICON_NONE);
+
+    ui::Layout &edit_row = row.row(true);
+    edit_row.enabled_set(!muted);
+    PointerRNA props = edit_row.op("object.edit_poly_node_edit", "", ICON_GREASEPENCIL);
+    RNA_string_set(&props, "modifier", nmd.modifier.name);
+    RNA_int_set(&props, "node_id", ref->id);
+
+    ui::Layout &reset_row = row.row(true);
+    reset_row.enabled_set(emd != nullptr);
+    props = reset_row.op("object.edit_poly_node_reset", "", ICON_X);
+    RNA_string_set(&props, "modifier", nmd.modifier.name);
+    RNA_int_set(&props, "node_id", ref->id);
+  }
+}
+
 void draw_geometry_nodes_modifier_ui(const bContext &C,
                                      PointerRNA *modifier_ptr,
                                      ui::Layout &layout)
@@ -939,6 +1025,15 @@ void draw_geometry_nodes_modifier_ui(const bContext &C,
             &C, modifier_ptr, "open_output_attributes_panel", IFACE_("Output Attributes")))
     {
       draw_output_attributes_panel(ctx, *panel_layout);
+    }
+  }
+
+  const Vector<const bNestedNodeRef *> edit_poly_refs = edit_poly_node_refs(nmd.node_group);
+  if (!edit_poly_refs.is_empty()) {
+    if (ui::Layout *panel_layout = layout.panel_prop(
+            &C, modifier_ptr, "open_edit_poly_panel", IFACE_("Edit Poly")))
+    {
+      draw_edit_poly_panel(*panel_layout, nmd, edit_poly_refs);
     }
   }
 

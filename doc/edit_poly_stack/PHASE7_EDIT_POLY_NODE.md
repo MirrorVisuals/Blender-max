@@ -17,6 +17,13 @@ selection), made at a point inside a node tree.
   (including placing an Edit Poly modifier).
 - Tab again stores the edits and leaves the session, as for a modifier level.
 
+## Panel
+
+The Geometry Nodes modifier shows an Edit Poly panel when its node tree has Edit Poly nodes: one
+row per node (in a node group: "Group > Node") with what is stored, an Edit button (a session on
+that node) and Reset (removes its edits). Muted nodes (M) are switched off: their edits are kept
+but not applied, Tab skips them and Edit is disabled.
+
 ## Storage
 
 Node groups are shared between objects, so the edits are not stored in the node. Like baked data

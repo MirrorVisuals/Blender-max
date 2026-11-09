@@ -2471,6 +2471,18 @@ static bool rna_NodesModifier_edit_poly_has_edits(NodesModifierData *nmd, const 
   return item && item->data;
 }
 
+static void rna_NodesModifier_edit_poly_reset(ID *id, NodesModifierData *nmd, const int node_id)
+{
+  NodesModifierEditPoly *item = nmd->find_edit_poly(node_id);
+  if (item == nullptr) {
+    return;
+  }
+  blender::edit_poly::data_free(item->data);
+  item->data = nullptr;
+  DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
+  WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
+}
+
 static void rna_NodesModifier_edit_poly_capture_request(ID *id,
                                                         NodesModifierData *nmd,
                                                         const int node_id)
@@ -9423,6 +9435,12 @@ static void rna_def_modifier_nodes(BlenderRNA *brna)
   parm = RNA_def_boolean(func, "result", false, "", "");
   RNA_def_function_return(func, parm);
 
+  func = RNA_def_function(srna, "edit_poly_reset", "rna_NodesModifier_edit_poly_reset");
+  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
+  RNA_def_function_ui_description(func, "Remove the stored edits of an Edit Poly node");
+  parm = RNA_def_int(func, "id", 0, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
+  RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
+
   func = RNA_def_function(
       srna, "edit_poly_capture_request", "rna_NodesModifier_edit_poly_capture_request");
   RNA_def_function_flag(func, FUNC_USE_SELF_ID);
@@ -9505,6 +9523,7 @@ static void rna_def_modifier_nodes(BlenderRNA *brna)
   rna_def_modifier_panel_open_prop(
       srna, "open_output_attributes_panel", NODES_MODIFIER_PANEL_OUTPUT_ATTRIBUTES);
   rna_def_modifier_panel_open_prop(srna, "open_manage_panel", NODES_MODIFIER_PANEL_MANAGE);
+  rna_def_modifier_panel_open_prop(srna, "open_edit_poly_panel", NODES_MODIFIER_PANEL_EDIT_POLY);
   rna_def_modifier_panel_open_prop(srna, "open_bake_panel", NODES_MODIFIER_PANEL_BAKE);
   rna_def_modifier_panel_open_prop(
       srna, "open_named_attributes_panel", NODES_MODIFIER_PANEL_NAMED_ATTRIBUTES);

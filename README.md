@@ -53,6 +53,8 @@ below possible.
   The nodes after it update live. Without Edit Poly nodes, Tab works as before.
 - **Stored per object.** The edits are stored in each object's Geometry Nodes modifier (like
   baked data), so objects sharing a node group keep their own edits.
+- **Panel.** The Geometry Nodes modifier lists its Edit Poly nodes with what is stored, an
+  Edit button and Reset.
 - **Mute to switch off.** M on the node turns its edits off (they are kept); Tab skips muted
   nodes.
 
