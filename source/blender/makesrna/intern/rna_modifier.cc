@@ -1131,7 +1131,7 @@ static int rna_uv_map_channel_from_name(const PointerRNA *ptr, const char *name)
   const Object *ob = reinterpret_cast<const Object *>(ptr->owner_id);
   if (ob->type == OB_MESH && ob->data) {
     const Mesh *mesh = id_cast<const Mesh *>(ob->data);
-    if (mesh->default_uv_map_name() == name) {
+    if (mesh->active_or_default_uv_map_name() == name) {
       return 1;
     }
   }
@@ -1155,6 +1155,8 @@ static void rna_uv_map_channel_to_name(PointerRNA *ptr, const int channel, char 
     /* Channel 1 stays the first (default) UV map. */
     if (mesh->uv_map_names().is_empty()) {
       ED_mesh_uv_add(mesh, "UVMap", true, false, nullptr);
+      mesh->uv_maps_active_set("UVMap");
+      mesh->uv_maps_default_set("UVMap");
     }
     if (!mesh->uv_map_names().contains(channel_name)) {
       ED_mesh_uv_add(mesh, channel_name.c_str(), false, false, nullptr);
