@@ -3875,6 +3875,10 @@ class VIEW3D_MT_add_object(Menu):
         props.name = "builtin.primitive_cube_add"
         props.space_type = 'VIEW_3D'
 
+        props = layout.operator("wm.tool_set_by_id", text="Add Plane")
+        props.name = "builtin.primitive_plane_add"
+        props.space_type = 'VIEW_3D'
+
         props = layout.operator("wm.tool_set_by_id", text="Add Cylinder")
         props.name = "builtin.primitive_cylinder_add"
         props.space_type = 'VIEW_3D'

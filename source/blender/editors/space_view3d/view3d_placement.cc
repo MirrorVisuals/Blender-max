@@ -64,6 +64,8 @@ enum ePlace_PrimType {
   PLACE_PRIMITIVE_TYPE_CONE = 3,
   PLACE_PRIMITIVE_TYPE_SPHERE_UV = 4,
   PLACE_PRIMITIVE_TYPE_SPHERE_ICO = 5,
+  /** Flat: placed with the base step only. */
+  PLACE_PRIMITIVE_TYPE_PLANE = 6,
 };
 
 enum ePlace_Origin {
@@ -588,7 +590,7 @@ static void draw_primitive_view_impl(const bContext *C,
 
   draw_line_bounds(&bounds, color);
 
-  if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CUBE) {
+  if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CUBE, PLACE_PRIMITIVE_TYPE_PLANE)) {
     /* pass */
   }
   else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CYLINDER) {
@@ -876,6 +878,9 @@ static void view3d_interactive_add_begin(bContext *C, wmOperator *op, const wmEv
       else if (tref && STREQ(tref->idname, "builtin.primitive_ico_sphere_add")) {
         ipd->primitive_type = PLACE_PRIMITIVE_TYPE_SPHERE_ICO;
       }
+      else if (tref && STREQ(tref->idname, "builtin.primitive_plane_add")) {
+        ipd->primitive_type = PLACE_PRIMITIVE_TYPE_PLANE;
+      }
       else {
         /* If the user runs this as an operator they should set the 'primitive_type',
          * however running from operator search will end up at this point. */
@@ -994,6 +999,118 @@ void viewplace_modal_keymap(wmKeyConfig *keyconf)
   WM_modalkeymap_assign(keymap, "VIEW3D_OT_interactive_add");
 }
 
+/**
+ * Add the primitive that fills the placed bounds.
+ */
+static void view3d_interactive_add_confirm(bContext *C, InteractivePlaceData *ipd)
+{
+  /* Restore snap mode. */
+  *ipd->snap_to_ptr = ipd->snap_to_restore;
+
+  /* Confirm. */
+  BoundBox bounds;
+  calc_bbox(ipd, &bounds);
+
+  float location[3];
+  float rotation[3];
+  float scale[3];
+
+  float matrix_orient_axis[3][3];
+  copy_m3_m3(matrix_orient_axis, ipd->matrix_orient);
+  if (ipd->orient_axis != 2) {
+    swap_v3_v3(matrix_orient_axis[2], matrix_orient_axis[ipd->orient_axis]);
+    swap_v3_v3(matrix_orient_axis[0], matrix_orient_axis[1]);
+  }
+  /* Needed for shapes where the sign matters (cone for eg). */
+  {
+    float delta[3];
+    sub_v3_v3v3(delta, bounds.vec[0], bounds.vec[4]);
+    if (dot_v3v3(ipd->matrix_orient[ipd->orient_axis], delta) > 0.0f) {
+      negate_v3(matrix_orient_axis[2]);
+
+      /* Only flip Y so we don't flip a single axis which causes problems. */
+      negate_v3(matrix_orient_axis[1]);
+    }
+  }
+
+  mat3_to_eul(rotation, matrix_orient_axis);
+
+  mid_v3_v3v3(location, bounds.vec[0], bounds.vec[6]);
+  const int cube_verts[3] = {3, 1, 4};
+  for (int i = 0; i < 3; i++) {
+    scale[i] = len_v3v3(bounds.vec[0], bounds.vec[cube_verts[i]]);
+    /* Primitives have size 2 by default, compensate for this here. */
+    scale[i] /= 2.0f;
+  }
+  if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_PLANE) {
+    /* A plane has no depth: keep its Z scale at 1 (a zero scale breaks normals). */
+    scale[2] = 1.0f;
+  }
+
+  wmOperatorType *ot = nullptr;
+  if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CUBE) {
+    ot = WM_operatortype_find("MESH_OT_primitive_cube_add", false);
+  }
+  else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_PLANE) {
+    ot = WM_operatortype_find("MESH_OT_primitive_plane_add", false);
+  }
+  else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CYLINDER) {
+    ot = WM_operatortype_find("MESH_OT_primitive_cylinder_add", false);
+  }
+  else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CONE) {
+    ot = WM_operatortype_find("MESH_OT_primitive_cone_add", false);
+  }
+  else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_SPHERE_UV) {
+    ot = WM_operatortype_find("MESH_OT_primitive_uv_sphere_add", false);
+  }
+  else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_SPHERE_ICO) {
+    ot = WM_operatortype_find("MESH_OT_primitive_ico_sphere_add", false);
+  }
+
+  if (ot != nullptr) {
+    PointerRNA op_props = WM_operator_properties_create_ptr(ot);
+
+    if (ipd->use_tool) {
+      bToolRef *tref = ipd->area->runtime.tool;
+      PointerRNA temp_props;
+      WM_toolsystem_ref_properties_init_for_keymap(tref, &temp_props, &op_props, ot);
+      std::swap(temp_props, op_props);
+      WM_operator_properties_free(&temp_props);
+    }
+
+    RNA_float_set_array(&op_props, "rotation", rotation);
+    RNA_float_set_array(&op_props, "location", location);
+    RNA_float_set_array(&op_props, "scale", scale);
+
+    /* Always use the defaults here since desired bounds have been set interactively, it does
+     * not make sense to use a different values from a previous command. */
+    if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CUBE, PLACE_PRIMITIVE_TYPE_PLANE)) {
+      RNA_float_set(&op_props, "size", 2.0f);
+    }
+    if (ELEM(ipd->primitive_type,
+             PLACE_PRIMITIVE_TYPE_CYLINDER,
+             PLACE_PRIMITIVE_TYPE_SPHERE_UV,
+             PLACE_PRIMITIVE_TYPE_SPHERE_ICO))
+    {
+      RNA_float_set(&op_props, "radius", 1.0f);
+    }
+    if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CYLINDER, PLACE_PRIMITIVE_TYPE_CONE))
+    {
+      RNA_float_set(&op_props, "depth", 2.0f);
+    }
+    if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CONE) {
+      RNA_float_set(&op_props, "radius1", 1.0f);
+      RNA_float_set(&op_props, "radius2", 0.0f);
+    }
+
+    WM_operator_name_call_ptr(C, ot, wm::OpCallContext::ExecDefault, &op_props, nullptr);
+    WM_operator_properties_free(&op_props);
+  }
+  else {
+    BLI_assert(0);
+  }
+}
+
 static wmOperatorStatus view3d_interactive_add_modal(bContext *C,
                                                      wmOperator *op,
                                                      const wmEvent *event)
@@ -1074,6 +1191,23 @@ static wmOperatorStatus view3d_interactive_add_modal(bContext *C,
   }
 
   if (ipd->step_index == STEP_BASE) {
+    if (ELEM(event->type, ipd->launch_event, LEFTMOUSE) && event->val == KM_RELEASE &&
+        ipd->primitive_type == PLACE_PRIMITIVE_TYPE_PLANE)
+    {
+      /* A plane is done once its base is drawn. A click without a drag adds nothing. */
+      BoundBox bounds;
+      const bool has_area = calc_bbox(ipd, &bounds) &&
+                            len_v3v3(bounds.vec[0], bounds.vec[3]) > 1e-6f &&
+                            len_v3v3(bounds.vec[0], bounds.vec[1]) > 1e-6f;
+      if (has_area) {
+        view3d_interactive_add_confirm(C, ipd);
+      }
+      else {
+        *ipd->snap_to_ptr = ipd->snap_to_restore;
+      }
+      view3d_interactive_add_exit(C, op);
+      return has_area ? OPERATOR_FINISHED : OPERATOR_CANCELLED;
+    }
     if (ELEM(event->type, ipd->launch_event, LEFTMOUSE)) {
       if (event->val == KM_RELEASE) {
         ED_view3d_cursor_snap_state_prevpoint_set(ipd->snap_state, ipd->co_src);
@@ -1118,105 +1252,7 @@ static wmOperatorStatus view3d_interactive_add_modal(bContext *C,
   else if (ipd->step_index == STEP_DEPTH) {
     if (ELEM(event->type, ipd->launch_event, LEFTMOUSE)) {
       if (event->val == KM_PRESS) {
-        /* Restore snap mode. */
-        *ipd->snap_to_ptr = ipd->snap_to_restore;
-
-        /* Confirm. */
-        BoundBox bounds;
-        calc_bbox(ipd, &bounds);
-
-        float location[3];
-        float rotation[3];
-        float scale[3];
-
-        float matrix_orient_axis[3][3];
-        copy_m3_m3(matrix_orient_axis, ipd->matrix_orient);
-        if (ipd->orient_axis != 2) {
-          swap_v3_v3(matrix_orient_axis[2], matrix_orient_axis[ipd->orient_axis]);
-          swap_v3_v3(matrix_orient_axis[0], matrix_orient_axis[1]);
-        }
-        /* Needed for shapes where the sign matters (cone for eg). */
-        {
-          float delta[3];
-          sub_v3_v3v3(delta, bounds.vec[0], bounds.vec[4]);
-          if (dot_v3v3(ipd->matrix_orient[ipd->orient_axis], delta) > 0.0f) {
-            negate_v3(matrix_orient_axis[2]);
-
-            /* Only flip Y so we don't flip a single axis which causes problems. */
-            negate_v3(matrix_orient_axis[1]);
-          }
-        }
-
-        mat3_to_eul(rotation, matrix_orient_axis);
-
-        mid_v3_v3v3(location, bounds.vec[0], bounds.vec[6]);
-        const int cube_verts[3] = {3, 1, 4};
-        for (int i = 0; i < 3; i++) {
-          scale[i] = len_v3v3(bounds.vec[0], bounds.vec[cube_verts[i]]);
-          /* Primitives have size 2 by default, compensate for this here. */
-          scale[i] /= 2.0f;
-        }
-
-        wmOperatorType *ot = nullptr;
-        if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CUBE) {
-          ot = WM_operatortype_find("MESH_OT_primitive_cube_add", false);
-        }
-        else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CYLINDER) {
-          ot = WM_operatortype_find("MESH_OT_primitive_cylinder_add", false);
-        }
-        else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CONE) {
-          ot = WM_operatortype_find("MESH_OT_primitive_cone_add", false);
-        }
-        else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_SPHERE_UV) {
-          ot = WM_operatortype_find("MESH_OT_primitive_uv_sphere_add", false);
-        }
-        else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_SPHERE_ICO) {
-          ot = WM_operatortype_find("MESH_OT_primitive_ico_sphere_add", false);
-        }
-
-        if (ot != nullptr) {
-          PointerRNA op_props = WM_operator_properties_create_ptr(ot);
-
-          if (ipd->use_tool) {
-            bToolRef *tref = ipd->area->runtime.tool;
-            PointerRNA temp_props;
-            WM_toolsystem_ref_properties_init_for_keymap(tref, &temp_props, &op_props, ot);
-            std::swap(temp_props, op_props);
-            WM_operator_properties_free(&temp_props);
-          }
-
-          RNA_float_set_array(&op_props, "rotation", rotation);
-          RNA_float_set_array(&op_props, "location", location);
-          RNA_float_set_array(&op_props, "scale", scale);
-
-          /* Always use the defaults here since desired bounds have been set interactively, it does
-           * not make sense to use a different values from a previous command. */
-          if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CUBE) {
-            RNA_float_set(&op_props, "size", 2.0f);
-          }
-          if (ELEM(ipd->primitive_type,
-                   PLACE_PRIMITIVE_TYPE_CYLINDER,
-                   PLACE_PRIMITIVE_TYPE_SPHERE_UV,
-                   PLACE_PRIMITIVE_TYPE_SPHERE_ICO))
-          {
-            RNA_float_set(&op_props, "radius", 1.0f);
-          }
-          if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CYLINDER, PLACE_PRIMITIVE_TYPE_CONE))
-          {
-            RNA_float_set(&op_props, "depth", 2.0f);
-          }
-          if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CONE) {
-            RNA_float_set(&op_props, "radius1", 1.0f);
-            RNA_float_set(&op_props, "radius2", 0.0f);
-          }
-
-          WM_operator_name_call_ptr(C, ot, wm::OpCallContext::ExecDefault, &op_props, nullptr);
-          WM_operator_properties_free(&op_props);
-        }
-        else {
-          BLI_assert(0);
-        }
-
+        view3d_interactive_add_confirm(C, ipd);
         view3d_interactive_add_exit(C, op);
         return OPERATOR_FINISHED;
       }
@@ -1343,6 +1379,7 @@ void VIEW3D_OT_interactive_add(wmOperatorType *ot)
       {PLACE_PRIMITIVE_TYPE_CONE, "CONE", 0, "Cone", ""},
       {PLACE_PRIMITIVE_TYPE_SPHERE_UV, "SPHERE_UV", 0, "UV Sphere", ""},
       {PLACE_PRIMITIVE_TYPE_SPHERE_ICO, "SPHERE_ICO", 0, "ICO Sphere", ""},
+      {PLACE_PRIMITIVE_TYPE_PLANE, "PLANE", 0, "Plane", ""},
       {0, nullptr, 0, nullptr, nullptr},
   };
 

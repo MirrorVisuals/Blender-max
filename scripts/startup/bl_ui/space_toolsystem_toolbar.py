@@ -514,6 +514,7 @@ class _defs_view3d_add:
         'CYLINDER': ToolDefaults('CENTER', 'FIXED', 'EDGE', 'FREE'),
         'SPHERE_UV': ToolDefaults('CENTER', 'FIXED', 'CENTER', 'FIXED'),
         'SPHERE_ICO': ToolDefaults('CENTER', 'FIXED', 'CENTER', 'FIXED'),
+        'PLANE': ToolDefaults('EDGE', 'FREE', 'EDGE', 'FREE'),
     }
 
     @staticmethod
@@ -616,6 +617,27 @@ class _defs_view3d_add:
             icon="ops.mesh.primitive_cube_add_gizmo",
             description=lambda *args: _defs_view3d_add.description_interactive_add(
                 *args, prefix=tip_("Add cube to mesh interactively"),
+            ),
+            widget="VIEW3D_GGT_placement",
+            keymap="3D View Tool: Object, Add Primitive",
+            draw_settings=draw_settings,
+        )
+
+    @ToolDef.from_fn
+    def plane_add():
+        def draw_settings(context, layout, tool, *, extra=False):
+            show_extra = _defs_view3d_add.draw_settings_interactive_add(layout, context.tool_settings, tool, extra)
+            if show_extra:
+                layout.popover("TOPBAR_PT_tool_settings_extra", text="...")
+
+            _defs_view3d_add.draw_settings_defaults_init(context.mode, tool, 'PLANE')
+
+        return dict(
+            idname="builtin.primitive_plane_add",
+            label="Add Plane",
+            icon="ops.mesh.primitive_grid_add_gizmo",
+            description=lambda *args: _defs_view3d_add.description_interactive_add(
+                *args, prefix=tip_("Add plane to mesh interactively (drag its base, no height step)"),
             ),
             widget="VIEW3D_GGT_placement",
             keymap="3D View Tool: Object, Add Primitive",
@@ -3764,6 +3786,7 @@ class VIEW3D_PT_tools_active(ToolSelectPanelHelper, Panel):
 
     _tools_view3d_add = (
         _defs_view3d_add.cube_add,
+        _defs_view3d_add.plane_add,
         _defs_view3d_add.cone_add,
         _defs_view3d_add.cylinder_add,
         _defs_view3d_add.uv_sphere_add,
