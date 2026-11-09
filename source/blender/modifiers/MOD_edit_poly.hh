@@ -27,6 +27,10 @@ namespace blender::edit_poly {
  * Session IDs as pairs of plain integer attributes (low and high 32 bits), so that Python can read
  * them from a BMesh in Edit Mode (it has no two-component integer layers).
  */
+/** Vertex group that an Edit Poly level fills with its vertex selection (1 / 0), for modifiers
+ * above that take a vertex group. Tab adds it to the object so it can be picked in them. */
+constexpr const char *SELECTION_VERTEX_GROUP = "Edit Poly Selection";
+
 constexpr const char *SESSION_ATTR_VERT_ID_LO = "edit_poly_vertex_id_lo";
 constexpr const char *SESSION_ATTR_VERT_ID_HI = "edit_poly_vertex_id_hi";
 constexpr const char *SESSION_ATTR_FACE_ID_LO = "edit_poly_face_id_lo";

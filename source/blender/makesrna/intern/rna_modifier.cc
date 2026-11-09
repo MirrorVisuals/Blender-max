@@ -5324,6 +5324,11 @@ static void rna_def_modifier_bevel(BlenderRNA *brna)
        0,
        "Vertex Group",
        "Use vertex group weights to select whether vertex or edge is beveled"},
+      {MOD_BEVEL_SELECTION,
+       "SELECTION",
+       0,
+       "Selection",
+       "Only the selected vertices or edges (e.g. passed up by an Edit Poly level below)"},
       {0, nullptr, 0, nullptr, nullptr},
   };
 

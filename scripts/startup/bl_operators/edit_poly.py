@@ -40,6 +40,8 @@ KEY_INPUT = "_edit_poly_input"
 KEY_MODIFIER = "_edit_poly_modifier"
 KEY_HIDDEN = "_edit_poly_hidden"
 
+SELECTION_GROUP = "Edit Poly Selection"
+
 # Tab on an object without an Edit Poly adds one, so the base mesh is never edited directly.
 AUTO_ADD = True
 
@@ -364,6 +366,10 @@ def commit_session(context, ob):
     except RuntimeError as ex:
         return str(ex).strip()
     end_session(ob)
+    # The level's vertex selection is written into this vertex group, so modifiers above that
+    # take a vertex group (Solidify, Smooth, Displace...) can work on the selection.
+    if SELECTION_GROUP not in ob.vertex_groups:
+        ob.vertex_groups.new(name=SELECTION_GROUP)
     return None
 
 

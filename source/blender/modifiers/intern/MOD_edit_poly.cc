@@ -33,6 +33,7 @@
 #include "DNA_screen_types.h"
 
 #include "BKE_attribute.hh"
+#include "BKE_deform.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
 #include "BKE_modifier.hh"
@@ -91,6 +92,10 @@ static void free_arrays(EditPolyModifierData &emd)
   MEM_SAFE_DELETE(emd.patch_ints);
   MEM_SAFE_DELETE(emd.patch_floats);
   MEM_SAFE_DELETE(emd.sel_face_ids);
+  MEM_SAFE_DELETE(emd.sel_vert_ids);
+  MEM_SAFE_DELETE(emd.sel_edge_ids);
+  emd.sel_verts_num = 0;
+  emd.sel_edges_num = 0;
   MEM_SAFE_DELETE(emd.attr_ints);
   MEM_SAFE_DELETE(emd.attr_floats);
   emd.attr_ints_num = 0;
@@ -130,6 +135,26 @@ static void store_moves(EditPolyModifierData &emd,
     emd.move_offsets[3 * i + 1] = offsets[i].y;
     emd.move_offsets[3 * i + 2] = offsets[i].z;
   }
+}
+
+static void store_ints(int *&r_data, int &r_num, const Span<int> values, const int per_item)
+{
+  MEM_SAFE_DELETE(r_data);
+  r_num = int(values.size()) / per_item;
+  if (values.is_empty()) {
+    return;
+  }
+  r_data = MEM_new_array_uninitialized<int>(size_t(values.size()), __func__);
+  memcpy(r_data, values.data(), sizeof(int) * size_t(values.size()));
+}
+
+static void store_element_selection(EditPolyModifierData &emd,
+                                    const Span<int> vert_ids,
+                                    const Span<int> edge_ids)
+{
+  store_ints(emd.sel_vert_ids, emd.sel_verts_num, vert_ids, 2);
+  store_ints(emd.sel_edge_ids, emd.sel_edges_num, edge_ids, 4);
+  emd.flag |= MOD_EDITPOLY_SELECTION_ELEMENTS;
 }
 
 static void store_selection(EditPolyModifierData &emd, const Span<int2> ids)
@@ -298,6 +323,31 @@ std::string session_commit(EditPolyModifierData &emd,
       }
     }
     store_selection(emd, selected);
+
+    /* Vertices and edges too, so a selection of edges or vertices only (e.g. for Bevel with
+     * Limit Method Selection) is passed up as well. Edges by the IDs of their two vertices. */
+    const VArraySpan<bool> select_vert = *attributes.lookup_or_default<bool>(
+        ".select_vert", bke::AttrDomain::Point, false);
+    const VArraySpan<bool> select_edge = *attributes.lookup_or_default<bool>(
+        ".select_edge", bke::AttrDomain::Edge, false);
+    Vector<int> vert_ids;
+    Vector<int> edge_ids;
+    if (edited_vert_ids.size() == mesh.verts_num) {
+      for (const int v : edited_vert_ids.index_range()) {
+        if (select_vert[v] && edited_vert_ids[v].is_valid()) {
+          vert_ids.extend({int(edited_vert_ids[v].lo), int(edited_vert_ids[v].hi)});
+        }
+      }
+      const Span<int2> edges = mesh.edges();
+      for (const int e : edges.index_range()) {
+        const StableID a = edited_vert_ids[edges[e][0]];
+        const StableID b = edited_vert_ids[edges[e][1]];
+        if (select_edge[e] && a.is_valid() && b.is_valid()) {
+          edge_ids.extend({int(a.lo), int(a.hi), int(b.lo), int(b.hi)});
+        }
+      }
+    }
+    store_element_selection(emd, vert_ids, edge_ids);
   }
 
   /* Moves: keep paused moves (points that are neither in the input nor new), replace the rest. */
@@ -380,6 +430,14 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
   temd->patch_floats = dup_array(emd->patch_floats, emd->patch_floats_num);
   temd->ops_text = emd->ops_text ? BLI_strdup(emd->ops_text) : nullptr;
   temd->sel_face_ids = dup_array(emd->sel_face_ids, int64_t(emd->sel_faces_num) * 2);
+  temd->sel_vert_ids = dup_array(emd->sel_vert_ids, int64_t(emd->sel_verts_num) * 2);
+  temd->sel_edge_ids = dup_array(emd->sel_edge_ids, int64_t(emd->sel_edges_num) * 4);
+  if (!temd->sel_vert_ids) {
+    temd->sel_verts_num = 0;
+  }
+  if (!temd->sel_edge_ids) {
+    temd->sel_edges_num = 0;
+  }
   temd->attr_ints = dup_array(emd->attr_ints, emd->attr_ints_num);
   temd->attr_floats = dup_array(emd->attr_floats, emd->attr_floats_num);
   if (!temd->attr_ints || !temd->attr_floats) {
@@ -416,6 +474,32 @@ static bool is_disabled(const Scene * /*scene*/, ModifierData *md, bool /*use_re
          (emd->flag & MOD_EDITPOLY_HAS_SELECTION) == 0;
 }
 
+static uint64_t pair_hash(const uint64_t a, const uint64_t b)
+{
+  return a < b ? a * 0x9E3779B97F4A7C15ull ^ b : b * 0x9E3779B97F4A7C15ull ^ a;
+}
+
+/** The selection as a vertex group, for modifiers that take one (Solidify, Smooth, Displace...),
+ * if the mesh has a vertex group of that name (Tab adds it to the object). */
+static void write_selection_vertex_group(Mesh &mesh)
+{
+  if (BKE_id_defgroup_name_index(&mesh.id, edit_poly::SELECTION_VERTEX_GROUP) == -1) {
+    return;
+  }
+  bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  const VArraySpan<bool> select = *attributes.lookup_or_default<bool>(
+      ".select_vert", bke::AttrDomain::Point, false);
+  bke::SpanAttributeWriter<float> group = attributes.lookup_for_write_span<float>(
+      edit_poly::SELECTION_VERTEX_GROUP);
+  if (!group || group.domain != bke::AttrDomain::Point) {
+    return;
+  }
+  for (const int v : group.span.index_range()) {
+    group.span[v] = select[v] ? 1.0f : 0.0f;
+  }
+  group.finish();
+}
+
 static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
 {
   using namespace bke::stable_id;
@@ -423,28 +507,65 @@ static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
   for (int i = 0; i < emd.sel_faces_num; i++) {
     selected.add(key_of(int2(emd.sel_face_ids[2 * i], emd.sel_face_ids[2 * i + 1])));
   }
+  const bool elements = (emd.flag & MOD_EDITPOLY_SELECTION_ELEMENTS) != 0;
   const Array<StableID> ids = read_or_make_root_ids(mesh, bke::AttrDomain::Face);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
   attributes.remove(".select_poly");
-  if (selected.is_empty()) {
-    attributes.remove(".select_vert");
-    attributes.remove(".select_edge");
+  attributes.remove(".select_vert");
+  attributes.remove(".select_edge");
+
+  if (!selected.is_empty()) {
+    /* Faces split from a selected face (e.g. by a Subdivision added below later) are selected. */
+    const VArraySpan<int2> parents = *attributes.lookup_or_default<int2>(
+        ATTR_PARENT_FACE, bke::AttrDomain::Face, int2(0, 0));
+    bke::SpanAttributeWriter<bool> select = attributes.lookup_or_add_for_write_only_span<bool>(
+        ".select_poly", bke::AttrDomain::Face);
+    for (const int f : ids.index_range()) {
+      const int2 parent = parents[f];
+      select.span[f] = selected.contains(ids[f].as_u64()) ||
+                       ((parent.x != 0 || parent.y != 0) && selected.contains(key_of(parent)));
+    }
+    select.finish();
+  }
+
+  if (!elements) {
+    /* Stored before vertex / edge selections were: take them from the faces. */
+    if (!selected.is_empty()) {
+      bke::mesh_select_face_flush(mesh);
+    }
+    write_selection_vertex_group(mesh);
     return;
   }
-  /* Faces split from a selected face (e.g. by a Subdivision added below later) are selected. */
-  const VArraySpan<int2> parents = *attributes.lookup_or_default<int2>(
-      ATTR_PARENT_FACE, bke::AttrDomain::Face, int2(0, 0));
-  bke::SpanAttributeWriter<bool> select = attributes.lookup_or_add_for_write_only_span<bool>(
-      ".select_poly", bke::AttrDomain::Face);
-  for (const int f : ids.index_range()) {
-    const int2 parent = parents[f];
-    select.span[f] = selected.contains(ids[f].as_u64()) ||
-                     ((parent.x != 0 || parent.y != 0) && selected.contains(key_of(parent)));
+
+  const Array<StableID> vert_ids = read_or_make_root_ids(mesh, bke::AttrDomain::Point);
+  if (emd.sel_verts_num > 0) {
+    Set<uint64_t> verts;
+    for (int i = 0; i < emd.sel_verts_num; i++) {
+      verts.add(key_of(int2(emd.sel_vert_ids[2 * i], emd.sel_vert_ids[2 * i + 1])));
+    }
+    bke::SpanAttributeWriter<bool> select = attributes.lookup_or_add_for_write_only_span<bool>(
+        ".select_vert", bke::AttrDomain::Point);
+    for (const int v : vert_ids.index_range()) {
+      select.span[v] = verts.contains(vert_ids[v].as_u64());
+    }
+    select.finish();
   }
-  select.finish();
-  /* Vertices and edges of the selected faces too, so Edit Mode (in any select mode) shows the
-   * same selection. */
-  bke::mesh_select_face_flush(mesh);
+  if (emd.sel_edges_num > 0) {
+    Set<uint64_t> edges_selected;
+    for (int i = 0; i < emd.sel_edges_num; i++) {
+      const int *e = emd.sel_edge_ids + 4 * i;
+      edges_selected.add(pair_hash(key_of(int2(e[0], e[1])), key_of(int2(e[2], e[3]))));
+    }
+    const Span<int2> edges = mesh.edges();
+    bke::SpanAttributeWriter<bool> select = attributes.lookup_or_add_for_write_only_span<bool>(
+        ".select_edge", bke::AttrDomain::Edge);
+    for (const int e : edges.index_range()) {
+      select.span[e] = edges_selected.contains(
+          pair_hash(vert_ids[edges[e][0]].as_u64(), vert_ids[edges[e][1]].as_u64()));
+    }
+    select.finish();
+  }
+  write_selection_vertex_group(mesh);
 }
 
 static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh *mesh)
@@ -590,6 +711,12 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
   if (emd->attr_ints_num > 0 && emd->attr_ints) {
     writer->write_int32_array(emd->attr_ints_num, emd->attr_ints);
   }
+  if (emd->sel_verts_num > 0 && emd->sel_vert_ids) {
+    writer->write_int32_array(int64_t(emd->sel_verts_num) * 2, emd->sel_vert_ids);
+  }
+  if (emd->sel_edges_num > 0 && emd->sel_edge_ids) {
+    writer->write_int32_array(int64_t(emd->sel_edges_num) * 4, emd->sel_edge_ids);
+  }
   if (emd->attr_floats_num > 0 && emd->attr_floats) {
     writer->write_float_array(emd->attr_floats_num, emd->attr_floats);
   }
@@ -623,6 +750,18 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
   if (sel_num != emd->sel_faces_num || !emd->sel_face_ids) {
     MEM_SAFE_DELETE(emd->sel_face_ids);
     emd->sel_faces_num = 0;
+  }
+  int verts_num = emd->sel_verts_num;
+  BLO_read_array_and_validate_size(reader, &emd->sel_vert_ids, &verts_num, 2);
+  if (verts_num != emd->sel_verts_num || !emd->sel_vert_ids) {
+    MEM_SAFE_DELETE(emd->sel_vert_ids);
+    emd->sel_verts_num = 0;
+  }
+  int edges_num = emd->sel_edges_num;
+  BLO_read_array_and_validate_size(reader, &emd->sel_edge_ids, &edges_num, 4);
+  if (edges_num != emd->sel_edges_num || !emd->sel_edge_ids) {
+    MEM_SAFE_DELETE(emd->sel_edge_ids);
+    emd->sel_edges_num = 0;
   }
   BLO_read_array_and_validate_size(reader, &emd->attr_ints, &emd->attr_ints_num);
   BLO_read_array_and_validate_size(reader, &emd->attr_floats, &emd->attr_floats_num);

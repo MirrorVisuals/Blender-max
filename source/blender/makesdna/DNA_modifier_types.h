@@ -515,7 +515,8 @@ enum BevelModifierFlag : short {
   MOD_BEVEL_ANGLE = (1 << 3),
   MOD_BEVEL_WEIGHT = (1 << 4),
   MOD_BEVEL_VGROUP = (1 << 5),
-/* unused                  = (1 << 6), */
+  /** Only the selected vertices / edges (e.g. passed up by an Edit Poly level). */
+  MOD_BEVEL_SELECTION = (1 << 6),
 #ifdef DNA_DEPRECATED_ALLOW
   MOD_BEVEL_CUSTOM_PROFILE_DEPRECATED = (1 << 7),
 #endif
@@ -2218,6 +2219,10 @@ struct EditPolyModifierData {
   char *ops_text = nullptr;
   /** Face selection passed up the stack, stable face IDs, two ints per face. */
   int *sel_face_ids = nullptr;
+  /** Vertex selection: stable vertex IDs, two ints each. */
+  int *sel_vert_ids = nullptr;
+  /** Edge selection: stable IDs of the two vertices, four ints each. */
+  int *sel_edge_ids = nullptr;
   /** Edited element data (bevel weights, creases...), see MOD_edit_poly_attrs.hh. */
   int *attr_ints = nullptr;
   float *attr_floats = nullptr;
@@ -2229,12 +2234,16 @@ struct EditPolyModifierData {
   int flag = 0;
   int attr_ints_num = 0;
   int attr_floats_num = 0;
+  int sel_verts_num = 0;
+  int sel_edges_num = 0;
   char _pad[4] = {};
 };
 
 enum EditPolyModifierFlag {
   /** The level passes its own face selection up the stack (stored at the last commit). */
   MOD_EDITPOLY_HAS_SELECTION = (1 << 0),
+  /** The stored selection includes vertices and edges (not only faces). */
+  MOD_EDITPOLY_SELECTION_ELEMENTS = (1 << 1),
 };
 
 /** UVW Map modifier: projections as in 3ds Max. */

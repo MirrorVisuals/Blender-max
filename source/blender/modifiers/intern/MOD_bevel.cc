@@ -173,7 +173,13 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 
   if (bmd->affect_type == MOD_BEVEL_AFFECT_VERTICES) {
     BM_ITER_MESH (v, &iter, bm, BM_VERTS_OF_MESH) {
-      if (bmd->lim_flags & MOD_BEVEL_WEIGHT) {
+      if (bmd->lim_flags & MOD_BEVEL_SELECTION) {
+        /* The selection that arrives (e.g. passed up by an Edit Poly level). */
+        if (!BM_elem_flag_test(v, BM_ELEM_SELECT)) {
+          continue;
+        }
+      }
+      else if (bmd->lim_flags & MOD_BEVEL_WEIGHT) {
         weight = bweight_offset_vert == -1 ? 0.0f : BM_ELEM_CD_GET_FLOAT(v, bweight_offset_vert);
         if (weight == 0.0f) {
           continue;
@@ -189,6 +195,16 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
         }
       }
       BM_elem_flag_enable(v, BM_ELEM_TAG);
+    }
+  }
+  else if (bmd->lim_flags & MOD_BEVEL_SELECTION) {
+    /* The selection that arrives (e.g. passed up by an Edit Poly level). */
+    BM_ITER_MESH (e, &iter, bm, BM_EDGES_OF_MESH) {
+      if (BM_edge_is_manifold(e) && BM_elem_flag_test(e, BM_ELEM_SELECT)) {
+        BM_elem_flag_enable(e, BM_ELEM_TAG);
+        BM_elem_flag_enable(e->v1, BM_ELEM_TAG);
+        BM_elem_flag_enable(e->v2, BM_ELEM_TAG);
+      }
     }
   }
   else if (bmd->lim_flags & MOD_BEVEL_ANGLE) {
@@ -346,6 +362,11 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   }
   else if (limit_method == MOD_BEVEL_VGROUP) {
     modifier_vgroup_ui(*col, ptr, &ob_ptr, "vertex_group", "invert_vertex_group", std::nullopt);
+  }
+  else if (limit_method == MOD_BEVEL_SELECTION) {
+    col->label(edge_bevel ? IFACE_("Selected edges of the Edit Poly level below") :
+                            IFACE_("Selected vertices of the Edit Poly level below"),
+               ICON_INFO);
   }
 
   modifier_error_message_draw(layout, ptr);
