@@ -227,7 +227,7 @@ def solid_box(bm, cuts):
 
 def extrude_case(build, pick, move, solid, repeats=3):
     times, faces = [], 0
-    for _ in range(repeats):
+    for run in range(repeats):
         fresh()
         me = bpy.data.meshes.new("Extrude")
         bm = bmesh.new()
@@ -246,12 +246,15 @@ def extrude_case(build, pick, move, solid, repeats=3):
         bm.select_flush_mode()
         bmesh.update_edit_mesh(ob.data)
         faces = len(bm.faces)
+        # Last solid run: Extrude Manifold prints how long each of its stages takes.
+        bpy.app.debug_value = 701 if (solid and run == repeats - 1) else 0
         t0 = time.perf_counter()
         if solid:
             bpy.ops.mesh.extrude_manifold(TRANSFORM_OT_translate={"value": move})
         else:
             bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": move})
         times.append(ms(t0))
+        bpy.app.debug_value = 0
         bpy.ops.object.mode_set(mode='OBJECT')
     return faces, statistics.median(times)
 

@@ -26,6 +26,8 @@
  */
 
 #include <algorithm>
+#include <cstdio>
+#include <string>
 
 #include "DNA_mesh_types.h"
 #include "DNA_object_types.h"
@@ -39,12 +41,14 @@
 #include "BLI_math_vector.h"
 #include "BLI_math_vector.hh"
 #include "BLI_set.hh"
+#include "BLI_time.h"
 #include "BLI_vector.hh"
 #include "BLI_vector_set.hh"
 
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
 #include "BKE_editmesh.hh"
+#include "BKE_global.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.h"
@@ -74,6 +78,34 @@ namespace blender {
 static constexpr const char *ORIG_CO_LAYER = ".extrude_solid_co";
 /** Outward direction of the faces of the swept solid, zero on other faces (internal). */
 static constexpr const char *CUTTER_NO_LAYER = ".extrude_solid_no";
+
+/**
+ * With Debug Value 701 (F3 > Debug Menu, or `bpy.app.debug_value` in Python), print how long
+ * each stage takes, to the console.
+ */
+struct StageTimer {
+  bool on = G.debug_value == 701;
+  double last = on ? BLI_time_now_seconds() : 0.0;
+  std::string line;
+
+  void mark(const char *stage)
+  {
+    if (!on) {
+      return;
+    }
+    const double now = BLI_time_now_seconds();
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "  %s %.1f", stage, (now - last) * 1000.0);
+    line += buf;
+    last = now;
+  }
+  void print(const char *title) const
+  {
+    if (on) {
+      printf("Extrude Manifold %s (ms):%s\n", title, line.c_str());
+    }
+  }
+};
 
 static void orig_co_layer_free(BMesh *bm)
 {
@@ -287,12 +319,14 @@ static wmOperatorStatus edbm_extrude_manifold_region_exec(bContext *C, wmOperato
       continue;
     }
 
+    StageTimer timer;
     bool solid = false;
 #ifdef WITH_GMP
     solid = use_solid && bm->totfacesel > 0 && selection_is_closed_solid(bm);
 #else
     UNUSED_VARS(use_solid);
 #endif
+    timer.mark("closed check");
     if (solid) {
       BM_data_layer_add_named(bm, &bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER);
       const int offset = CustomData_get_offset_named(&bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER);
@@ -303,6 +337,7 @@ static wmOperatorStatus edbm_extrude_manifold_region_exec(bContext *C, wmOperato
       }
     }
 
+    timer.mark("store positions");
     /* A solid is rebuilt from the plain extrude, so its side edges must not be dissolved. */
     if (!edbm_extrude_mesh_ex(
             obedit, em, op, use_normal_flip, solid ? false : use_dissolve_ortho_edges))
@@ -310,12 +345,15 @@ static wmOperatorStatus edbm_extrude_manifold_region_exec(bContext *C, wmOperato
       orig_co_layer_free(bm);
       continue;
     }
+    timer.mark("extrude");
 
     EDBMUpdate_Params params{};
     params.calc_looptris = true;
     params.calc_normals = true;
     params.is_destructive = true;
     EDBM_update(id_cast<Mesh *>(obedit->data), &params);
+    timer.mark("update");
+    timer.print("extrude step");
   }
   return OPERATOR_FINISHED;
 }
@@ -387,10 +425,12 @@ static Mesh *mesh_from_bmesh(BMesh *bm)
  * The Boolean with the fast Manifold solver, the result added to `bm`.
  * False when the solver could not do it; `bm` is then unchanged.
  */
-static bool solid_boolean_manifold(BMesh *bm, BMesh *part, BMesh *cutter_bm, const bool push_in)
+static bool solid_boolean_manifold(
+    BMesh *bm, BMesh *part, BMesh *cutter_bm, const bool push_in, StageTimer &timer)
 {
   Mesh *mesh_part = mesh_from_bmesh(part);
   Mesh *mesh_cutter = mesh_from_bmesh(cutter_bm);
+  timer.mark("to meshes");
   const Mesh *meshes[2] = {mesh_part, mesh_cutter};
   const float4x4 transforms[2] = {float4x4::identity(), float4x4::identity()};
   geometry::boolean::BooleanOpParameters op_params;
@@ -406,6 +446,7 @@ static bool solid_boolean_manifold(BMesh *bm, BMesh *part, BMesh *cutter_bm, con
                                                  &error);
   BKE_id_free(nullptr, mesh_part);
   BKE_id_free(nullptr, mesh_cutter);
+  timer.mark("manifold boolean");
   if (result == nullptr || error.type != geometry::boolean::BooleanErrorType::NoError) {
     if (result) {
       BKE_id_free(nullptr, result);
@@ -420,8 +461,10 @@ static bool solid_boolean_manifold(BMesh *bm, BMesh *part, BMesh *cutter_bm, con
   from_params.calc_vert_normal = true;
   BM_mesh_bm_from_me(bm_result, result, &from_params);
   BKE_id_free(nullptr, result);
+  timer.mark("from mesh");
   copy_all_faces(bm, bm_result);
   BM_mesh_free(bm_result);
+  timer.mark("copy back");
   return true;
 }
 
@@ -497,7 +540,7 @@ static void solid_boolean_exact(BMesh *part, BMesh *cutter_bm, const bool push_i
   BM_data_layer_free_named(part, &part->pdata, CUTTER_NO_LAYER);
 }
 
-static SolidResult extrude_solid_resolve(BMEditMesh *em)
+static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
 {
   BMesh *bm = em->bm;
   const int offset = CustomData_get_offset_named(&bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER);
@@ -530,6 +573,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
   if (!tagged_part_is_closed(bm)) {
     return SolidResult::Open;
   }
+  timer.mark("closed check");
 
   VectorSet<BMVert *> cap_verts;
   for (BMFace *f : caps) {
@@ -640,6 +684,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
     return SolidResult::Done;
   }
 
+  timer.mark("rebuild");
   /* Copy the edited part into its own mesh: the Boolean then only works on that part, however
    * big the rest of the mesh is. */
   tag_connected(bm, caps);
@@ -667,6 +712,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
     }
     moved_kept = std::move(moved_part);
   }
+  timer.mark("copy out");
   /* Remove the part from the mesh; the result is put back at the end. */
   BM_select_history_clear(bm);
   {
@@ -683,6 +729,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
     }
   }
 
+  timer.mark("remove part");
   /* The swept solid, in a mesh of its own. It starts a little behind the faces, so the faces
    * themselves end up inside it and are removed. */
   BMesh *cutter_bm = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
@@ -771,14 +818,18 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
   }
 
   const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
-  bool done = solid_boolean_manifold(bm, part, cutter_bm, push_in);
+  timer.mark("swept solid");
+  bool done = solid_boolean_manifold(bm, part, cutter_bm, push_in, timer);
   if (!done) {
     /* The fast solver could not do it (e.g. the swept solid crosses itself): use the exact one. */
     solid_boolean_exact(part, cutter_bm, push_in);
+    timer.mark("exact boolean");
     copy_all_faces(bm, part);
+    timer.mark("copy back");
   }
   BM_mesh_free(cutter_bm);
   BM_mesh_free(part);
+  timer.mark("free");
   BM_mesh_elem_hflag_disable_all(bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_TAG, false);
   return SolidResult::Done;
 #endif
@@ -798,7 +849,8 @@ static wmOperatorStatus edbm_extrude_manifold_resolve_exec(bContext *C, wmOperat
     BMEditMesh *em = BKE_editmesh_from_object(obedit);
     const bool is_solid =
         CustomData_get_offset_named(&em->bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER) != -1;
-    const SolidResult result = extrude_solid_resolve(em);
+    StageTimer timer;
+    const SolidResult result = extrude_solid_resolve(em, timer);
     orig_co_layer_free(em->bm);
     any_open |= result == SolidResult::Open;
     no_solver |= result == SolidResult::NoSolver;
@@ -814,11 +866,14 @@ static wmOperatorStatus edbm_extrude_manifold_resolve_exec(bContext *C, wmOperat
         EDBM_selectmode_flush_ex(em, SCE_SELECT_EDGE);
       }
     }
+    timer.mark("merge/flush");
     EDBMUpdate_Params params{};
     params.calc_looptris = true;
     params.calc_normals = true;
     params.is_destructive = true;
     EDBM_update(id_cast<Mesh *>(obedit->data), &params);
+    timer.mark("update");
+    timer.print("finish step");
   }
   if (no_solver) {
     BKE_report(op->reports, RPT_WARNING, "Built without the exact solver: normal extrude kept");
