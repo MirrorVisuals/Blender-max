@@ -386,8 +386,14 @@ class OBJECT_OT_edit_poly_tab(Operator):
         in_viewport = context.area is None or context.area.type == 'VIEW_3D'
 
         # Tab on a UVW Map gizmo returns to the object (the gizmo is like a sub-object).
+        # Tab over another UVW Map's panel switches to that map's gizmo.
         if uvw_map.is_gizmo(ob):
-            uvw_map.finish_gizmo_edit(context, ob)
+            _owner, editing = uvw_map.owner_of(ob)
+            owner = uvw_map.finish_gizmo_edit(context, ob)
+            hovered = getattr(context, "modifier", None)
+            if (owner is not None and hovered is not None and hovered.id_data == owner and
+                    hovered.type == 'UVW_MAP' and hovered != editing):
+                uvw_map.start_gizmo_edit(context, owner, hovered)
             return {'FINISHED'}
 
         # Tab in an Unwrap session stores the UVs.

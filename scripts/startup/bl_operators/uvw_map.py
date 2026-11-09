@@ -176,7 +176,8 @@ def helper_of(ob, mod):
 
 def _select_only(context, ob):
     for o in context.view_layer.objects:
-        if o.select_get():
+        # The list can still hold an empty slot for an object removed in this update.
+        if o is not None and o.select_get():
             o.select_set(False)
     ob.select_set(True)
     context.view_layer.objects.active = ob
@@ -243,11 +244,14 @@ def finish_gizmo_edit(context, helper):
     ob, mod = owner_of(helper)
     if mod is not None:
         sync(helper)
-    bpy.data.objects.remove(helper)
+    # Select the object before removing the helper: the view layer's object list is only
+    # rebuilt at the next update, so walking it right after a removal meets an empty slot.
     if ob is not None and context is not None:
         _select_only(context, ob)
         if mod is not None:
             ob.modifiers.active = mod
+    _last_matrix.pop(helper.name, None)
+    bpy.data.objects.remove(helper)
     return ob
 
 
@@ -297,7 +301,7 @@ def _uvw_map_depsgraph_update(_scene, _depsgraph):
     # Helpers that need putting away are removed outside the depsgraph update.
     if not _cleanup_pending[0]:
         for o in view_layer.objects:
-            if KEY_GIZMO_FOR in o and (not o.select_get() or owner_of(o)[1] is None):
+            if o is not None and KEY_GIZMO_FOR in o and (not o.select_get() or owner_of(o)[1] is None):
                 _cleanup_pending[0] = True
                 bpy.app.timers.register(_cleanup_timer, first_interval=0.0)
                 break
