@@ -1167,6 +1167,16 @@ static void rna_UVWMapModifier_texel_density_preset_set(PointerRNA *ptr, int val
   }
 }
 
+static int rna_UVWMapModifier_material_id_get(PointerRNA *ptr)
+{
+  return static_cast<const UVWMapModifierData *>(ptr->data)->material_index + 1;
+}
+
+static void rna_UVWMapModifier_material_id_set(PointerRNA *ptr, int value)
+{
+  static_cast<UVWMapModifierData *>(ptr->data)->material_index = std::max(value - 1, 0);
+}
+
 /* Material slots of the object, as material IDs in 3ds Max. */
 static const EnumPropertyItem *rna_UVWMapModifier_material_slot_itemf(bContext * /*C*/,
                                                                        PointerRNA *ptr,
@@ -7975,6 +7985,16 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
   RNA_def_property_enum_items(prop, material_slot_items);
   RNA_def_property_enum_funcs(prop, nullptr, nullptr, "rna_UVWMapModifier_material_slot_itemf");
   RNA_def_property_ui_text(prop, "Material Slot", "Material whose faces are mapped");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "material_id", PROP_INT, PROP_NONE);
+  RNA_def_property_int_funcs(
+      prop, "rna_UVWMapModifier_material_id_get", "rna_UVWMapModifier_material_id_set", nullptr);
+  RNA_def_property_range(prop, 1, 32767);
+  RNA_def_property_ui_text(prop,
+                           "Material ID",
+                           "Number of the object's material slot whose faces are mapped (1 is the "
+                           "first slot), as material IDs in 3ds Max");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   prop = RNA_def_property(srna, "material_index", PROP_INT, PROP_NONE);

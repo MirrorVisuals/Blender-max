@@ -288,8 +288,8 @@ top.material_index = 1
 mm = cube_m.modifiers.new("UVW Map", 'UVW_MAP')
 mm.offset = (5.0, 0.0)
 mm.use_material = True
-mm.material_slot = 'SLOT_2'
-check(mm.material_index == 1, "material slot 2 is index 1")
+mm.material_id = 2
+check(mm.material_index == 1, "material ID 2 is the second slot")
 data = faces_uv(cube_m)
 mapped = [d for d in data if min(u for u, _ in d[1]) > 4]
 check(len(mapped) == 1 and mapped[0][2][2] > 0.9, "only the face with material B is mapped")
