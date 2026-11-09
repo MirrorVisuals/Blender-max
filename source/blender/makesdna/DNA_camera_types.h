@@ -75,6 +75,9 @@ enum eCamera_Flag : short {
   CAM_SHOWSENSOR = (1 << 8),
   CAM_SHOW_SAFE_CENTER = (1 << 9),
   CAM_SHOW_BG_IMAGE = (1 << 10),
+  /** Vertical (tilt) correction: render as if held level, with the lens shifted to keep the
+   * view, so vertical lines stay vertical (two-point perspective). */
+  CAM_VERTICAL_CORRECTION = (1 << 11),
 };
 ENUM_OPERATORS(eCamera_Flag)
 
@@ -242,7 +245,8 @@ struct Camera {
   float central_cylindrical_range_v_min = -1.0f;
   float central_cylindrical_range_v_max = 1.0f;
   float central_cylindrical_radius = 1.0f;
-  float _pad3 = {};
+  /** How much of the tilt the vertical correction removes (0 to 1). */
+  float vertical_correction = 1.0f;
 
   /* Custom Camera properties. */
   struct Text *custom_shader = nullptr;

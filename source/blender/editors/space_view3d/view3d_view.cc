@@ -15,6 +15,7 @@
 #include "BLI_math_vector.h"
 #include "BLI_rect.h"
 
+#include "BKE_camera.h"
 #include "BKE_action.hh"
 #include "BKE_context.hh"
 #ifdef WITH_XR_OPENXR
@@ -384,6 +385,7 @@ static void obmat_to_viewmat(RegionView3D *rv3d, Object *ob)
   rv3d->view = RV3D_VIEW_USER; /* don't show the grid */
 
   normalize_m4_m4(bmat, ob->object_to_world().ptr());
+  BKE_camera_vertical_correction_apply(ob, bmat);
   invert_m4_m4(rv3d->viewmat, bmat);
 
   /* view quat calculation, needed for add object */

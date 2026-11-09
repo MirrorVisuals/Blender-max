@@ -23,7 +23,9 @@
 #include "BLI_listbase.h"
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
+#include "BLI_math_rotation.h"
 #include "BLI_math_vector.h"
+#include "BLI_math_vector.hh"
 #include "BLI_rect.h"
 #include "BLI_string.h"
 #include "BLI_utildefines.h"
@@ -383,7 +385,7 @@ void BKE_camera_params_from_object(CameraParams *params, const Object *cam_ob)
     params->ortho_scale = cam->ortho_scale;
 
     params->shiftx = cam->shiftx;
-    params->shifty = cam->shifty;
+    params->shifty = cam->shifty + BKE_camera_vertical_correction_shift(cam_ob);
 
     params->sensor_x = cam->sensor_x;
     params->sensor_y = cam->sensor_y;
@@ -408,6 +410,54 @@ void BKE_camera_params_from_object(CameraParams *params, const Object *cam_ob)
   params->lens = math::max(params->lens, 1e-9f);
   params->ortho_scale = math::max(params->ortho_scale, 1e-9f);
   params->clip_end = math::max(params->clip_end, params->clip_start + 1e-3f);
+}
+
+float BKE_camera_vertical_correction_angle(const Object *camera)
+{
+  if (camera == nullptr || camera->type != OB_CAMERA) {
+    return 0.0f;
+  }
+  const Camera *cam = id_cast<const Camera *>(camera->data);
+  if (!(cam->flag & CAM_VERTICAL_CORRECTION) || cam->type != CAM_PERSP) {
+    return 0.0f;
+  }
+  const float amount = math::clamp(cam->vertical_correction, 0.0f, 1.0f);
+  /* The camera looks along its -Z axis. */
+  const float3 view = -math::normalize(float3(camera->object_to_world().ptr()[2]));
+  const float tilt = asinf(math::clamp(view.z, -1.0f, 1.0f));
+  const float limit = DEG2RADF(80.0f);
+  return math::clamp(tilt, -limit, limit) * amount;
+}
+
+float BKE_camera_vertical_correction_shift(const Object *camera)
+{
+  const float angle = BKE_camera_vertical_correction_angle(camera);
+  if (angle == 0.0f) {
+    return 0.0f;
+  }
+  const Camera *cam = id_cast<const Camera *>(camera->data);
+  /* Turned level, the point the camera looked at is `lens * tan(angle)` above the sensor centre;
+   * the shift is in units of the fitted sensor size. */
+  const float sensor_size = BKE_camera_sensor_size(cam->sensor_fit, cam->sensor_x, cam->sensor_y);
+  return tanf(angle) * cam->lens / math::max(sensor_size, 1e-6f);
+}
+
+void BKE_camera_vertical_correction_apply(const Object *camera, float r_modelmat[4][4])
+{
+  const float angle = BKE_camera_vertical_correction_angle(camera);
+  if (angle == 0.0f) {
+    return;
+  }
+  /* Turn about the camera's own X axis, down by the angle (a turn about X by a positive angle
+   * tilts the view, -Z, towards +Y). */
+  float rot[4][4];
+  unit_m4(rot);
+  const float c = cosf(-angle), s = sinf(-angle);
+  rot[1][1] = c;
+  rot[1][2] = s;
+  rot[2][1] = -s;
+  rot[2][2] = c;
+  mul_m4_m4m4(r_modelmat, r_modelmat, rot);
 }
 
 void BKE_camera_params_from_view3d(CameraParams *params,
@@ -1078,6 +1128,7 @@ void BKE_camera_multiview_model_matrix_scaled(const RenderData *rd,
     const bool is_left = camera_is_left(viewname);
     camera_stereo3d_model_matrix(camera, is_left, r_modelmat);
   }
+  BKE_camera_vertical_correction_apply(camera, r_modelmat);
 }
 
 void BKE_camera_multiview_window_matrix(const RenderData *rd,

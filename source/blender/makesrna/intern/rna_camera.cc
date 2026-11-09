@@ -89,6 +89,16 @@ static void rna_Camera_update(Main * /*bmain*/, Scene * /*scene*/, PointerRNA *p
   DEG_id_tag_update(&camera->id, 0);
 }
 
+static void rna_Camera_use_vertical_correction_set(PointerRNA *ptr, bool value)
+{
+  Camera *camera = id_cast<Camera *>(ptr->owner_id);
+  SET_FLAG_FROM_TEST(camera->flag, value, CAM_VERTICAL_CORRECTION);
+  /* Files from before the option read the amount as zero: start from full correction. */
+  if (value && camera->vertical_correction <= 0.0f) {
+    camera->vertical_correction = 1.0f;
+  }
+}
+
 static void rna_Camera_dependency_update(Main *bmain, Scene * /*scene*/, PointerRNA *ptr)
 {
   Camera *camera = id_cast<Camera *>(ptr->owner_id);
@@ -847,6 +857,27 @@ void RNA_def_camera(BlenderRNA *brna)
   RNA_def_property_float_sdna(prop, nullptr, "shifty");
   RNA_def_property_ui_range(prop, -2.0, 2.0, 1, 3);
   RNA_def_property_ui_text(prop, "Shift Y", "Camera vertical shift");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
+
+  prop = RNA_def_property(srna, "use_vertical_correction", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", CAM_VERTICAL_CORRECTION);
+  RNA_def_property_boolean_funcs(prop, nullptr, "rna_Camera_use_vertical_correction_set");
+  RNA_def_property_ui_text(
+      prop,
+      "Vertical Correction",
+      "Keep vertical lines vertical when the camera is tilted up or down (two-point "
+      "perspective): render as if the camera were level, with the lens shifted to keep the "
+      "same view, like a shift lens. Perspective cameras only");
+  RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
+
+  prop = RNA_def_property(srna, "vertical_correction", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_float_sdna(prop, nullptr, "vertical_correction");
+  RNA_def_property_range(prop, 0.0f, 1.0f);
+  RNA_def_property_ui_range(prop, 0.0f, 1.0f, 1, 2);
+  RNA_def_property_ui_text(prop,
+                           "Correction Amount",
+                           "How much of the tilt is corrected: 1 keeps vertical lines exactly "
+                           "vertical, less leaves some convergence");
   RNA_def_property_update(prop, NC_OBJECT | ND_DRAW, "rna_Camera_update");
 
   /* Stereo Settings */

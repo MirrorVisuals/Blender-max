@@ -157,6 +157,14 @@ class DATA_PT_lens(CameraButtonsPanel, Panel):
         sub.prop(cam, "shift_x", text="Shift X")
         sub.prop(cam, "shift_y", text="Y")
 
+        if cam.type == 'PERSP':
+            col.separator()
+            row = col.row(heading="Vertical Correction")
+            row.prop(cam, "use_vertical_correction", text="")
+            sub = row.row()
+            sub.active = cam.use_vertical_correction
+            sub.prop(cam, "vertical_correction", text="Amount", slider=True)
+
         col.separator()
         sub = col.column(align=True)
         sub.prop(cam, "clip_start", text="Clip Start")
