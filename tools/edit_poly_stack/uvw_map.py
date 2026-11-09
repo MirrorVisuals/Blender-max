@@ -477,7 +477,87 @@ class OBJECT_OT_uvw_map_view_align(_UVWMapOperator, Operator):
         return {'FINISHED'}
 
 
+def modifier_uv_map_name(ob, mod):
+    """The UV map a UVW Map or Unwrap modifier writes: its own, or the mesh's default one."""
+    if mod.uv_layer:
+        return mod.uv_layer
+    uv_layers = ob.data.uv_layers
+    for layer in uv_layers:
+        if layer.active_render:
+            return layer.name
+    return uv_layers.active.name if uv_layers.active else "UVMap"
+
+
+def _vector_socket_to_connect(node):
+    """The socket a UV Map node should feed for `node`: its Vector input, or, when that comes
+    from a node that transforms a vector (e.g. Mapping), that node's Vector input."""
+    socket = node.inputs.get("Vector")
+    if socket is None:
+        return None
+    for _ in range(8):
+        if not socket.is_linked:
+            return socket
+        from_node = socket.links[0].from_node
+        if from_node.type == 'UVMAP':
+            return socket
+        upstream = from_node.inputs.get("Vector")
+        if upstream is None:
+            # Fed by something else (e.g. Texture Coordinate): replace that link.
+            return socket
+        socket = upstream
+    return socket
+
+
+class OBJECT_OT_uv_map_connect_texture(Operator):
+    """Make the selected texture node of the active material read the UV map of this modifier """ \
+        """(adds or updates a UV Map node in front of it)"""
+    bl_idname = "object.uv_map_connect_texture"
+    bl_label = "Connect UV Map to Texture"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier: StringProperty(name="Modifier")
+
+    def execute(self, context):
+        ob = context.active_object
+        if is_gizmo(ob):
+            ob = owner_of(ob)[0]
+        if ob is None or ob.type != 'MESH':
+            return {'CANCELLED'}
+        mod = ob.modifiers.get(self.modifier) if self.modifier else ob.modifiers.active
+        if mod is None or mod.type not in {'UVW_MAP', 'UNWRAP'}:
+            return {'CANCELLED'}
+        uv_name = modifier_uv_map_name(ob, mod)
+
+        mat = ob.active_material
+        if mat is None or mat.node_tree is None:
+            self.report({'ERROR'}, "The object's active material has no nodes")
+            return {'CANCELLED'}
+        tree = mat.node_tree
+        node = tree.nodes.active
+        socket = _vector_socket_to_connect(node) if node is not None else None
+        if socket is None:
+            self.report({'ERROR'},
+                        "Select the texture node in the Shader Editor first (material \"%s\")" % mat.name)
+            return {'CANCELLED'}
+
+        uv_node = None
+        if socket.is_linked and socket.links[0].from_node.type == 'UVMAP':
+            uv_node = socket.links[0].from_node
+        else:
+            for link in list(socket.links):
+                tree.links.remove(link)
+            uv_node = tree.nodes.new('ShaderNodeUVMap')
+            target = socket.node
+            uv_node.location = (target.location.x - 220.0, target.location.y - 40.0)
+            tree.links.new(uv_node.outputs["UV"], socket)
+        uv_node.uv_map = uv_name
+        uv_node.label = uv_name
+        self.report({'INFO'}, "\"%s\" reads the UV map \"%s\"" % (node.label or node.name, uv_name))
+        return {'FINISHED'}
+
+
 classes = (
+    OBJECT_OT_uv_map_connect_texture,
     OBJECT_OT_uvw_map_gizmo_edit,
     OBJECT_OT_uvw_map_fit,
     OBJECT_OT_uvw_map_center,

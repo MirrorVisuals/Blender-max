@@ -448,7 +448,16 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
     layout.prop(ptr, "use_cap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   layout.prop(ptr, "axis", ui::ITEM_R_EXPAND, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "map_channel", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
+  {
+    /* Make the selected texture node of the active material read this UV map. */
+    ui::Layout &row_tex = layout.row(true);
+    row_tex.use_property_split_set(false);
+    PointerRNA tex_ptr = row_tex.op(
+        "OBJECT_OT_uv_map_connect_texture", IFACE_("Connect to Texture"), ICON_NODE_TEXTURE);
+    RNA_string_set(&tex_ptr, "modifier", md->name);
+  }
   layout.prop(ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   {

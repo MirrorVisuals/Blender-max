@@ -901,6 +901,7 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 
 #  include "NOD_nodes_srna.hh"
 
+#  include "ED_mesh.hh"
 #  include "ED_object.hh"
 
 #  ifdef WITH_ALEMBIC
@@ -1109,6 +1110,80 @@ RNA_MOD_UVLAYER_NAME_SET(MappingInfo, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(UVProject, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(UVWMap, uvmap_name);
 RNA_MOD_UVLAYER_NAME_SET(Unwrap, uvmap_name);
+
+/**
+ * Map channels, as in 3ds Max: channel 1 is the default UV map (an empty name), channel N the UV
+ * map "UVChannel_N". 0 means another UV map, chosen by name.
+ */
+static int rna_uv_map_channel_from_name(const PointerRNA *ptr, const char *name)
+{
+  if (name[0] == '\0') {
+    return 1;
+  }
+  if (STRPREFIX(name, "UVChannel_")) {
+    const char *digits = name + strlen("UVChannel_");
+    char *end = nullptr;
+    const long n = strtol(digits, &end, 10);
+    if (end != digits && *end == '\0' && n >= 2 && n <= 99) {
+      return int(n);
+    }
+  }
+  const Object *ob = reinterpret_cast<const Object *>(ptr->owner_id);
+  if (ob->type == OB_MESH && ob->data) {
+    const Mesh *mesh = id_cast<const Mesh *>(ob->data);
+    if (mesh->default_uv_map_name() == name) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/** Set the UV map name for a channel, adding the UV map to the mesh if it has none of it. */
+static void rna_uv_map_channel_to_name(PointerRNA *ptr, const int channel, char *name, int maxncpy)
+{
+  if (channel <= 0) {
+    return;
+  }
+  if (channel == 1) {
+    name[0] = '\0';
+    return;
+  }
+  const std::string channel_name = "UVChannel_" + std::to_string(channel);
+  Object *ob = reinterpret_cast<Object *>(ptr->owner_id);
+  if (ob->type == OB_MESH && ob->data) {
+    Mesh *mesh = id_cast<Mesh *>(ob->data);
+    /* Channel 1 stays the first (default) UV map. */
+    if (mesh->uv_map_names().is_empty()) {
+      ED_mesh_uv_add(mesh, "UVMap", true, false, nullptr);
+    }
+    if (!mesh->uv_map_names().contains(channel_name)) {
+      ED_mesh_uv_add(mesh, channel_name.c_str(), false, false, nullptr);
+    }
+  }
+  BLI_strncpy(name, channel_name.c_str(), maxncpy);
+}
+
+static int rna_UVWMapModifier_map_channel_get(PointerRNA *ptr)
+{
+  return rna_uv_map_channel_from_name(ptr, static_cast<UVWMapModifierData *>(ptr->data)->uvmap_name);
+}
+
+static void rna_UVWMapModifier_map_channel_set(PointerRNA *ptr, int value)
+{
+  UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
+  rna_uv_map_channel_to_name(ptr, value, umd->uvmap_name, sizeof(umd->uvmap_name));
+}
+
+static int rna_UnwrapModifier_map_channel_get(PointerRNA *ptr)
+{
+  return rna_uv_map_channel_from_name(ptr, static_cast<UnwrapModifierData *>(ptr->data)->uvmap_name);
+}
+
+static void rna_UnwrapModifier_map_channel_set(PointerRNA *ptr, int value)
+{
+  UnwrapModifierData *umd = static_cast<UnwrapModifierData *>(ptr->data);
+  rna_uv_map_channel_to_name(ptr, value, umd->uvmap_name, sizeof(umd->uvmap_name));
+}
 
 static int rna_UVWMapModifier_size_mode_get(PointerRNA *ptr)
 {
@@ -7848,6 +7923,18 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
   RNA_def_property_string_funcs(prop, nullptr, nullptr, "rna_UVWMapModifier_uvmap_name_set");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
+  prop = RNA_def_property(srna, "map_channel", PROP_INT, PROP_NONE);
+  RNA_def_property_int_funcs(prop, "rna_UVWMapModifier_map_channel_get", "rna_UVWMapModifier_map_channel_set", nullptr);
+  RNA_def_property_range(prop, 0, 99);
+  RNA_def_property_ui_range(prop, 1, 99, 1, -1);
+  RNA_def_property_ui_text(prop,
+                           "Map Channel",
+                           "UV map to write, as a channel like in 3ds Max: 1 is the default UV "
+                           "map, 2 and up the UV maps \"UVChannel_2\" and so on (added when "
+                           "needed). 0: another UV map, chosen by name");
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
   prop = RNA_def_property(srna, "gizmo_location", PROP_FLOAT, PROP_TRANSLATION);
   RNA_def_property_array(prop, 3);
   RNA_def_property_ui_text(prop, "Gizmo Location", "Gizmo center, in object space");
@@ -8065,6 +8152,18 @@ static void rna_def_modifier_unwrap(BlenderRNA *brna)
   RNA_def_property_string_sdna(prop, nullptr, "uvmap_name");
   RNA_def_property_ui_text(prop, "UV Map", "UV map to edit (empty: the active one)");
   RNA_def_property_string_funcs(prop, nullptr, nullptr, "rna_UnwrapModifier_uvmap_name_set");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "map_channel", PROP_INT, PROP_NONE);
+  RNA_def_property_int_funcs(prop, "rna_UnwrapModifier_map_channel_get", "rna_UnwrapModifier_map_channel_set", nullptr);
+  RNA_def_property_range(prop, 0, 99);
+  RNA_def_property_ui_range(prop, 1, 99, 1, -1);
+  RNA_def_property_ui_text(prop,
+                           "Map Channel",
+                           "UV map to write, as a channel like in 3ds Max: 1 is the default UV "
+                           "map, 2 and up the UV maps \"UVChannel_2\" and so on (added when "
+                           "needed). 0: another UV map, chosen by name");
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   prop = RNA_def_property(srna, "new_faces", PROP_ENUM, PROP_NONE);
