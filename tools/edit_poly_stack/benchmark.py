@@ -202,12 +202,16 @@ def reevaluate_all():
     t0 = time.perf_counter()
     n = evaluate(objects)
     return ms(t0), n
-first, faces = reevaluate_all()
+runs = [reevaluate_all() for _ in range(3)]
+first = statistics.median(t for t, _ in runs)
+faces = runs[0][1]
 single(f"{count} objects: evaluation (full stacks)", faces, first)
 for o in objects:
     for m in o.modifiers[1:4]:   # Edit Poly, UVW Map, Unwrap (Subdivision and Tail stay)
         m.show_viewport = False
-plain, _ = reevaluate_all()
+# Hiding modifiers makes Blender rebuild its update structure for every object: do that untimed.
+evaluate(objects)
+plain = statistics.median(reevaluate_all()[0] for _ in range(3))
 single(f"{count} objects: Subdivision only", faces, plain)
 rows.append((f"{count} objects: cost of our modifiers", faces, first, max(first - plain, 0.0)))
 print(f"  {count} objects: cost of our modifiers             {max(first - plain, 0.0):9.1f} ms")
