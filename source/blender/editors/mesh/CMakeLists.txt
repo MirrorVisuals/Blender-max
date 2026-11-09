@@ -23,6 +23,7 @@ set(SRC
   editmesh_bisect.cc
   editmesh_circularize.cc
   editmesh_extrude.cc
+  editmesh_extrude_solid.cc
   editmesh_extrude_screw.cc
   editmesh_extrude_spin.cc
   editmesh_extrude_spin_gizmo.cc

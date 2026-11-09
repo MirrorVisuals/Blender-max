@@ -7799,6 +7799,23 @@ def km_3d_view_tool_edit_mesh_extrude_manifold(params):
     )
 
 
+def km_3d_view_tool_edit_mesh_extrude_solid(params):
+    return (
+        "3D View Tool: Edit Mesh, Extrude Solid",
+        {"space_type": 'VIEW_3D', "region_type": 'WINDOW'},
+        {"items": [
+            ("mesh.extrude_solid", {**params.tool_maybe_tweak_event, **params.tool_modifier},
+             {"properties": [
+                 ("TRANSFORM_OT_translate", [
+                     ("release_confirm", True),
+                     ("constraint_axis", (False, False, True)),
+                     ("orient_type", 'NORMAL'),
+                 ]),
+             ]}),
+        ]},
+    )
+
+
 def km_3d_view_tool_edit_mesh_extrude_along_normals(params):
     return (
         "3D View Tool: Edit Mesh, Extrude Along Normals",
@@ -9178,6 +9195,7 @@ def generate_keymaps(params=None):
         km_3d_view_tool_edit_armature_extrude_to_cursor(params),
         km_3d_view_tool_edit_mesh_extrude_region(params),
         km_3d_view_tool_edit_mesh_extrude_manifold(params),
+        km_3d_view_tool_edit_mesh_extrude_solid(params),
         km_3d_view_tool_edit_mesh_extrude_along_normals(params),
         km_3d_view_tool_edit_mesh_extrude_individual(params),
         km_3d_view_tool_edit_mesh_extrude_to_cursor(params),

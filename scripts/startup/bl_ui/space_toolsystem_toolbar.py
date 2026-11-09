@@ -1055,6 +1055,20 @@ class _defs_edit_mesh:
         )
 
     @ToolDef.from_fn
+    def extrude_solid():
+        return dict(
+            idname="builtin.extrude_solid",
+            label="Extrude Solid",
+            description=(
+                "Extrude as a solid, as in 3ds Max: pushing faces in cuts (and opens a hole when "
+                "it goes through), pulling them out adds and merges"
+            ),
+            icon="ops.mesh.extrude_manifold",
+            widget="VIEW3D_GGT_tool_generic_handle_normal",
+            keymap=(),
+        )
+
+    @ToolDef.from_fn
     def extrude_normals():
         def draw_settings(_context, layout, tool):
             props = tool.operator_properties("mesh.extrude_region_shrink_fatten")
@@ -3854,6 +3868,7 @@ class VIEW3D_PT_tools_active(ToolSelectPanelHelper, Panel):
             (
                 _defs_edit_mesh.extrude,
                 _defs_edit_mesh.extrude_manifold,
+                _defs_edit_mesh.extrude_solid,
                 _defs_edit_mesh.extrude_normals,
                 _defs_edit_mesh.extrude_individual,
                 _defs_edit_mesh.extrude_cursor,

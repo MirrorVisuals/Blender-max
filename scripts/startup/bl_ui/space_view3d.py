@@ -4808,6 +4808,7 @@ class VIEW3D_MT_edit_mesh_extrude(Menu):
             layout.operator("view3d.edit_mesh_extrude_move_shrink_fatten", text="Extrude Faces Along Normals")
             layout.operator("mesh.extrude_faces_move", text="Extrude Individual Faces")
             layout.operator("view3d.edit_mesh_extrude_manifold_normal", text="Extrude Manifold")
+            layout.operator("view3d.edit_mesh_extrude_solid_normal", text="Extrude Solid")
 
         if mesh.total_edge_sel and (select_mode[0] or select_mode[1]):
             layout.operator("mesh.extrude_edges_move", text="Extrude Edges")

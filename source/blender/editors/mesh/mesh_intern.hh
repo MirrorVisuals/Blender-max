@@ -152,6 +152,11 @@ void MESH_OT_flatten(wmOperatorType *ot);
 
 void MESH_OT_extrude_repeat(wmOperatorType *ot);
 void MESH_OT_extrude_region(wmOperatorType *ot);
+
+/* `editmesh_extrude_solid.cc` */
+
+void MESH_OT_extrude_solid_prepare(wmOperatorType *ot);
+void MESH_OT_extrude_solid_resolve(wmOperatorType *ot);
 void MESH_OT_extrude_context(wmOperatorType *ot);
 void MESH_OT_extrude_verts_indiv(wmOperatorType *ot);
 void MESH_OT_extrude_edges_indiv(wmOperatorType *ot);
