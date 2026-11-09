@@ -380,6 +380,15 @@ Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
       if (v == -1) {
         return missing("vertices");
       }
+      /* A face that uses a point twice would be invalid (only possible when the IDs of the mesh
+       * below are not unique). */
+      const int face_start = face_offsets.last();
+      for (int prev = face_start; prev < int(corner_verts.size()); prev++) {
+        if (corner_verts[prev] == v) {
+          r_reason = "a new face would use the same point twice";
+          return nullptr;
+        }
+      }
       corner_verts.append(v);
       /* Corner attributes (e.g. UVs) from the source face's corner at the same input vertex,
        * else from its first corner. */

@@ -270,6 +270,42 @@ info = evaluated(bevel_ob)
 check(info["verts"] == 10 and info["faces"] == 7,
       f"one edge selected in the node: only it is bevelled ({info['verts']} points, {info['faces']} faces)")
 
+print("Edit Poly after a Bevel node (Bevel copies the IDs of the points it splits)")
+chain_tree = bpy.data.node_groups.new("Bevel Chain", 'GeometryNodeTree')
+chain_tree.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+chain_tree.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+c_in = chain_tree.nodes.new('NodeGroupInput')
+c_first = chain_tree.nodes.new('GeometryNodeEditPoly')
+c_bevel = chain_tree.nodes.new('GeometryNodeMeshBevel')
+c_second = chain_tree.nodes.new('GeometryNodeEditPoly')
+c_out = chain_tree.nodes.new('NodeGroupOutput')
+chain_tree.links.new(c_in.outputs[0], c_first.inputs[0])
+chain_tree.links.new(c_first.outputs["Geometry"], c_bevel.inputs["Mesh"])
+chain_tree.links.new(c_bevel.outputs["Mesh"], c_second.inputs[0])
+chain_tree.links.new(c_second.outputs["Geometry"], c_out.inputs[0])
+bpy.ops.mesh.primitive_cube_add(location=(0.0, -12.0, 0.0))
+chain_ob = bpy.context.active_object
+add_nodes_modifier(chain_ob, chain_tree)
+chain_tree.nodes.active = c_first
+tab()
+select_only(chain_ob, lambda f: f.normal.z > 0.5)
+bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": (0.0, 0.0, 0.5)})
+tab()
+check(chain_ob.mode == 'OBJECT', "first node: top face extruded (it now gives the mesh IDs)")
+bevelled = evaluated(chain_ob)
+chain_tree.nodes.active = c_second
+tab()
+check(chain_ob.mode == 'EDIT', "second node, after the Bevel, can be edited")
+select_only(chain_ob, lambda f: f.normal.z > 0.99 and f.calc_center_median().z > 1.4)
+bpy.ops.mesh.delete(type='FACE')
+tab()
+after = evaluated(chain_ob)
+check(chain_ob.mode == 'OBJECT' and after["faces"] == bevelled["faces"] - 1,
+      f"a face deleted after the Bevel ({bevelled['faces']} -> {after['faces']} faces)")
+tab()
+tab()
+check(chain_ob.mode == 'OBJECT' and evaluated(chain_ob) == after, "editing it again and leaving: no crash")
+
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
 for f in failures:

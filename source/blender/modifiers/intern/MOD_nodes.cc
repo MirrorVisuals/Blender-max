@@ -1800,6 +1800,8 @@ class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
     if (mesh == nullptr) {
       return;
     }
+    /* The session edits the same mesh that the edits are applied to. */
+    edit_poly::remove_repeated_ids(*mesh);
     Mesh *input_copy = capture ? BKE_mesh_copy_for_eval(*mesh) : nullptr;
     Mesh *result = mesh;
     const NodesModifierEditPoly *item = nmd_.find_edit_poly(id);

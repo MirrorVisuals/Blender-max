@@ -220,9 +220,41 @@ static uint64_t key_of(const int2 id)
 
 namespace edit_poly {
 
+bool remove_repeated_ids(Mesh &mesh)
+{
+  using namespace bke::stable_id;
+  bool removed = false;
+  for (const bke::AttrDomain domain :
+       {bke::AttrDomain::Point, bke::AttrDomain::Edge, bke::AttrDomain::Face})
+  {
+    if (!has_ids(mesh, domain)) {
+      continue;
+    }
+    const Array<StableID> ids = read_or_make_root_ids(mesh, domain);
+    Set<uint64_t> seen;
+    seen.reserve(ids.size());
+    bool repeated = false;
+    for (const StableID id : ids) {
+      if (!seen.add(id.as_u64())) {
+        repeated = true;
+        break;
+      }
+    }
+    if (repeated) {
+      bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
+      attributes.remove(id_attribute_name(domain));
+      attributes.remove(parent_attribute_name(domain));
+      removed = true;
+    }
+  }
+  return removed;
+}
+
 void session_prepare(Mesh &input, Mesh &mesh)
 {
   using namespace bke::stable_id;
+  remove_repeated_ids(input);
+  remove_repeated_ids(mesh);
   /* The input gets IDs for every domain, so the commit compares against the same IDs that the
    * modifier sees when it evaluates (root IDs are made from indices). */
   ensure_root_ids(input);
@@ -620,6 +652,10 @@ Mesh *apply(const EditPolyModifierData &emd_ref,
   if (r_selection_written) {
     *r_selection_written = false;
   }
+
+  /* Nodes that copy elements (e.g. Bevel) also copy their IDs: such IDs cannot tell elements
+   * apart, so they are dropped and elements are found by index. */
+  remove_repeated_ids(*mesh);
 
   if (const std::string reason = index_ids_changed(*emd, *mesh); !reason.empty()) {
     warning = "Edits paused: " + reason;

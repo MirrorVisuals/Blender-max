@@ -78,6 +78,12 @@ Mesh *apply(const EditPolyModifierData &emd,
             bool *r_selection_written = nullptr);
 
 /**
+ * Remove stable IDs that are not unique (in any domain), e.g. after a node that copied elements
+ * with their attributes. Elements are then found by index. Returns true if any were removed.
+ */
+bool remove_repeated_ids(Mesh &mesh);
+
+/**
  * Edits stored outside a modifier stack (by Edit Poly nodes, in the Geometry Nodes modifier). The
  * modifier header of such data is unused.
  */
