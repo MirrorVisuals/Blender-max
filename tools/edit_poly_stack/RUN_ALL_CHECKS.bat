@@ -10,7 +10,7 @@ echo === Unit tests (stable ID rule) ===
 call "%~dp0RUN_TESTS.bat" < nul > "%LOGS%\unit_tests.txt" 2>&1
 findstr /c:"PASSED" /c:"FAILED" "%LOGS%\unit_tests.txt"
 
-for %%C in (check_stable_ids check_edit_poly check_edit_poly_tab check_edit_poly_topology check_edit_poly_ops check_edit_poly_collapse check_mirror_array check_uvw_map check_unwrap check_light_surface) do (
+for %%C in (check_stable_ids check_edit_poly check_edit_poly_tab check_edit_poly_topology check_edit_poly_ops check_edit_poly_collapse check_edit_poly_attrs check_mirror_array check_uvw_map check_unwrap check_light_surface) do (
   echo.
   echo === %%C ===
   "%EXE%" --background --factory-startup --python "%~dp0%%C.py" > "%LOGS%\%%C.txt" 2>&1

@@ -895,6 +895,7 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 #  include "DEG_depsgraph_query.hh"
 
 #  include "MOD_edit_poly.hh"
+#  include "MOD_edit_poly_attrs.hh"
 #  include "MOD_unwrap.hh"
 #  include "MOD_nodes.hh"
 
@@ -1381,6 +1382,16 @@ static int rna_UnwrapModifier_session_commit(ID *id, UnwrapModifierData *umd, Me
   DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
   WM_main_add_notifier(NC_OBJECT | ND_MODIFIER, id);
   return count;
+}
+
+static int rna_EditPolyModifier_attribute_edits_num_get(PointerRNA *ptr)
+{
+  const EditPolyModifierData *emd = static_cast<const EditPolyModifierData *>(ptr->data);
+  if (!emd->attr_ints) {
+    return 0;
+  }
+  return blender::edit_poly::attrs_count(
+      blender::Span<int>(emd->attr_ints, emd->attr_ints_num));
 }
 
 static void rna_UnwrapModifier_clear(ID *id, UnwrapModifierData *umd)
@@ -7653,6 +7664,14 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
       "Selected Faces",
       "Faces selected when this level was last edited; they are passed up the stack (e.g. to "
       "UVW Map with Selected Faces Only)");
+
+  prop = RNA_def_property(srna, "attribute_edits_num", PROP_INT, PROP_UNSIGNED);
+  RNA_def_property_int_funcs(prop, "rna_EditPolyModifier_attribute_edits_num_get", nullptr, nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop,
+                           "Edited Data",
+                           "Edited bevel weights, creases, sharp edges, seams, material indices "
+                           "and flat shading stored in this level");
 
   prop = RNA_def_property(srna, "use_selection", PROP_BOOLEAN, PROP_NONE);
   RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_EDITPOLY_HAS_SELECTION);

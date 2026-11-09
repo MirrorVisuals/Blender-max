@@ -50,6 +50,7 @@
 #include "MEM_guardedalloc.h"
 
 #include "MOD_edit_poly.hh"
+#include "MOD_edit_poly_attrs.hh"
 #include "MOD_edit_poly_ops.hh"
 #include "MOD_edit_poly_patch.hh"
 #include "MOD_modifiertypes.hh"
@@ -90,6 +91,10 @@ static void free_arrays(EditPolyModifierData &emd)
   MEM_SAFE_DELETE(emd.patch_ints);
   MEM_SAFE_DELETE(emd.patch_floats);
   MEM_SAFE_DELETE(emd.sel_face_ids);
+  MEM_SAFE_DELETE(emd.attr_ints);
+  MEM_SAFE_DELETE(emd.attr_floats);
+  emd.attr_ints_num = 0;
+  emd.attr_floats_num = 0;
   emd.moves_num = 0;
   emd.patch_ints_num = 0;
   emd.patch_floats_num = 0;
@@ -140,6 +145,26 @@ static void store_selection(EditPolyModifierData &emd, const Span<int2> ids)
     emd.sel_face_ids[2 * i] = ids[i].x;
     emd.sel_face_ids[2 * i + 1] = ids[i].y;
   }
+}
+
+static Span<int> attr_ints(const EditPolyModifierData &emd)
+{
+  return emd.attr_ints ? Span<int>(emd.attr_ints, emd.attr_ints_num) : Span<int>();
+}
+
+static Span<float> attr_floats(const EditPolyModifierData &emd)
+{
+  return emd.attr_floats ? Span<float>(emd.attr_floats, emd.attr_floats_num) : Span<float>();
+}
+
+static void store_attrs(EditPolyModifierData &emd, const Span<int> ints, const Span<float> floats)
+{
+  MEM_SAFE_DELETE(emd.attr_ints);
+  MEM_SAFE_DELETE(emd.attr_floats);
+  emd.attr_ints = dup_array(ints.data(), ints.size());
+  emd.attr_floats = dup_array(floats.data(), floats.size());
+  emd.attr_ints_num = emd.attr_ints ? int(ints.size()) : 0;
+  emd.attr_floats_num = emd.attr_floats ? int(floats.size()) : 0;
 }
 
 static void store_patch(EditPolyModifierData &emd, const edit_poly::Patch &patch)
@@ -233,10 +258,32 @@ std::string session_commit(EditPolyModifierData &emd,
   Vector<KeptMove> kept_moves;
   Vector<StableID> input_vert_ids;
   Array<StableID> edited_face_ids;
-  const std::string error = patch_compute(
-      input, mesh, old_patch, patch, kept_moves, input_vert_ids, edited_face_ids);
+  Array<StableID> edited_vert_ids;
+  const std::string error = patch_compute(input,
+                                          mesh,
+                                          old_patch,
+                                          patch,
+                                          kept_moves,
+                                          input_vert_ids,
+                                          edited_face_ids,
+                                          edited_vert_ids);
   if (!error.empty()) {
     return error;
+  }
+
+  /* Element data (bevel weights, creases, sharp edges, seams, materials, flat shading). */
+  {
+    Vector<int> ints;
+    Vector<float> floats;
+    attrs_compute(input,
+                  mesh,
+                  edited_vert_ids,
+                  edited_face_ids,
+                  attr_ints(emd),
+                  attr_floats(emd),
+                  ints,
+                  floats);
+    store_attrs(emd, ints, floats);
   }
 
   /* Face selection: passed up the stack by ID, like the selection of an Edit Poly in 3ds Max. */
@@ -333,6 +380,14 @@ static void copy_data(const ModifierData *md, ModifierData *target, const int fl
   temd->patch_floats = dup_array(emd->patch_floats, emd->patch_floats_num);
   temd->ops_text = emd->ops_text ? BLI_strdup(emd->ops_text) : nullptr;
   temd->sel_face_ids = dup_array(emd->sel_face_ids, int64_t(emd->sel_faces_num) * 2);
+  temd->attr_ints = dup_array(emd->attr_ints, emd->attr_ints_num);
+  temd->attr_floats = dup_array(emd->attr_floats, emd->attr_floats_num);
+  if (!temd->attr_ints || !temd->attr_floats) {
+    MEM_SAFE_DELETE(temd->attr_ints);
+    MEM_SAFE_DELETE(temd->attr_floats);
+    temd->attr_ints_num = 0;
+    temd->attr_floats_num = 0;
+  }
   if (!temd->sel_face_ids) {
     temd->sel_faces_num = 0;
   }
@@ -357,7 +412,7 @@ static void free_data(ModifierData *md)
 static bool is_disabled(const Scene * /*scene*/, ModifierData *md, bool /*use_render_params*/)
 {
   const EditPolyModifierData *emd = reinterpret_cast<const EditPolyModifierData *>(md);
-  return emd->moves_num == 0 && emd->patch_ints_num == 0 &&
+  return emd->moves_num == 0 && emd->patch_ints_num == 0 && emd->attr_ints_num == 0 &&
          (emd->flag & MOD_EDITPOLY_HAS_SELECTION) == 0;
 }
 
@@ -464,7 +519,19 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     }
   }
 
-  /* 3. Face selection, for modifiers above that work on selected faces (e.g. UVW Map). */
+  /* 3. Element data (bevel weights, creases...). */
+  if (emd->attr_ints_num > 0) {
+    const int paused = edit_poly::attrs_apply(attr_ints(*emd), attr_floats(*emd), *result);
+    if (paused > 0) {
+      if (!warning.empty()) {
+        warning += "; ";
+      }
+      warning += std::to_string(paused) +
+                 " edited weight(s) / crease(s) paused (their elements are not in the mesh below)";
+    }
+  }
+
+  /* 4. Face selection, for modifiers above that work on selected faces (e.g. UVW Map). */
   if (emd->flag & MOD_EDITPOLY_HAS_SELECTION) {
     write_selection(*emd, *result);
   }
@@ -492,6 +559,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   layout.prop(ptr, "patch_removed_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "operations_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "selected_faces_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop(ptr, "attribute_edits_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   modifier_error_message_draw(layout, ptr);
 }
@@ -518,6 +586,12 @@ static void blend_write(BlendWriter *writer, const ID * /*id_owner*/, const Modi
   writer->write_string(emd->ops_text);
   if (emd->sel_faces_num > 0 && emd->sel_face_ids) {
     writer->write_int32_array(int64_t(emd->sel_faces_num) * 2, emd->sel_face_ids);
+  }
+  if (emd->attr_ints_num > 0 && emd->attr_ints) {
+    writer->write_int32_array(emd->attr_ints_num, emd->attr_ints);
+  }
+  if (emd->attr_floats_num > 0 && emd->attr_floats) {
+    writer->write_float_array(emd->attr_floats_num, emd->attr_floats);
   }
 }
 
@@ -549,6 +623,14 @@ static void blend_read(BlendDataReader *reader, ModifierData *md)
   if (sel_num != emd->sel_faces_num || !emd->sel_face_ids) {
     MEM_SAFE_DELETE(emd->sel_face_ids);
     emd->sel_faces_num = 0;
+  }
+  BLO_read_array_and_validate_size(reader, &emd->attr_ints, &emd->attr_ints_num);
+  BLO_read_array_and_validate_size(reader, &emd->attr_floats, &emd->attr_floats_num);
+  if (!emd->attr_ints || !emd->attr_floats) {
+    MEM_SAFE_DELETE(emd->attr_ints);
+    MEM_SAFE_DELETE(emd->attr_floats);
+    emd->attr_ints_num = 0;
+    emd->attr_floats_num = 0;
   }
 }
 

@@ -2218,12 +2218,17 @@ struct EditPolyModifierData {
   char *ops_text = nullptr;
   /** Face selection passed up the stack, stable face IDs, two ints per face. */
   int *sel_face_ids = nullptr;
+  /** Edited element data (bevel weights, creases...), see MOD_edit_poly_attrs.hh. */
+  int *attr_ints = nullptr;
+  float *attr_floats = nullptr;
   int moves_num = 0;
   int patch_ints_num = 0;
   int patch_floats_num = 0;
   int sel_faces_num = 0;
   /** #EditPolyModifierFlag. */
   int flag = 0;
+  int attr_ints_num = 0;
+  int attr_floats_num = 0;
   char _pad[4] = {};
 };
 

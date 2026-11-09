@@ -99,6 +99,7 @@ std::string patch_compute(const Mesh &input,
                           Patch &r_patch,
                           Vector<KeptMove> &r_moves,
                           Vector<StableID> &r_input_vert_ids,
-                          Array<StableID> &r_edited_face_ids);
+                          Array<StableID> &r_edited_face_ids,
+                          Array<StableID> &r_edited_vert_ids);
 
 }  // namespace blender::edit_poly

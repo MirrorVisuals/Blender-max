@@ -432,7 +432,8 @@ std::string patch_compute(const Mesh &input,
                           Patch &r_patch,
                           Vector<KeptMove> &r_moves,
                           Vector<StableID> &r_input_vert_ids,
-                          Array<StableID> &r_edited_face_ids)
+                          Array<StableID> &r_edited_face_ids,
+                          Array<StableID> &r_edited_vert_ids)
 {
   r_patch = {};
   r_moves.clear();
@@ -655,6 +656,7 @@ std::string patch_compute(const Mesh &input,
       r_patch.new_face_corner_verts.append(result_ids[corner_verts[corner]]);
     }
   }
+  r_edited_vert_ids = result_ids;
   return "";
 }
 
