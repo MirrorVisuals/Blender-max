@@ -191,7 +191,7 @@ for i in range(count):
     # Blender computes a Subdivision that is the last modifier in a slower, delayed way; a
     # do-nothing modifier at the end keeps both measurements doing the same Subdivision work.
     tail = o.modifiers.new("Tail", 'DISPLACE')
-    tail.strength = 0.0
+    tail.strength = 1e-6   # Not 0: Blender skips a Displace that does nothing.
     objects.append(o)
 build_ms = ms(t0)
 evaluate(objects)
