@@ -65,8 +65,8 @@ void ED_operatortypes_mesh()
   WM_operatortype_append(MESH_OT_screw);
 
   WM_operatortype_append(MESH_OT_extrude_region);
-  WM_operatortype_append(MESH_OT_extrude_solid_prepare);
-  WM_operatortype_append(MESH_OT_extrude_solid_resolve);
+  WM_operatortype_append(MESH_OT_extrude_manifold_region);
+  WM_operatortype_append(MESH_OT_extrude_manifold_resolve);
   WM_operatortype_append(MESH_OT_extrude_context);
   WM_operatortype_append(MESH_OT_extrude_faces_indiv);
   WM_operatortype_append(MESH_OT_extrude_edges_indiv);
@@ -271,31 +271,22 @@ void ED_operatormacros_mesh()
   RNA_boolean_set(otmacro->ptr, "use_proportional_edit", false);
   RNA_boolean_set(otmacro->ptr, "mirror", false);
 
+  /* On a closed mesh the extrude is solid (cuts when pushed in, adds when pulled out, as in
+   * 3ds Max); otherwise it dissolves flat side edges and merges and splits where it lands. The
+   * merge and split is done by the last step, after the move. */
   ot = WM_operatortype_append_macro(
       "MESH_OT_extrude_manifold",
       "Extrude Manifold",
-      "Extrude, dissolves edges whose faces form a flat surface and intersect new edges",
+      "Extrude. On a closed mesh, pushing faces in cuts away the volume they pass through "
+      "(opening a hole when they go through) and pulling them out adds it. On an open mesh, "
+      "dissolves edges whose faces form a flat surface and intersects new edges",
       OPTYPE_UNDO | OPTYPE_REGISTER);
-  otmacro = WM_operatortype_macro_define(ot, "MESH_OT_extrude_region");
-  RNA_boolean_set(otmacro->ptr, "use_dissolve_ortho_edges", true);
-  otmacro = WM_operatortype_macro_define(ot, "TRANSFORM_OT_translate");
-  RNA_boolean_set(otmacro->ptr, "use_proportional_edit", false);
-  RNA_boolean_set(otmacro->ptr, "mirror", false);
-  RNA_boolean_set(otmacro->ptr, "use_automerge_and_split", true);
-
-  ot = WM_operatortype_append_macro(
-      "MESH_OT_extrude_solid",
-      "Extrude Solid",
-      "Extrude as a solid, as in 3ds Max: pushing faces in cuts the volume they pass through "
-      "(through the mesh it opens a hole), pulling them out adds it and merges with the mesh",
-      OPTYPE_UNDO | OPTYPE_REGISTER);
-  WM_operatortype_macro_define(ot, "MESH_OT_extrude_solid_prepare");
-  otmacro = WM_operatortype_macro_define(ot, "MESH_OT_extrude_region");
+  otmacro = WM_operatortype_macro_define(ot, "MESH_OT_extrude_manifold_region");
   otmacro = WM_operatortype_macro_define(ot, "TRANSFORM_OT_translate");
   RNA_boolean_set(otmacro->ptr, "use_proportional_edit", false);
   RNA_boolean_set(otmacro->ptr, "mirror", false);
   RNA_boolean_set(otmacro->ptr, "use_automerge_and_split", false);
-  WM_operatortype_macro_define(ot, "MESH_OT_extrude_solid_resolve");
+  WM_operatortype_macro_define(ot, "MESH_OT_extrude_manifold_resolve");
 
   ot = WM_operatortype_append_macro("MESH_OT_extrude_context_move",
                                     "Extrude Region and Move",

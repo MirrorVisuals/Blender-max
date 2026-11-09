@@ -355,10 +355,12 @@ void MESH_OT_extrude_repeat(wmOperatorType *ot)
  * \{ */
 
 /** Implement generic externally called extrude function. */
-static bool edbm_extrude_mesh(Object *obedit, BMEditMesh *em, wmOperator *op)
+bool edbm_extrude_mesh_ex(Object *obedit,
+                          BMEditMesh *em,
+                          wmOperator *op,
+                          const bool use_normal_flip,
+                          const bool use_dissolve_ortho_edges)
 {
-  const bool use_normal_flip = RNA_boolean_get(op->ptr, "use_normal_flip");
-  const bool use_dissolve_ortho_edges = RNA_boolean_get(op->ptr, "use_dissolve_ortho_edges");
   const char htype = edbm_extrude_htype_from_em_select(em);
   enum { NONE = 0, ELEM_FLAG, VERT_ONLY, EDGE_ONLY } nr;
   bool changed = false;
@@ -424,6 +426,15 @@ static bool edbm_extrude_mesh(Object *obedit, BMEditMesh *em, wmOperator *op)
 
   BKE_report(op->reports, RPT_ERROR, "Not a valid selection for extrude");
   return false;
+}
+
+static bool edbm_extrude_mesh(Object *obedit, BMEditMesh *em, wmOperator *op)
+{
+  return edbm_extrude_mesh_ex(obedit,
+                              em,
+                              op,
+                              RNA_boolean_get(op->ptr, "use_normal_flip"),
+                              RNA_boolean_get(op->ptr, "use_dissolve_ortho_edges"));
 }
 
 /* extrude without transform */

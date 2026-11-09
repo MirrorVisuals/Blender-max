@@ -7787,25 +7787,7 @@ def km_3d_view_tool_edit_mesh_extrude_manifold(params):
         {"items": [
             ("mesh.extrude_manifold", {**params.tool_maybe_tweak_event, **params.tool_modifier},
              {"properties": [
-                 ("MESH_OT_extrude_region", [("use_dissolve_ortho_edges", True)]),
-                 ("TRANSFORM_OT_translate", [
-                     ("release_confirm", True),
-                     ("use_automerge_and_split", True),
-                     ("constraint_axis", (False, False, True)),
-                     ("orient_type", 'NORMAL'),
-                 ]),
-             ]}),
-        ]},
-    )
-
-
-def km_3d_view_tool_edit_mesh_extrude_solid(params):
-    return (
-        "3D View Tool: Edit Mesh, Extrude Solid",
-        {"space_type": 'VIEW_3D', "region_type": 'WINDOW'},
-        {"items": [
-            ("mesh.extrude_solid", {**params.tool_maybe_tweak_event, **params.tool_modifier},
-             {"properties": [
+                 # Dissolving, and merging and splitting, are done by the extrude's own steps.
                  ("TRANSFORM_OT_translate", [
                      ("release_confirm", True),
                      ("constraint_axis", (False, False, True)),
@@ -9195,7 +9177,6 @@ def generate_keymaps(params=None):
         km_3d_view_tool_edit_armature_extrude_to_cursor(params),
         km_3d_view_tool_edit_mesh_extrude_region(params),
         km_3d_view_tool_edit_mesh_extrude_manifold(params),
-        km_3d_view_tool_edit_mesh_extrude_solid(params),
         km_3d_view_tool_edit_mesh_extrude_along_normals(params),
         km_3d_view_tool_edit_mesh_extrude_individual(params),
         km_3d_view_tool_edit_mesh_extrude_to_cursor(params),

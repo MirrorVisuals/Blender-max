@@ -120,9 +120,6 @@ class VIEW3D_OT_edit_mesh_extrude_move(Operator):
             elif dissolve_and_intersect:
                 bpy.ops.mesh.extrude_manifold(
                     'INVOKE_REGION_WIN',
-                    MESH_OT_extrude_region={
-                        "use_dissolve_ortho_edges": True,
-                    },
                     TRANSFORM_OT_translate={
                         "orient_type": 'NORMAL',
                         "constraint_axis": (False, False, True),
@@ -201,38 +198,6 @@ class VIEW3D_OT_edit_mesh_extrude_manifold_normal(Operator):
         if object_report_if_active_shape_key_is_locked(context.object, self):
             return {'CANCELLED'}
         bpy.ops.mesh.extrude_manifold(
-            'INVOKE_REGION_WIN',
-            MESH_OT_extrude_region={
-                "use_dissolve_ortho_edges": True,
-            },
-            TRANSFORM_OT_translate={
-                "orient_type": 'NORMAL',
-                "constraint_axis": (False, False, True),
-                "release_confirm": False,
-            },
-        )
-        return {'FINISHED'}
-
-    def invoke(self, context, _event):
-        return self.execute(context)
-
-
-class VIEW3D_OT_edit_mesh_extrude_solid_normal(Operator):
-    """Extrude as a solid along normals, as in 3ds Max: pushing in cuts (and opens a hole """ \
-        """when it goes through), pulling out adds and merges"""
-    bl_label = "Extrude Solid Along Normals"
-    bl_idname = "view3d.edit_mesh_extrude_solid_normal"
-
-    @classmethod
-    def poll(cls, context):
-        return context.mode == 'EDIT_MESH'
-
-    def execute(self, context):
-        from bpy_extras.object_utils import object_report_if_active_shape_key_is_locked
-
-        if object_report_if_active_shape_key_is_locked(context.object, self):
-            return {'CANCELLED'}
-        bpy.ops.mesh.extrude_solid(
             'INVOKE_REGION_WIN',
             TRANSFORM_OT_translate={
                 "orient_type": 'NORMAL',
@@ -338,7 +303,6 @@ classes = (
     VIEW3D_OT_edit_mesh_extrude_move,
     VIEW3D_OT_edit_mesh_extrude_shrink_fatten,
     VIEW3D_OT_edit_mesh_extrude_manifold_normal,
-    VIEW3D_OT_edit_mesh_extrude_solid_normal,
     VIEW3D_OT_transform_gizmo_set,
     VIEW3D_FH_camera_background_image,
     VIEW3D_FH_empty_image,

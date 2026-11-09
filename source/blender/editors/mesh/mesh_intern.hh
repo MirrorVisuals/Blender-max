@@ -153,10 +153,20 @@ void MESH_OT_flatten(wmOperatorType *ot);
 void MESH_OT_extrude_repeat(wmOperatorType *ot);
 void MESH_OT_extrude_region(wmOperatorType *ot);
 
+/**
+ * Extrude the selection of one object (region, edges or vertices, from the select mode).
+ * Reports to `op` when the selection can't be extruded.
+ */
+bool edbm_extrude_mesh_ex(Object *obedit,
+                          BMEditMesh *em,
+                          wmOperator *op,
+                          bool use_normal_flip,
+                          bool use_dissolve_ortho_edges);
+
 /* `editmesh_extrude_solid.cc` */
 
-void MESH_OT_extrude_solid_prepare(wmOperatorType *ot);
-void MESH_OT_extrude_solid_resolve(wmOperatorType *ot);
+void MESH_OT_extrude_manifold_region(wmOperatorType *ot);
+void MESH_OT_extrude_manifold_resolve(wmOperatorType *ot);
 void MESH_OT_extrude_context(wmOperatorType *ot);
 void MESH_OT_extrude_verts_indiv(wmOperatorType *ot);
 void MESH_OT_extrude_edges_indiv(wmOperatorType *ot);

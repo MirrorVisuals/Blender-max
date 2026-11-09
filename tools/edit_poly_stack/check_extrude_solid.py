@@ -1,5 +1,7 @@
-# Extrude Solid check: pushing faces in cuts the volume they sweep (clean walls, a hole when it
-# goes through), pulling out adds it, and an open mesh keeps the normal extrude.
+# Extrude Manifold (solid) check: on a closed mesh, pushing faces in cuts the volume they sweep
+# (clean walls, a hole when it goes through) and pulling out adds it; an open mesh, or Solid
+# turned off, extrudes as Blender's Extrude Manifold always did; other parts of the mesh are
+# left alone.
 # Run with CHECK_EXTRUDE_SOLID.bat (Blender in background mode).
 import bmesh
 import bpy
@@ -43,7 +45,7 @@ def grid_plane(bm):
     bmesh.ops.create_grid(bm, x_segments=4, y_segments=4, size=1.0)
 
 
-def run(name, build, pick, move):
+def run(name, build, pick, move, solid=True):
     ob = make_object(name, build)
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_mode(type='FACE')
@@ -57,7 +59,8 @@ def run(name, build, pick, move):
     bmesh.update_edit_mesh(ob.data)
     picked = sum(1 for f in bm.faces if f.select)
     faces_before = len(bm.faces)
-    bpy.ops.mesh.extrude_solid(TRANSFORM_OT_translate={"value": move})
+    bpy.ops.mesh.extrude_manifold(MESH_OT_extrude_manifold_region={"use_solid": solid},
+                                  TRANSFORM_OT_translate={"value": move})
     bm = bmesh.from_edit_mesh(ob.data)
     selected = [f for f in bm.faces if f.select]
     # Faces pointing the wrong way: compare with a copy whose directions are recalculated.
@@ -121,6 +124,29 @@ solid_case("Side face through the whole cube", side, (-2.5, 0, 0), 8 - cell * ce
 print("Pulling out")
 solid_case("Side face out", side, (1.0, 0, 0), 8 + cell * cell)
 solid_case("Corner face up", corner, (0, 0, 1.0), 8 + cell * cell)
+
+print("Solid turned off")
+r = run("Corner face down one row, not solid", grid_cube, corner, (0, 0, -cell), solid=False)
+check(r['faces'] != 54, f"the old Extrude Manifold result ({r['faces']} faces, not the solid 54)")
+
+print("Other parts of the mesh")
+def cube_and_far_cube(bm):
+    grid_cube(bm)
+    far = bmesh.new()
+    grid_cube(far)
+    bmesh.ops.translate(far, verts=far.verts[:], vec=(10, 0, 0))
+    me = bpy.data.meshes.new("far")
+    far.to_mesh(me)
+    far.free()
+    bm.from_mesh(me)
+    bpy.data.meshes.remove(me)
+r = run("Corner pushed, with a second cube in the mesh", cube_and_far_cube,
+        lambda f: corner(f) and center(f).x < 5, (0, 0, -cell))
+check(r['open_edges'] == 0, f"the result is closed (open edges: {r['open_edges']})")
+check(abs(r['volume'] - (8 - cell ** 3 + 8)) < 1e-3,
+      f"volume {r['volume']:.4f} (expected {8 - cell ** 3 + 8:.4f}: the cut, and the other cube whole)")
+check(r['faces'] == 54 + 54, f"{r['faces']} faces (expected 54 + 54: the other cube is unchanged)")
+check(r['wrong_way'] == 0, f"every face points outward ({r['wrong_way']} inward)")
 
 print("Open mesh")
 r = run("Plane pushed down", grid_plane, 'NEAREST_CENTER', (0, 0, -0.5))

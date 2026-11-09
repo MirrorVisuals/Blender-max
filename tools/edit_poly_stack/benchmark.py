@@ -216,9 +216,9 @@ single(f"{count} objects: Subdivision only", faces, plain)
 rows.append((f"{count} objects: cost of our modifiers", faces, first, max(first - plain, 0.0)))
 print(f"  {count} objects: cost of our modifiers             {max(first - plain, 0.0):9.1f} ms")
 
-# 8. Extrude Solid (edit mode), against Blender's normal extrude ----------------------------------
+# 8. Extrude Manifold (solid, edit mode), against Blender's normal extrude ----------------------------------
 # Each case is built fresh, the extrude is timed (both run the same extrude and move; Extrude
-# Solid adds the Boolean on top), the median of 3 runs is reported.
+# Manifold adds the solid Boolean on top), the median of 3 runs is reported.
 def solid_box(bm, cuts):
     """A 2 x 2 x 2 box cut into (cuts + 1)^3 cells: 6 (cuts + 1)^2 faces."""
     geom = bmesh.ops.create_cube(bm, size=2.0)
@@ -248,7 +248,7 @@ def extrude_case(build, pick, move, solid, repeats=3):
         faces = len(bm.faces)
         t0 = time.perf_counter()
         if solid:
-            bpy.ops.mesh.extrude_solid(TRANSFORM_OT_translate={"value": move})
+            bpy.ops.mesh.extrude_manifold(TRANSFORM_OT_translate={"value": move})
         else:
             bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": move})
         times.append(ms(t0))
@@ -259,7 +259,7 @@ def extrude_pair(label, build, pick, move):
     n, t_normal = extrude_case(build, pick, move, False)
     _n, t_solid = extrude_case(build, pick, move, True)
     rows.append((f"{label} (normal extrude)", n, t_normal, None))
-    rows.append((f"{label} (Extrude Solid)", n, t_solid, max(t_solid - t_normal, 0.0)))
+    rows.append((f"{label} (Extrude Manifold)", n, t_solid, max(t_solid - t_normal, 0.0)))
     print(f"  {label:<46} {n:>9,} faces  normal {t_normal:8.1f} ms   solid {t_solid:8.1f} ms"
           f"   cost {max(t_solid - t_normal, 0.0):8.1f} ms")
 
@@ -282,7 +282,7 @@ def side_center(cuts):
                       abs(f.calc_center_median().z) < cell / 2)
 
 print()
-print("  Extrude Solid (edit mode): time of the whole extrude; cost = time added to a normal extrude")
+print("  Extrude Manifold, solid (edit mode): whole extrude; cost = time added to a normal extrude")
 for target in (1500, 10000, 50000, 200000):
     c = cuts_for(target)
     cell = 2.0 / (c + 1)
