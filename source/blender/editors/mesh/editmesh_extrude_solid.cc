@@ -114,55 +114,67 @@ static void orig_co_layer_free(BMesh *bm)
   }
 }
 
-/** Tag (#BM_ELEM_TAG) every vertex, edge and face connected to `faces` by vertices. */
-static void tag_connected(BMesh *bm, const Span<BMFace *> faces)
+/** The vertices, edges and faces of a connected part of the mesh. */
+struct Part {
+  Vector<BMVert *> verts;
+  Vector<BMEdge *> edges;
+  Vector<BMFace *> faces;
+};
+
+/**
+ * Tag (#BM_ELEM_TAG) every vertex, edge and face connected to `faces` by vertices, and return
+ * them.
+ */
+static Part tag_connected(BMesh *bm, const Span<BMFace *> faces)
 {
   BM_mesh_elem_hflag_disable_all(bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_TAG, false);
-  Vector<BMVert *> stack;
+  Part part;
   for (BMFace *f : faces) {
     BMLoop *l_iter, *l_first;
     l_iter = l_first = BM_FACE_FIRST_LOOP(f);
     do {
       if (!BM_elem_flag_test(l_iter->v, BM_ELEM_TAG)) {
         BM_elem_flag_enable(l_iter->v, BM_ELEM_TAG);
-        stack.append(l_iter->v);
+        part.verts.append(l_iter->v);
       }
     } while ((l_iter = l_iter->next) != l_first);
   }
-  while (!stack.is_empty()) {
-    BMVert *v = stack.pop_last();
+  for (int i = 0; i < part.verts.size(); i++) {
+    BMVert *v = part.verts[i];
     BMIter iter;
     BMEdge *e;
     BM_ITER_ELEM (e, &iter, v, BM_EDGES_OF_VERT) {
-      BM_elem_flag_enable(e, BM_ELEM_TAG);
+      if (!BM_elem_flag_test(e, BM_ELEM_TAG)) {
+        BM_elem_flag_enable(e, BM_ELEM_TAG);
+        part.edges.append(e);
+      }
       BMVert *v_other = BM_edge_other_vert(e, v);
       if (!BM_elem_flag_test(v_other, BM_ELEM_TAG)) {
         BM_elem_flag_enable(v_other, BM_ELEM_TAG);
-        stack.append(v_other);
+        part.verts.append(v_other);
       }
     }
     BMFace *f;
     BM_ITER_ELEM (f, &iter, v, BM_FACES_OF_VERT) {
-      BM_elem_flag_enable(f, BM_ELEM_TAG);
+      if (!BM_elem_flag_test(f, BM_ELEM_TAG)) {
+        BM_elem_flag_enable(f, BM_ELEM_TAG);
+        part.faces.append(f);
+      }
     }
   }
+  return part;
 }
 
-/** True when the tagged part is a closed surface that can be treated as a solid. */
-static bool tagged_part_is_closed(BMesh *bm)
+/** True when the part is a closed surface that can be treated as a solid. */
+static bool part_is_closed(const Part &part)
 {
-  BMIter iter;
-  BMEdge *e;
-  BM_ITER_MESH (e, &iter, bm, BM_EDGES_OF_MESH) {
-    if (BM_elem_flag_test(e, BM_ELEM_TAG) &&
-        (BM_elem_flag_test(e, BM_ELEM_HIDDEN) || !BM_edge_is_manifold(e)))
-    {
+  for (BMEdge *e : part.edges) {
+    if (BM_elem_flag_test(e, BM_ELEM_HIDDEN) || !BM_edge_is_manifold(e)) {
       return false;
     }
   }
-  BMFace *f;
-  BM_ITER_MESH (f, &iter, bm, BM_FACES_OF_MESH) {
-    if (BM_elem_flag_test(f, BM_ELEM_TAG) && BM_elem_flag_test(f, BM_ELEM_HIDDEN)) {
+  for (BMFace *f : part.faces) {
+    if (BM_elem_flag_test(f, BM_ELEM_HIDDEN)) {
       return false;
     }
   }
@@ -293,8 +305,7 @@ static bool selection_is_closed_solid(BMesh *bm)
   if (faces.is_empty()) {
     return false;
   }
-  tag_connected(bm, faces);
-  const bool closed = tagged_part_is_closed(bm);
+  const bool closed = part_is_closed(tag_connected(bm, faces));
   BM_mesh_elem_hflag_disable_all(bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_TAG, false);
   return closed;
 }
@@ -569,8 +580,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   return SolidResult::NoSolver;
 #else
 
-  tag_connected(bm, caps);
-  if (!tagged_part_is_closed(bm)) {
+  if (!part_is_closed(tag_connected(bm, caps))) {
     return SolidResult::Open;
   }
   timer.mark("closed check");
@@ -687,7 +697,10 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   timer.mark("rebuild");
   /* Copy the edited part into its own mesh: the Boolean then only works on that part, however
    * big the rest of the mesh is. */
-  tag_connected(bm, caps);
+  const Part edited = tag_connected(bm, caps);
+  /* The part is the whole mesh (one piece): the result replaces the mesh, instead of the part
+   * being removed element by element. */
+  const bool whole_mesh = edited.verts.size() == bm->totvert && edited.faces.size() == bm->totface;
   BMeshCreateParams create_params{};
   create_params.use_toolflags = true;
   BMesh *part = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
@@ -696,14 +709,10 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   {
     CopyMaps to_part(*bm, *part);
     Set<BMFace *> caps_set(caps);
-    BMIter iter;
-    BMFace *f;
-    BM_ITER_MESH (f, &iter, bm, BM_FACES_OF_MESH) {
-      if (BM_elem_flag_test(f, BM_ELEM_TAG)) {
-        BMFace *f_new = copy_face(part, to_part, f);
-        if (caps_set.contains(f)) {
-          caps_part.append(f_new);
-        }
+    for (BMFace *f : edited.faces) {
+      BMFace *f_new = copy_face(part, to_part, f);
+      if (caps_set.contains(f)) {
+        caps_part.append(f_new);
       }
     }
     Map<BMVert *, float3> moved_part;
@@ -715,16 +724,8 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   timer.mark("copy out");
   /* Remove the part from the mesh; the result is put back at the end. */
   BM_select_history_clear(bm);
-  {
-    Vector<BMVert *> part_verts;
-    BMIter iter;
-    BMVert *v;
-    BM_ITER_MESH (v, &iter, bm, BM_VERTS_OF_MESH) {
-      if (BM_elem_flag_test(v, BM_ELEM_TAG)) {
-        part_verts.append(v);
-      }
-    }
-    for (BMVert *v_kill : part_verts) {
+  if (!whole_mesh) {
+    for (BMVert *v_kill : edited.verts) {
       BM_vert_kill(bm, v_kill);
     }
   }
@@ -819,16 +820,33 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
 
   const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
   timer.mark("swept solid");
-  bool done = solid_boolean_manifold(bm, part, cutter_bm, push_in, timer);
+  /* Where the result goes: the mesh, or a new mesh with the same layout that replaces it. */
+  BMesh *target = bm;
+  if (whole_mesh) {
+    BMeshCreateParams target_params{};
+    target_params.use_toolflags = bm->use_toolflags;
+    target = BM_mesh_create(&bm_mesh_allocsize_default, &target_params);
+    BM_mesh_copy_init_customdata(target, bm, &bm_mesh_allocsize_default);
+  }
+  bool done = solid_boolean_manifold(target, part, cutter_bm, push_in, timer);
   if (!done) {
     /* The fast solver could not do it (e.g. the swept solid crosses itself): use the exact one. */
     solid_boolean_exact(part, cutter_bm, push_in);
     timer.mark("exact boolean");
-    copy_all_faces(bm, part);
+    copy_all_faces(target, part);
     timer.mark("copy back");
   }
   BM_mesh_free(cutter_bm);
   BM_mesh_free(part);
+  if (whole_mesh) {
+    /* Swap the contents, keeping what belongs to the edit-mesh itself. */
+    std::swap(*bm, *target);
+    std::swap(bm->py_handle, target->py_handle);
+    bm->selectmode = target->selectmode;
+    bm->shapenr = target->shapenr;
+    bm->spacearr_dirty = BM_SPACEARR_DIRTY_ALL;
+    BM_mesh_free(target);
+  }
   timer.mark("free");
   BM_mesh_elem_hflag_disable_all(bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_TAG, false);
   return SolidResult::Done;
@@ -854,7 +872,8 @@ static wmOperatorStatus edbm_extrude_manifold_resolve_exec(bContext *C, wmOperat
     orig_co_layer_free(em->bm);
     any_open |= result == SolidResult::Open;
     no_solver |= result == SolidResult::NoSolver;
-    if (result == SolidResult::Done) {
+    if (result == SolidResult::Done && em->selectmode != SCE_SELECT_FACE) {
+      /* In face select mode the selection set on the faces is already complete. */
       EDBM_selectmode_flush(em);
     }
     else if (!is_solid && use_automerge_and_split && em->bm->totvertsel != 0) {
