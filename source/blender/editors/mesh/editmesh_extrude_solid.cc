@@ -417,6 +417,8 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
   /* Outward normals for the solid. */
   BM_mesh_elem_hflag_disable_all(bm, BM_FACE, BM_ELEM_TAG, false);
   for (BMFace *f : cutter_faces) {
+    /* New faces have no normal yet; recalculating the directions needs one. */
+    BM_face_normal_update(f);
     BM_elem_flag_enable(f, BM_ELEM_TAG);
   }
   BMO_op_callf(bm, BMO_FLAG_DEFAULTS, "recalc_face_normals faces=%hf", BM_ELEM_TAG);
@@ -444,6 +446,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
   }
 
   const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
+  BM_mesh_normals_update(bm);
   BKE_editmesh_looptris_calc(em);
   BooleanShapes shapes{&cutter};
   BM_mesh_boolean(bm,
