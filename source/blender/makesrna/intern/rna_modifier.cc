@@ -1184,7 +1184,7 @@ static const EnumPropertyItem *rna_UVWMapModifier_material_slot_itemf(bContext *
                                                                        bool *r_free)
 {
   static char identifiers[64][16];
-  static char empty_names[64][16];
+  static char names[64][80];
   Object *ob = reinterpret_cast<Object *>(ptr->owner_id);
   EnumPropertyItem *item = nullptr, tmp_item = {0};
   int totitem = 0;
@@ -1192,12 +1192,11 @@ static const EnumPropertyItem *rna_UVWMapModifier_material_slot_itemf(bContext *
   for (int i = 0; i < slots; i++) {
     SNPRINTF(identifiers[i], "SLOT_%d", i + 1);
     const Material *ma = ob ? BKE_object_material_get(ob, short(i + 1)) : nullptr;
-    if (ma == nullptr) {
-      SNPRINTF(empty_names[i], "%d: (empty)", i + 1);
-    }
+    /* Slot number first, as the material ID in 3ds Max. */
+    SNPRINTF(names[i], "%d: %s", i + 1, ma ? ma->id.name + 2 : "(empty)");
     tmp_item.value = i;
     tmp_item.identifier = identifiers[i];
-    tmp_item.name = ma ? ma->id.name + 2 : empty_names[i];
+    tmp_item.name = names[i];
     RNA_enum_item_add(&item, &totitem, &tmp_item);
   }
   RNA_enum_item_end(&item, &totitem);

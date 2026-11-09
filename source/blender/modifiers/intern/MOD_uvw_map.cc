@@ -456,19 +456,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
     row_mat.prop(ptr, "use_material", UI_ITEM_NONE, "", ICON_NONE);
     ui::Layout &sub = row_mat.row(true);
     sub.active_set(RNA_boolean_get(ptr, "use_material"));
-    sub.prop(ptr, "material_id", UI_ITEM_NONE, IFACE_("ID"), ICON_NONE);
-    /* Name of the material in that slot, as a hint. */
-    if (RNA_boolean_get(ptr, "use_material")) {
-      const Object *ob = static_cast<const Object *>(ob_ptr.data);
-      const int id = RNA_int_get(ptr, "material_id");
-      const Material *ma = (ob && id <= ob->totcol) ?
-                               BKE_object_material_get(const_cast<Object *>(ob), short(id)) :
-                               nullptr;
-      layout.label(ma ? ma->id.name + 2 :
-                        (ob && id > ob->totcol ? IFACE_("No material slot with this ID") :
-                                                 IFACE_("Empty slot")),
-                   ICON_MATERIAL);
-    }
+    sub.prop(ptr, "material_slot", UI_ITEM_NONE, "", ICON_NONE);
   }
 
   layout.prop(ptr, "size_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
