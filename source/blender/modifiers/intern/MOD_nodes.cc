@@ -1777,10 +1777,16 @@ class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
     }
   }
 
-  void execute(const int id, bke::GeometrySet &geometry, std::string &r_warning) const override
+  void execute(const int id,
+               bke::GeometrySet &geometry,
+               std::string &r_warning,
+               bool &r_has_selection) const override
   {
+    r_has_selection = false;
     if (id == session_id_) {
+      /* The mesh being edited, with its selection in Edit Mode. */
       geometry = session_input_;
+      r_has_selection = true;
       return;
     }
     edit_poly_node::Registry &reg = edit_poly_node::registry();
@@ -1798,7 +1804,7 @@ class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
     Mesh *result = mesh;
     const NodesModifierEditPoly *item = nmd_.find_edit_poly(id);
     if (item && item->data) {
-      result = edit_poly::apply(*item->data, mesh, r_warning);
+      result = edit_poly::apply(*item->data, mesh, r_warning, &r_has_selection);
       if (result != mesh) {
         geometry.replace_mesh(result);
       }

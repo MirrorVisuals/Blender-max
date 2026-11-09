@@ -237,6 +237,39 @@ tab()
 check(grid_ob.mode == 'EDIT', "after Reset the node can be edited at the new size")
 tab()
 
+print("Selected edges drive a Bevel node")
+bevel_tree = bpy.data.node_groups.new("Bevel Tree", 'GeometryNodeTree')
+bevel_tree.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+bevel_tree.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+b_in = bevel_tree.nodes.new('NodeGroupInput')
+b_edit = bevel_tree.nodes.new('GeometryNodeEditPoly')
+b_bevel = bevel_tree.nodes.new('GeometryNodeMeshBevel')
+b_out = bevel_tree.nodes.new('NodeGroupOutput')
+bevel_tree.links.new(b_in.outputs[0], b_edit.inputs[0])
+bevel_tree.links.new(b_edit.outputs["Geometry"], b_bevel.inputs["Mesh"])
+bevel_tree.links.new(b_edit.outputs["Selected Edges"], b_bevel.inputs["Selection"])
+bevel_tree.links.new(b_bevel.outputs["Mesh"], b_out.inputs[0])
+bpy.ops.mesh.primitive_cube_add(location=(0.0, -6.0, 0.0))
+bevel_ob = bpy.context.active_object
+add_nodes_modifier(bevel_ob, bevel_tree)
+check(evaluated(bevel_ob)["verts"] == 8, "nothing selected yet: the Bevel node bevels nothing")
+tab()
+bm = bmesh.from_edit_mesh(bevel_ob.data)
+bm.select_mode = {'EDGE'}
+for v in bm.verts:
+    v.select_set(False)
+for e in bm.edges:
+    e.select_set(False)
+edge = next(e for e in bm.edges if all(v.co.z > 0.5 and v.co.x > 0.5 for v in e.verts))
+edge.select_set(True)
+bm.select_flush_mode()
+bm.normal_update()
+bmesh.update_edit_mesh(bevel_ob.data)
+tab()
+info = evaluated(bevel_ob)
+check(info["verts"] == 10 and info["faces"] == 7,
+      f"one edge selected in the node: only it is bevelled ({info['verts']} points, {info['faces']} faces)")
+
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
 for f in failures:

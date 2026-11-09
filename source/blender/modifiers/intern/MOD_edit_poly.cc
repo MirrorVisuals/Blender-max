@@ -610,10 +610,16 @@ static void write_selection(const EditPolyModifierData &emd,
 
 namespace edit_poly {
 
-Mesh *apply(const EditPolyModifierData &emd_ref, Mesh *mesh, std::string &warning)
+Mesh *apply(const EditPolyModifierData &emd_ref,
+            Mesh *mesh,
+            std::string &warning,
+            bool *r_selection_written)
 {
   using namespace bke::stable_id;
   const EditPolyModifierData *emd = &emd_ref;
+  if (r_selection_written) {
+    *r_selection_written = false;
+  }
 
   if (const std::string reason = index_ids_changed(*emd, *mesh); !reason.empty()) {
     warning = "Edits paused: " + reason;
@@ -719,6 +725,9 @@ Mesh *apply(const EditPolyModifierData &emd_ref, Mesh *mesh, std::string &warnin
   /* 4. Face selection, for modifiers above that work on selected faces (e.g. UVW Map). */
   if (emd->flag & MOD_EDITPOLY_HAS_SELECTION) {
     write_selection(*emd, *result, vert_ids, face_ids);
+    if (r_selection_written) {
+      *r_selection_written = true;
+    }
   }
 
   return result;

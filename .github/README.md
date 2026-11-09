@@ -55,6 +55,10 @@ below possible.
   baked data), so objects sharing a node group keep their own edits.
 - **Panel.** The Geometry Nodes modifier lists its Edit Poly nodes with what is stored, an
   Edit button and Reset.
+- **Selection outputs.** Selected Points / Edges / Faces pass the node's selection on, e.g.
+  Selected Edges into a Bevel node's Selection bevels only those edges (live while editing).
+- **Tab in the node editor** edits the active Edit Poly node; on other nodes it enters groups
+  as before.
 - **Mute to switch off.** M on the node turns its edits off (they are kept); Tab skips muted
   nodes.
 

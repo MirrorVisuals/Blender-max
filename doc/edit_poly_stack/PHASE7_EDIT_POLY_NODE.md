@@ -50,6 +50,14 @@ level cannot be edited until the numbers match again or its edits are reset. Thi
 Edit Poly modifiers. A node that changes the order of elements without changing their number is not
 detected. `tools/edit_poly_stack/benchmark_node_edit_poly.py` reports what happens in typical setups.
 
+## Selection outputs
+
+Selected Points, Selected Edges and Selected Faces output the selection stored when the node was
+last edited (the live Edit Mode selection while it is edited), like an Edit Poly level passes its
+selection up the stack. For example Selected Edges into the Selection of a Bevel node bevels only
+the edges selected in the node. Without stored edits, or while the edits are paused, nothing is
+selected.
+
 ## Sessions
 
 1. The node is asked to keep a copy of the mesh that arrives at it and of its result (capture), and

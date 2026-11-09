@@ -185,13 +185,15 @@ def _signature(op):
 
 
 @persistent
-def _edit_poly_depsgraph_update(_scene, _depsgraph):
+def _edit_poly_depsgraph_update(_scene, depsgraph):
     try:
         ob = bpy.context.view_layer.objects.active
     except Exception:
         return
     if ob is None or ob.mode != 'EDIT' or KEY_MESH not in ob:
         return
+    if KEY_NODE in ob:
+        _node_session_selection_update(ob, depsgraph)
     cap = _capture.get(ob.name)
     if cap is None or not cap["enabled"]:
         return
@@ -215,6 +217,17 @@ def _edit_poly_depsgraph_update(_scene, _depsgraph):
             cap["by_ptr"][ptr] = entry
     if not _modal_running():
         _snapshot(ob, cap)
+
+
+def _node_session_selection_update(ob, depsgraph):
+    """While an Edit Poly node is edited, its selection outputs show the Edit Mode selection.
+    Selecting only redraws, so ask for the node tree to run again when the mesh changed without
+    a geometry update (a selection change)."""
+    for update in depsgraph.updates:
+        if update.id.original == ob.data:
+            if not update.is_updated_geometry:
+                ob.data.update_tag()
+            return
 
 
 def _start_capture(ob):
@@ -457,6 +470,22 @@ def commit_session(context, ob):
     return None
 
 
+def _node_editor_edit_poly_active(context, ob):
+    """The node editor shows the active Geometry Nodes modifier of `ob`, at its top level, and its
+    active node is an Edit Poly node."""
+    space = context.space_data
+    if ob is None or ob.type != 'MESH' or getattr(space, "type", None) != 'NODE_EDITOR':
+        return False
+    mod = ob.modifiers.active
+    if mod is None or mod.type != 'NODES' or mod.node_group is None:
+        return False
+    tree = space.edit_tree
+    if tree is None or tree != mod.node_group or space.node_tree != mod.node_group:
+        return False
+    node = tree.nodes.active
+    return node is not None and node.bl_idname == 'GeometryNodeEditPoly' and not node.mute
+
+
 class OBJECT_OT_edit_poly_tab(Operator):
     """Edit the active Edit Poly level (Tab). Moves are stored in the modifier, """ \
         """the base mesh is never edited"""
@@ -468,6 +497,13 @@ class OBJECT_OT_edit_poly_tab(Operator):
         from bl_operators import unwrap, uvw_map
         ob = context.active_object
         in_viewport = context.area is None or context.area.type == 'VIEW_3D'
+
+        # In the node editor Tab enters node groups. It edits an Edit Poly node only when that is
+        # the active node of the Geometry Nodes modifier's tree, and leaves a session.
+        if context.area is not None and context.area.type == 'NODE_EDITOR':
+            busy = ob is not None and (in_session(ob) or unwrap.in_session(ob) or uvw_map.is_gizmo(ob))
+            if not busy and not _node_editor_edit_poly_active(context, ob):
+                return {'PASS_THROUGH'}
 
         # Tab on a UVW Map gizmo returns to the object (the gizmo is like a sub-object).
         # Tab over another UVW Map's panel switches to that map's gizmo.

@@ -149,8 +149,14 @@ class GeoNodesEditPolyParams {
   /**
    * Apply the edits of the Edit Poly node with the nested node ID `id` to the mesh in `geometry`
    * (the geometry arriving at the node). `r_warning` gets a message about paused edits.
+   * `r_has_selection` is set when the mesh carries the node's selection afterwards
+   * (`.select_vert`,
+   * `.select_edge`, `.select_poly`): its stored selection, or the live one while it is edited.
    */
-  virtual void execute(int id, bke::GeometrySet &geometry, std::string &r_warning) const = 0;
+  virtual void execute(int id,
+                       bke::GeometrySet &geometry,
+                       std::string &r_warning,
+                       bool &r_has_selection) const = 0;
 };
 
 struct GeoNodesSideEffectNodes {

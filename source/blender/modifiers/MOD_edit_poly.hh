@@ -68,9 +68,14 @@ std::string session_commit(EditPolyModifierData &emd,
 /**
  * Apply the edits stored in `emd` to `mesh` (the mesh as it arrives at the level): topology patch
  * (or re-run operations when it is paused), moves, element data and selection. Returns `mesh` or
- * a new mesh; `r_warning` gets a message about paused edits, if any.
+ * a new mesh; `r_warning` gets a message about paused edits, if any. `r_selection_written` is set
+ * when the level's stored selection was written to the mesh (`.select_vert`, `.select_edge`,
+ * `.select_poly`).
  */
-Mesh *apply(const EditPolyModifierData &emd, Mesh *mesh, std::string &r_warning);
+Mesh *apply(const EditPolyModifierData &emd,
+            Mesh *mesh,
+            std::string &r_warning,
+            bool *r_selection_written = nullptr);
 
 /**
  * Edits stored outside a modifier stack (by Edit Poly nodes, in the Geometry Nodes modifier). The

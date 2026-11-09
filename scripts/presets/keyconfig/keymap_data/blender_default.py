@@ -2383,6 +2383,8 @@ def km_node_editor(params):
         ("node.group_ungroup", {"type": 'G', "value": 'PRESS', "ctrl": True, "alt": True}, None),
         ("node.group_separate", {"type": 'P', "value": 'PRESS'}, None),
         ("node.group_enter_exit", {"type": 'LEFTMOUSE', "value": 'DOUBLE_CLICK'}, None),
+        # Edit Poly stack: Tab on an active Edit Poly node edits it (passes through otherwise).
+        ("object.edit_poly_tab", {"type": 'TAB', "value": 'PRESS'}, None),
         ("node.group_edit", {"type": 'TAB', "value": 'PRESS'},
          {"properties": [("exit", False)]}),
         ("node.group_edit", {"type": 'TAB', "value": 'PRESS', "ctrl": True},
