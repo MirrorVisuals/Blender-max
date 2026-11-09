@@ -19,6 +19,8 @@
 #include "DNA_layer_types.h"
 #include "DNA_windowmanager_types.h"
 
+#include "CLG_log.h"
+
 #include "MEM_guardedalloc.h"
 
 #include "BLI_ghash.h"
@@ -301,8 +303,15 @@ void WM_operator_free_all_after(wmWindowManager *wm, wmOperator *op)
 
 void WM_operator_type_set(wmOperator *op, wmOperatorType *ot)
 {
-  /* Not supported for Python. */
-  BLI_assert(op->py_instance == nullptr);
+  /* Not supported for Python: a Python object of the operator keeps its old type. Some add-ons
+   * hold one of a running transform, which switches type when e.g. Move becomes Scale; release
+   * builds carry on, so do the same in builds with asserts instead of aborting. */
+  if (op->py_instance != nullptr) {
+    CLOG_WARN(WM_LOG_OPERATORS,
+              "Operator \"%s\" changes to \"%s\" while Python holds it (e.g. an add-on)",
+              op->type->idname,
+              ot->idname);
+  }
 
   op->type = ot;
   op->ptr->type = ot->srna;
