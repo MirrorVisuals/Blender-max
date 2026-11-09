@@ -60,6 +60,13 @@ def run(name, build, pick, move):
     bpy.ops.mesh.extrude_solid(TRANSFORM_OT_translate={"value": move})
     bm = bmesh.from_edit_mesh(ob.data)
     selected = [f for f in bm.faces if f.select]
+    # Faces pointing the wrong way: compare with a copy whose directions are recalculated.
+    probe = bm.copy()
+    before_no = [f.normal.copy() for f in probe.faces]
+    bmesh.ops.recalc_face_normals(probe, faces=probe.faces[:])
+    probe.normal_update()
+    wrong_way = sum(1 for f, n in zip(probe.faces, before_no) if f.normal.dot(n) < 0)
+    probe.free()
     info = dict(
         picked=picked,
         faces_before=faces_before,
@@ -68,6 +75,7 @@ def run(name, build, pick, move):
         euler=len(bm.verts) - len(bm.edges) + len(bm.faces),
         volume=bm.calc_volume(signed=True),
         selected=len(selected),
+        wrong_way=wrong_way,
         selected_center=(sum((f.calc_center_median() for f in selected), Vector()) / len(selected)
                          if selected else None),
         layers=[layer.name for layer in bm.verts.layers.float_vector],
@@ -94,6 +102,7 @@ def solid_case(title, pick, move, volume, euler=2):
           f"  volume {r['volume']:.4f} (expected {volume:.4f})")
     check(r['euler'] == euler,
           f"  {'a hole goes through' if euler == 0 else 'no hole'} (V-E+F = {r['euler']})")
+    check(r['wrong_way'] == 0, f"  every face points outward ({r['wrong_way']} inward)")
     check(not any(n.startswith(".extrude_solid") for n in r['layers']),
           "  the temporary position attribute is removed")
     return r

@@ -56,6 +56,8 @@ namespace blender {
 
 /** Position of every vertex before the extrude (internal, never shown). */
 static constexpr const char *ORIG_CO_LAYER = ".extrude_solid_co";
+/** Outward direction of the faces of the swept solid, zero on other faces (internal). */
+static constexpr const char *CUTTER_NO_LAYER = ".extrude_solid_no";
 
 static void orig_co_layer_free(BMesh *bm)
 {
@@ -423,6 +425,24 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
   }
   BMO_op_callf(bm, BMO_FLAG_DEFAULTS, "recalc_face_normals faces=%hf", BM_ELEM_TAG);
 
+  /* Remember which way each face of the solid points. The Boolean keeps a face that it does
+   * not cut as it is, even where a Difference needs it turned around (the floor of a cut that
+   * touches nothing), so those faces are flipped afterwards. Faces it creates copy the value. */
+  const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
+  BM_data_layer_add_named(bm, &bm->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
+  const int no_offset = CustomData_get_offset_named(&bm->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
+  {
+    BMIter iter;
+    BMFace *f;
+    BM_ITER_MESH (f, &iter, bm, BM_FACES_OF_MESH) {
+      zero_v3(static_cast<float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)));
+    }
+  }
+  for (BMFace *f : cutter_faces) {
+    BM_face_normal_update(f);
+    copy_v3_v3(static_cast<float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)), f->no);
+  }
+
   /* The result keeps the selection of the faces it comes from: select the new caps only. */
   BM_mesh_elem_hflag_disable_all(bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_SELECT, false);
   for (BMFace *f : new_tops) {
@@ -445,7 +465,6 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
     }
   }
 
-  const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
   BM_mesh_normals_update(bm);
   BKE_editmesh_looptris_calc(em);
   BooleanShapes shapes{&cutter};
@@ -458,6 +477,22 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
                   true,
                   false,
                   push_in ? BMESH_ISECT_BOOLEAN_DIFFERENCE : BMESH_ISECT_BOOLEAN_UNION);
+
+  if (push_in) {
+    BMIter iter;
+    BMFace *f;
+    BM_ITER_MESH (f, &iter, bm, BM_FACES_OF_MESH) {
+      const float3 cutter_no(static_cast<const float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)));
+      if (math::is_zero(cutter_no)) {
+        continue;
+      }
+      BM_face_normal_update(f);
+      if (math::dot(float3(f->no), cutter_no) > 0.0f) {
+        BM_face_normal_flip(bm, f);
+      }
+    }
+  }
+  BM_data_layer_free_named(bm, &bm->pdata, CUTTER_NO_LAYER);
 
   for (BMElem *ele : hidden_here) {
     BM_elem_flag_disable(ele, BM_ELEM_HIDDEN);
