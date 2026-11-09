@@ -31,6 +31,8 @@
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 
+#include "BLI_math_matrix_types.hh"
+
 #include "BLI_array.hh"
 #include "BLI_map.hh"
 #include "BLI_math_geom.h"
@@ -44,6 +46,8 @@
 #include "BKE_customdata.hh"
 #include "BKE_editmesh.hh"
 #include "BKE_layer.hh"
+#include "BKE_lib_id.hh"
+#include "BKE_mesh.h"
 #include "BKE_report.hh"
 
 #include "RNA_access.hh"
@@ -58,6 +62,9 @@
 
 #include "mesh_intern.hh" /* own include */
 
+#include "GEO_mesh_boolean.hh"
+
+#include "bmesh_tools.hh"
 #include "tools/bmesh_boolean.hh"
 #include "tools/bmesh_intersect.hh"
 
@@ -147,17 +154,24 @@ static Vector<BMFace *> selected_faces(BMesh *bm)
 /** \name Copying a part between meshes
  * \{ */
 
+/**
+ * Copies elements of `src` into `dst`, each once. Elements of `src` are found by index, so
+ * `src` must not change while copying.
+ */
 struct CopyMaps {
   BMCustomDataCopyMap vert, edge, face, loop;
-  Map<BMVert *, BMVert *> verts;
-  Map<BMEdge *, BMEdge *> edges;
+  Array<BMVert *> verts;
+  Array<BMEdge *> edges;
 
-  CopyMaps(const BMesh &src, const BMesh &dst)
+  CopyMaps(BMesh &src, const BMesh &dst)
       : vert(CustomData_bmesh_copy_map_calc(src.vdata, dst.vdata)),
         edge(CustomData_bmesh_copy_map_calc(src.edata, dst.edata)),
         face(CustomData_bmesh_copy_map_calc(src.pdata, dst.pdata)),
-        loop(CustomData_bmesh_copy_map_calc(src.ldata, dst.ldata))
+        loop(CustomData_bmesh_copy_map_calc(src.ldata, dst.ldata)),
+        verts(src.totvert, nullptr),
+        edges(src.totedge, nullptr)
   {
+    BM_mesh_elem_index_ensure(&src, BM_VERT | BM_EDGE);
   }
 };
 
@@ -169,25 +183,28 @@ static char copy_hflag(const char hflag)
 
 static BMVert *copy_vert(BMesh *dst, CopyMaps &maps, BMVert *v)
 {
-  return maps.verts.lookup_or_add_cb(v, [&]() {
-    BMVert *v_new = BM_vert_create(dst, v->co, nullptr, BM_CREATE_SKIP_CD);
+  BMVert *&v_new = maps.verts[BM_elem_index_get(v)];
+  if (v_new == nullptr) {
+    v_new = BM_vert_create(dst, v->co, nullptr, BM_CREATE_SKIP_CD);
     CustomData_bmesh_copy_block(dst->vdata, maps.vert, v->head.data, &v_new->head.data);
     copy_v3_v3(v_new->no, v->no);
     v_new->head.hflag = copy_hflag(v->head.hflag);
-    return v_new;
-  });
+  }
+  return v_new;
 }
 
 static BMEdge *copy_edge(BMesh *dst, CopyMaps &maps, BMEdge *e)
 {
-  return maps.edges.lookup_or_add_cb(e, [&]() {
-    BMEdge *e_new = BM_edge_create(
+  BMEdge *&e_new = maps.edges[BM_elem_index_get(e)];
+  if (e_new == nullptr) {
+    e_new = BM_edge_create(
         dst, copy_vert(dst, maps, e->v1), copy_vert(dst, maps, e->v2), nullptr, BM_CREATE_SKIP_CD);
     CustomData_bmesh_copy_block(dst->edata, maps.edge, e->head.data, &e_new->head.data);
     e_new->head.hflag = copy_hflag(e->head.hflag);
-    return e_new;
-  });
+  }
+  return e_new;
 }
+
 
 /** Copy a face (with its vertices, edges and corner data) into `dst`. */
 static BMFace *copy_face(BMesh *dst, CopyMaps &maps, BMFace *f)
@@ -219,6 +236,17 @@ static BMFace *copy_face(BMesh *dst, CopyMaps &maps, BMFace *f)
     BM_face_select_set(dst, f_new, true);
   }
   return f_new;
+}
+
+/** Copy every face of `src` into `dst`. */
+static void copy_all_faces(BMesh *dst, BMesh *src)
+{
+  CopyMaps maps(*src, *dst);
+  BMIter iter;
+  BMFace *f;
+  BM_ITER_MESH (f, &iter, src, BM_FACES_OF_MESH) {
+    copy_face(dst, maps, f);
+  }
 }
 
 /** \} */
@@ -336,15 +364,6 @@ enum class SolidResult {
   Done,
 };
 
-static void copy_face_loops(BMesh *bm, BMFace *src, const Span<BMLoop *> dst_loops)
-{
-  BMLoop *l_src = BM_FACE_FIRST_LOOP(src);
-  for (BMLoop *l_dst : dst_loops) {
-    BM_elem_attrs_copy(bm, l_src, l_dst);
-    l_src = l_src->next;
-  }
-}
-
 struct BooleanShapes {
   const Set<BMFace *> *cutter;
 };
@@ -353,6 +372,129 @@ static int extrude_solid_shape_fn(BMFace *f, void *user_data)
 {
   const BooleanShapes *shapes = static_cast<const BooleanShapes *>(user_data);
   return shapes->cutter->contains(f) ? 1 : 0;
+}
+
+/** Convert a #BMesh to a new #Mesh (not in Main). */
+static Mesh *mesh_from_bmesh(BMesh *bm)
+{
+  Mesh *mesh = BKE_mesh_new_nomain(0, 0, 0, 0);
+  BMeshToMeshParams params{};
+  BM_mesh_bm_to_me(nullptr, bm, mesh, &params);
+  return mesh;
+}
+
+/**
+ * The Boolean with the fast Manifold solver, the result added to `bm`.
+ * False when the solver could not do it; `bm` is then unchanged.
+ */
+static bool solid_boolean_manifold(BMesh *bm, BMesh *part, BMesh *cutter_bm, const bool push_in)
+{
+  Mesh *mesh_part = mesh_from_bmesh(part);
+  Mesh *mesh_cutter = mesh_from_bmesh(cutter_bm);
+  const Mesh *meshes[2] = {mesh_part, mesh_cutter};
+  const float4x4 transforms[2] = {float4x4::identity(), float4x4::identity()};
+  geometry::boolean::BooleanOpParameters op_params;
+  op_params.boolean_mode = push_in ? geometry::boolean::Operation::Difference :
+                                     geometry::boolean::Operation::Union;
+  geometry::boolean::BooleanError error;
+  Mesh *result = geometry::boolean::mesh_boolean(Span<const Mesh *>(meshes, 2),
+                                                 Span<float4x4>(transforms, 2),
+                                                 {},
+                                                 op_params,
+                                                 geometry::boolean::Solver::Manifold,
+                                                 nullptr,
+                                                 &error);
+  BKE_id_free(nullptr, mesh_part);
+  BKE_id_free(nullptr, mesh_cutter);
+  if (result == nullptr || error.type != geometry::boolean::BooleanErrorType::NoError) {
+    if (result) {
+      BKE_id_free(nullptr, result);
+    }
+    return false;
+  }
+
+  BMeshCreateParams create_params{};
+  BMesh *bm_result = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
+  BMeshFromMeshParams from_params{};
+  from_params.calc_face_normal = true;
+  from_params.calc_vert_normal = true;
+  BM_mesh_bm_from_me(bm_result, result, &from_params);
+  BKE_id_free(nullptr, result);
+  copy_all_faces(bm, bm_result);
+  BM_mesh_free(bm_result);
+  return true;
+}
+
+/**
+ * The Boolean with the exact solver, done in `part` (the swept solid is copied into it).
+ */
+static void solid_boolean_exact(BMesh *part, BMesh *cutter_bm, const bool push_in)
+{
+  /* The faces of the solid, copied into the part. */
+  const int part_faces = part->totface;
+  copy_all_faces(part, cutter_bm);
+  Set<BMFace *> cutter;
+  {
+    BMIter iter;
+    BMFace *f;
+    int i = 0;
+    BM_ITER_MESH_INDEX (f, &iter, part, BM_FACES_OF_MESH, i) {
+      if (i >= part_faces) {
+        cutter.add(f);
+      }
+    }
+  }
+
+  /* Remember which way each face of the solid points. The Boolean keeps a face that it does
+   * not cut as it is, even where a Difference needs it turned around (the floor of a cut that
+   * touches nothing), so those faces are flipped afterwards. Faces it creates copy the value. */
+  BM_data_layer_add_named(part, &part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
+  const int no_offset = CustomData_get_offset_named(
+      &part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
+  {
+    BMIter iter;
+    BMFace *f;
+    BM_ITER_MESH (f, &iter, part, BM_FACES_OF_MESH) {
+      BM_face_normal_update(f);
+      float *no = static_cast<float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset));
+      if (cutter.contains(f)) {
+        copy_v3_v3(no, f->no);
+      }
+      else {
+        zero_v3(no);
+      }
+    }
+  }
+
+  BM_mesh_normals_update(part);
+  Array<std::array<BMLoop *, 3>> looptris(poly_to_tri_count(part->totface, part->totloop));
+  BM_mesh_calc_tessellation(part, looptris);
+  BooleanShapes shapes{&cutter};
+  BM_mesh_boolean(part,
+                  looptris,
+                  extrude_solid_shape_fn,
+                  &shapes,
+                  2,
+                  false,
+                  true,
+                  false,
+                  push_in ? BMESH_ISECT_BOOLEAN_DIFFERENCE : BMESH_ISECT_BOOLEAN_UNION);
+
+  if (push_in) {
+    BMIter iter;
+    BMFace *f;
+    BM_ITER_MESH (f, &iter, part, BM_FACES_OF_MESH) {
+      const float3 cutter_no(static_cast<const float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)));
+      if (math::is_zero(cutter_no)) {
+        continue;
+      }
+      BM_face_normal_update(f);
+      if (math::dot(float3(f->no), cutter_no) > 0.0f) {
+        BM_face_normal_flip(part, f);
+      }
+    }
+  }
+  BM_data_layer_free_named(part, &part->pdata, CUTTER_NO_LAYER);
 }
 
 static SolidResult extrude_solid_resolve(BMEditMesh *em)
@@ -521,7 +663,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
     }
     Map<BMVert *, float3> moved_part;
     for (const auto item : moved_kept.items()) {
-      moved_part.add(to_part.verts.lookup(item.key), item.value);
+      moved_part.add(to_part.verts[BM_elem_index_get(item.key)], item.value);
     }
     moved_kept = std::move(moved_part);
   }
@@ -541,149 +683,101 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em)
     }
   }
 
-  /* The swept solid. It starts a little behind the faces, so the faces themselves end up
-   * inside it and are removed. */
-  const float eps = std::max(max_move * 1e-3f, max_coord * 1e-6f);
-  const float3 fallback_dir = math::normalize(sum_move);
-  Map<BMVert *, BMVert *> bottom, top;
-  for (const auto item : moved_kept.items()) {
-    BMVert *v = item.key;
-    const float3 d = item.value;
-    const float len = math::length(d);
-    const float3 dir = len > 1e-8f ? d / len : fallback_dir;
-    bottom.add(v, BM_vert_create(part, float3(v->co) - dir * eps, v, BM_CREATE_NOP));
-    top.add(v, BM_vert_create(part, float3(v->co) + d, v, BM_CREATE_NOP));
-  }
-
-  Set<BMFace *> caps_set(caps_part);
-  Set<BMFace *> cutter;
-  Vector<BMFace *> cutter_faces;
+  /* The swept solid, in a mesh of its own. It starts a little behind the faces, so the faces
+   * themselves end up inside it and are removed. */
+  BMesh *cutter_bm = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
+  BM_mesh_copy_init_customdata(cutter_bm, part, &bm_mesh_allocsize_default);
   Vector<BMFace *> new_tops;
-  for (BMFace *f : caps_part) {
-    Vector<BMVert *, 8> verts_bottom, verts_top;
-    BMLoop *l_iter, *l_first;
-    l_iter = l_first = BM_FACE_FIRST_LOOP(f);
-    do {
-      verts_bottom.append(bottom.lookup(l_iter->v));
-      verts_top.append(top.lookup(l_iter->v));
-    } while ((l_iter = l_iter->next) != l_first);
-
-    for (const bool is_top : {false, true}) {
-      Vector<BMVert *, 8> &verts = is_top ? verts_top : verts_bottom;
-      BMFace *f_new = BM_face_create_verts(
-          part, verts.data(), verts.size(), f, BM_CREATE_NOP, true);
-      if (f_new == nullptr) {
-        continue;
-      }
-      Vector<BMLoop *, 8> loops;
-      BMLoop *l_new = BM_FACE_FIRST_LOOP(f_new);
-      for (int i = 0; i < verts.size(); i++, l_new = l_new->next) {
-        loops.append(l_new);
-      }
-      copy_face_loops(part, f, loops);
-      cutter.add(f_new);
-      cutter_faces.append(f_new);
-      if (is_top) {
-        new_tops.append(f_new);
-      }
+  {
+    const BMCustomDataCopyMap face_map = CustomData_bmesh_copy_map_calc(part->pdata,
+                                                                        cutter_bm->pdata);
+    const BMCustomDataCopyMap loop_map = CustomData_bmesh_copy_map_calc(part->ldata,
+                                                                        cutter_bm->ldata);
+    const float eps = std::max(max_move * 1e-3f, max_coord * 1e-6f);
+    const float3 fallback_dir = math::normalize(sum_move);
+    Map<BMVert *, BMVert *> bottom, top;
+    for (const auto item : moved_kept.items()) {
+      BMVert *v = item.key;
+      const float3 d = item.value;
+      const float len = math::length(d);
+      const float3 dir = len > 1e-8f ? d / len : fallback_dir;
+      bottom.add(v, BM_vert_create(cutter_bm, float3(v->co) - dir * eps, nullptr, BM_CREATE_NOP));
+      top.add(v, BM_vert_create(cutter_bm, float3(v->co) + d, nullptr, BM_CREATE_NOP));
     }
+    /* A face of the solid, with the face data of `f_src` and the corner data of `loops_src`. */
+    auto add_face = [&](const Span<BMVert *> verts, BMFace *f_src, const Span<BMLoop *> loops_src) {
+      BMFace *f_new = BM_face_create_verts(
+          cutter_bm, const_cast<BMVert **>(verts.data()), verts.size(), nullptr, BM_CREATE_NOP,
+          true);
+      if (f_new == nullptr) {
+        return f_new;
+      }
+      CustomData_bmesh_copy_block(cutter_bm->pdata, face_map, f_src->head.data, &f_new->head.data);
+      f_new->mat_nr = f_src->mat_nr;
+      BMLoop *l_new = BM_FACE_FIRST_LOOP(f_new);
+      for (BMLoop *l_src : loops_src) {
+        CustomData_bmesh_copy_block(
+            cutter_bm->ldata, loop_map, l_src->head.data, &l_new->head.data);
+        l_new = l_new->next;
+      }
+      return f_new;
+    };
 
-    /* Side walls along the border of the caps. */
-    l_iter = l_first;
-    do {
-      BMFace *f_other = l_iter->radial_next->f;
-      if (l_iter->radial_next != l_iter && caps_set.contains(f_other)) {
-        continue;
+    Set<BMFace *> caps_set(caps_part);
+    for (BMFace *f : caps_part) {
+      Vector<BMVert *, 8> verts_bottom, verts_top;
+      Vector<BMLoop *, 8> loops;
+      BMLoop *l_iter, *l_first;
+      l_iter = l_first = BM_FACE_FIRST_LOOP(f);
+      do {
+        verts_bottom.append(bottom.lookup(l_iter->v));
+        verts_top.append(top.lookup(l_iter->v));
+        loops.append(l_iter);
+      } while ((l_iter = l_iter->next) != l_first);
+      add_face(verts_bottom, f, loops);
+      if (BMFace *f_top = add_face(verts_top, f, loops)) {
+        new_tops.append(f_top);
       }
-      BMVert *a = l_iter->v, *b = l_iter->next->v;
-      BMVert *quad[4] = {bottom.lookup(a), bottom.lookup(b), top.lookup(b), top.lookup(a)};
-      BMFace *f_side = BM_face_create_verts(part, quad, 4, f, BM_CREATE_NOP, true);
-      if (f_side == nullptr) {
-        continue;
-      }
-      BMLoop *l_side = BM_FACE_FIRST_LOOP(f_side);
-      BM_elem_attrs_copy(part, l_iter, l_side);
-      BM_elem_attrs_copy(part, l_iter->next, l_side->next);
-      BM_elem_attrs_copy(part, l_iter->next, l_side->next->next);
-      BM_elem_attrs_copy(part, l_iter, l_side->next->next->next);
-      cutter.add(f_side);
-      cutter_faces.append(f_side);
-    } while ((l_iter = l_iter->next) != l_first);
+
+      /* Side walls along the border of the caps. */
+      l_iter = l_first;
+      do {
+        if (l_iter->radial_next != l_iter && caps_set.contains(l_iter->radial_next->f)) {
+          continue;
+        }
+        BMVert *a = l_iter->v, *b = l_iter->next->v;
+        const BMVert *quad[4] = {bottom.lookup(a), bottom.lookup(b), top.lookup(b), top.lookup(a)};
+        BMLoop *quad_loops[4] = {l_iter, l_iter->next, l_iter->next, l_iter};
+        add_face(Span<BMVert *>(const_cast<BMVert **>(quad), 4), f, Span<BMLoop *>(quad_loops, 4));
+      } while ((l_iter = l_iter->next) != l_first);
+    }
   }
-
   /* Outward normals for the solid. */
-  BM_mesh_elem_hflag_disable_all(part, BM_FACE, BM_ELEM_TAG, false);
-  for (BMFace *f : cutter_faces) {
-    /* New faces have no normal yet; recalculating the directions needs one. */
-    BM_face_normal_update(f);
-    BM_elem_flag_enable(f, BM_ELEM_TAG);
-  }
-  BMO_op_callf(part, BMO_FLAG_DEFAULTS, "recalc_face_normals faces=%hf", BM_ELEM_TAG);
-
-  /* Remember which way each face of the solid points. The Boolean keeps a face that it does
-   * not cut as it is, even where a Difference needs it turned around (the floor of a cut that
-   * touches nothing), so those faces are flipped afterwards. Faces it creates copy the value. */
-  const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
-  BM_data_layer_add_named(part, &part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
-  const int no_offset = CustomData_get_offset_named(
-      &part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
   {
     BMIter iter;
     BMFace *f;
-    BM_ITER_MESH (f, &iter, part, BM_FACES_OF_MESH) {
-      zero_v3(static_cast<float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)));
+    BM_ITER_MESH (f, &iter, cutter_bm, BM_FACES_OF_MESH) {
+      /* New faces have no normal yet; recalculating the directions needs one. */
+      BM_face_normal_update(f);
+      BM_elem_flag_enable(f, BM_ELEM_TAG);
     }
+    BMO_op_callf(cutter_bm, BMO_FLAG_DEFAULTS, "recalc_face_normals faces=%hf", BM_ELEM_TAG);
   }
-  for (BMFace *f : cutter_faces) {
-    BM_face_normal_update(f);
-    copy_v3_v3(static_cast<float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)), f->no);
-  }
-
   /* The result keeps the selection of the faces it comes from: select the new caps only. */
   BM_mesh_elem_hflag_disable_all(part, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_SELECT, false);
+  BM_mesh_elem_hflag_disable_all(cutter_bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_SELECT, false);
   for (BMFace *f : new_tops) {
-    BM_face_select_set(part, f, true);
+    BM_face_select_set(cutter_bm, f, true);
   }
 
-  BM_mesh_normals_update(part);
-  Array<std::array<BMLoop *, 3>> looptris(poly_to_tri_count(part->totface, part->totloop));
-  BM_mesh_calc_tessellation(part, looptris);
-  BooleanShapes shapes{&cutter};
-  BM_mesh_boolean(part,
-                  looptris,
-                  extrude_solid_shape_fn,
-                  &shapes,
-                  2,
-                  false,
-                  true,
-                  false,
-                  push_in ? BMESH_ISECT_BOOLEAN_DIFFERENCE : BMESH_ISECT_BOOLEAN_UNION);
-
-  if (push_in) {
-    BMIter iter;
-    BMFace *f;
-    BM_ITER_MESH (f, &iter, part, BM_FACES_OF_MESH) {
-      const float3 cutter_no(static_cast<const float *>(BM_ELEM_CD_GET_VOID_P(f, no_offset)));
-      if (math::is_zero(cutter_no)) {
-        continue;
-      }
-      BM_face_normal_update(f);
-      if (math::dot(float3(f->no), cutter_no) > 0.0f) {
-        BM_face_normal_flip(part, f);
-      }
-    }
+  const bool push_in = math::dot(sum_move, sum_normal) < 0.0f;
+  bool done = solid_boolean_manifold(bm, part, cutter_bm, push_in);
+  if (!done) {
+    /* The fast solver could not do it (e.g. the swept solid crosses itself): use the exact one. */
+    solid_boolean_exact(part, cutter_bm, push_in);
+    copy_all_faces(bm, part);
   }
-  BM_data_layer_free_named(part, &part->pdata, CUTTER_NO_LAYER);
-
-  /* Put the result back. */
-  {
-    CopyMaps to_mesh(*part, *bm);
-    BMIter iter;
-    BMFace *f;
-    BM_ITER_MESH (f, &iter, part, BM_FACES_OF_MESH) {
-      copy_face(bm, to_mesh, f);
-    }
-  }
+  BM_mesh_free(cutter_bm);
   BM_mesh_free(part);
   BM_mesh_elem_hflag_disable_all(bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_TAG, false);
   return SolidResult::Done;
