@@ -74,7 +74,9 @@ static void update_depsgraph(ModifierData *md, const ModifierUpdateDepsgraphCont
         ctx->node, umd->gizmo_object, DEG_OB_COMP_TRANSFORM, "UVW Map Modifier");
   }
   /* The gizmo object is used relative to the object; real-world size uses its scale. */
-  if (umd->gizmo_object != nullptr || (umd->flag & MOD_UVWMAP_REAL_WORLD)) {
+  if (umd->gizmo_object != nullptr || (umd->flag & MOD_UVWMAP_REAL_WORLD) ||
+      umd->size_mode != MOD_UVWMAP_SIZE_GIZMO)
+  {
     DEG_add_depends_on_transform_relation(ctx->node, "UVW Map Modifier");
   }
 }
@@ -100,39 +102,56 @@ static float4x4 gizmo_to_object(const UVWMapModifierData &umd, const Object *ob)
       float3(umd.gizmo_location), math::EulerXYZ(float3(umd.gizmo_rotation)), half);
 }
 
-/**
- * Real-world size: how many texture tiles one gizmo length is, along the aligned U, V and W
- * axes. (1, 1, 1) without real-world size.
- */
-static float3 real_world_scale(const UVWMapModifierData &umd,
-                               const float4x4 &gizmo,
-                               const Object *ob)
+/** Size of the map in the world: gizmo lengths and the size of one texture tile. */
+struct Sizing {
+  bool active = false;
+  /** Full world length of the gizmo along the aligned U, V and W axes. */
+  float3 len = float3(1.0f);
+  /** World width and height of one texture tile. */
+  float2 tile = float2(1.0f);
+};
+
+static int size_mode(const UVWMapModifierData &umd)
 {
-  if ((umd.flag & MOD_UVWMAP_REAL_WORLD) == 0 || umd.texel_density <= 0.0f ||
-      umd.texture_size <= 0)
-  {
-    return float3(1.0f);
+  if (umd.size_mode == MOD_UVWMAP_SIZE_GIZMO && (umd.flag & MOD_UVWMAP_REAL_WORLD)) {
+    return MOD_UVWMAP_SIZE_PIXEL_DENSITY; /* Saved before size modes existed. */
   }
+  return umd.size_mode;
+}
+
+static Sizing sizing(const UVWMapModifierData &umd, const float4x4 &gizmo, const Object *ob)
+{
+  Sizing r;
+  const int mode = size_mode(umd);
+  if (mode == MOD_UVWMAP_SIZE_REAL_WORLD) {
+    r.tile = float2(std::max(umd.real_size[0], 1e-6f), std::max(umd.real_size[1], 1e-6f));
+  }
+  else if (mode == MOD_UVWMAP_SIZE_PIXEL_DENSITY && umd.texel_density > 0.0f &&
+           umd.texture_size > 0)
+  {
+    r.tile = float2(float(umd.texture_size) / umd.texel_density);
+  }
+  else {
+    return r;
+  }
+  r.active = true;
   const float3x3 m = (ob ? float3x3(ob->object_to_world()) : float3x3::identity()) *
                      float3x3(gizmo);
-  /* Full world length of each gizmo axis. */
   const float3 len(2.0f * math::length(m.x_axis()),
                    2.0f * math::length(m.y_axis()),
                    2.0f * math::length(m.z_axis()));
-  const float tile = float(umd.texture_size) / umd.texel_density;
-  float3 aligned;
   switch (umd.axis) {
     case 0:
-      aligned = float3(len.y, len.z, len.x);
+      r.len = float3(len.y, len.z, len.x);
       break;
     case 1:
-      aligned = float3(len.x, len.z, len.y);
+      r.len = float3(len.x, len.z, len.y);
       break;
     default:
-      aligned = len;
+      r.len = len;
       break;
   }
-  return aligned / tile;
+  return r;
 }
 
 /** Reorder gizmo axes so that the projection axis is the last one (right-handed). */
@@ -211,7 +230,7 @@ static float2 face_corner(const int k, const int n)
  */
 static void compute(const UVWMapModifierData &umd,
              const float4x4 &to_gizmo,
-             const float3 &scale,
+             const Sizing &size,
              const Span<float3> positions,
              const OffsetIndices<int> faces,
              const Span<int> corner_verts,
@@ -229,10 +248,14 @@ static void compute(const UVWMapModifierData &umd,
     const IndexRange face = faces[f];
     const Span<int> verts = corner_verts.slice(face);
     MutableSpan<float2> uvs = r_uvs.slice(face);
-    /* Real-world size: tiles per unit of the 0..1 range, per face. */
-    const bool real_world = (umd.flag & MOD_UVWMAP_REAL_WORLD) != 0;
-    const float around = real_world ? PI_F * (scale.x + scale.y) * 0.5f : 1.0f;
-    float2 face_scale(scale.x, scale.y);
+    /* Real-world size: how many texture tiles the 0..1 range is, per face (world length of the
+     * mapped direction / tile width or height). */
+    const float3 &L = size.len;
+    const float around = PI_F * (L.x + L.y) * 0.5f;
+    auto tiles = [&](const float u_len, const float v_len) {
+      return size.active ? float2(u_len / size.tile.x, v_len / size.tile.y) : float2(1.0f);
+    };
+    float2 face_scale = tiles(L.x, L.y);
     switch (type) {
       case MOD_UVWMAP_PLANAR:
         for (const int i : verts.index_range()) {
@@ -246,10 +269,10 @@ static void compute(const UVWMapModifierData &umd,
         }
         const float3 a = math::abs(n);
         if (a.x >= a.y && a.x >= a.z) {
-          face_scale = float2(scale.y, scale.z);
+          face_scale = tiles(L.y, L.z);
         }
         else if (a.y >= a.z) {
-          face_scale = float2(scale.x, scale.z);
+          face_scale = tiles(L.x, L.z);
         }
         break;
       }
@@ -268,7 +291,7 @@ static void compute(const UVWMapModifierData &umd,
           uvs[i] = float2(wrap_u(p), (p.z + 1.0f) * 0.5f);
         }
         fix_seam(uvs);
-        face_scale = float2(around, scale.z);
+        face_scale = tiles(around, L.z);
         break;
       }
       case MOD_UVWMAP_SPHERICAL: {
@@ -300,7 +323,7 @@ static void compute(const UVWMapModifierData &umd,
             }
           }
         }
-        face_scale = float2(around, real_world ? PI_F * scale.z * 0.5f : 1.0f);
+        face_scale = tiles(around, PI_F * L.z * 0.5f);
         break;
       }
       case MOD_UVWMAP_SHRINKWRAP:
@@ -312,7 +335,7 @@ static void compute(const UVWMapModifierData &umd,
           const float phi = std::atan2(p.y, p.x);
           uvs[i] = float2(0.5f + 0.5f * r * std::cos(phi), 0.5f + 0.5f * r * std::sin(phi));
         }
-        face_scale = float2(around, around);
+        face_scale = tiles(around, around);
         break;
       case MOD_UVWMAP_FACE:
       default:
@@ -359,6 +382,18 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
       return mesh;
     }
   }
+  if (umd->flag & MOD_UVWMAP_MATERIAL) {
+    /* Only faces with one material (as a material ID in 3ds Max). */
+    const VArraySpan<int> material = *mesh->attributes().lookup_or_default<int>(
+        "material_index", bke::AttrDomain::Face, 0);
+    const int wanted = umd->material_index;
+    face_mask = IndexMask::from_predicate(
+        face_mask, memory, [&](const int f) { return material[f] == wanted; });
+    if (face_mask.is_empty()) {
+      BKE_modifier_set_warning(ctx->object, md, "No faces with this material");
+      return mesh;
+    }
+  }
 
   /* Which UV map. */
   std::string name = umd->uvmap_name;
@@ -380,10 +415,10 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
   }
 
   const float4x4 gizmo = uvw_map::gizmo_to_object(*umd, ctx->object);
-  const float3 scale = uvw_map::real_world_scale(*umd, gizmo, ctx->object);
+  const uvw_map::Sizing size = uvw_map::sizing(*umd, gizmo, ctx->object);
   uvw_map::compute(*umd,
                    math::invert(gizmo),
-                   scale,
+                   size,
                    mesh->vert_positions(),
                    mesh->faces(),
                    mesh->corner_verts(),
@@ -414,15 +449,36 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
   layout.prop(ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
-  layout.prop(ptr, "use_real_world", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  if (RNA_boolean_get(ptr, "use_real_world")) {
-    ui::Layout *rw = &layout.column(true);
-    rw->prop(ptr, "texel_density", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-    rw->prop(ptr, "texture_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  {
+    ui::Layout &row_mat = layout.row(true, IFACE_("Material"));
+    row_mat.prop(ptr, "use_material", UI_ITEM_NONE, "", ICON_NONE);
+    ui::Layout &sub = row_mat.row(true);
+    sub.active_set(RNA_boolean_get(ptr, "use_material"));
+    sub.prop(ptr, "material_slot", UI_ITEM_NONE, "", ICON_NONE);
+  }
+
+  layout.prop(ptr, "size_mode", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  const int mode = RNA_enum_get(ptr, "size_mode");
+  if (mode == MOD_UVWMAP_SIZE_REAL_WORLD) {
+    ui::Layout &rw = layout.column(true);
+    rw.prop(ptr, "real_size", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  }
+  else if (mode == MOD_UVWMAP_SIZE_PIXEL_DENSITY) {
+    ui::Layout &pd = layout.column(true);
+    pd.prop(ptr, "texture_size_preset", UI_ITEM_NONE, IFACE_("Texture"), ICON_NONE);
+    if (RNA_enum_get(ptr, "texture_size_preset") == 0) {
+      pd.prop(ptr, "texture_size", UI_ITEM_NONE, IFACE_("Pixels"), ICON_NONE);
+    }
+    ui::Layout &pd2 = layout.column(true);
+    pd2.prop(ptr, "texel_density_preset", UI_ITEM_NONE, IFACE_("Density"), ICON_NONE);
+    if (RNA_enum_get(ptr, "texel_density_preset") == 0) {
+      pd2.prop(ptr, "texel_density", UI_ITEM_NONE, IFACE_("Pixels per Meter"), ICON_NONE);
+    }
     const float density = RNA_float_get(ptr, "texel_density");
     if (density > 0.0f) {
       char label[64];
-      SNPRINTF(label, IFACE_("One texture tile = %.3g m"),
+      SNPRINTF(label,
+               IFACE_("One texture tile = %.3g m"),
                float(RNA_int_get(ptr, "texture_size")) / density);
       layout.label(label, ICON_INFO);
     }

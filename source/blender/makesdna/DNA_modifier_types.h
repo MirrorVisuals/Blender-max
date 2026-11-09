@@ -2261,8 +2261,19 @@ enum UVWMapModifierFlag {
   MOD_UVWMAP_FLIP_V = (1 << 1),
   MOD_UVWMAP_CAP = (1 << 2),
   MOD_UVWMAP_SELECTION = (1 << 3),
-  /** Map size from a texel density instead of the gizmo size. */
+  /** Old files: map size from a texel density (now #UVWMapModifierData.size_mode). */
   MOD_UVWMAP_REAL_WORLD = (1 << 4),
+  /** Only faces with #UVWMapModifierData.material_index. */
+  MOD_UVWMAP_MATERIAL = (1 << 5),
+};
+
+enum UVWMapModifierSizeMode {
+  /** The gizmo is one texture tile. */
+  MOD_UVWMAP_SIZE_GIZMO = 0,
+  /** One tile is #UVWMapModifierData.real_size meters. */
+  MOD_UVWMAP_SIZE_REAL_WORLD = 1,
+  /** One tile is texture_size / texel_density meters. */
+  MOD_UVWMAP_SIZE_PIXEL_DENSITY = 2,
 };
 
 struct UVWMapModifierData {
@@ -2285,6 +2296,12 @@ struct UVWMapModifierData {
   float texel_density = 1024.0f;
   /** Real-world size: texture width / height in pixels. */
   int texture_size = 1024;
+  /** #UVWMapModifierSizeMode. */
+  int size_mode = 0;
+  /** Material slot index (0 based) mapped with #MOD_UVWMAP_MATERIAL. */
+  int material_index = 0;
+  /** Real-world size: width and height one texture tile covers, in meters. */
+  float real_size[2] = {1.0f, 1.0f};
   char uvmap_name[/*MAX_CUSTOMDATA_LAYER_NAME*/ 68] = "";
 };
 

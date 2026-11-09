@@ -1110,6 +1110,91 @@ RNA_MOD_UVLAYER_NAME_SET(UVProject, uvlayer_name);
 RNA_MOD_UVLAYER_NAME_SET(UVWMap, uvmap_name);
 RNA_MOD_UVLAYER_NAME_SET(Unwrap, uvmap_name);
 
+static int rna_UVWMapModifier_size_mode_get(PointerRNA *ptr)
+{
+  const UVWMapModifierData *umd = static_cast<const UVWMapModifierData *>(ptr->data);
+  if (umd->size_mode == MOD_UVWMAP_SIZE_GIZMO && (umd->flag & MOD_UVWMAP_REAL_WORLD)) {
+    return MOD_UVWMAP_SIZE_PIXEL_DENSITY; /* Saved before size modes existed. */
+  }
+  return umd->size_mode;
+}
+
+static void rna_UVWMapModifier_size_mode_set(PointerRNA *ptr, int value)
+{
+  UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
+  umd->size_mode = value;
+  umd->flag &= ~MOD_UVWMAP_REAL_WORLD;
+}
+
+static const int uvw_texture_sizes[] = {512, 1024, 2048, 4096, 8192};
+static const int uvw_densities[] = {128, 256, 512, 1024, 2048, 4096};
+
+static int rna_UVWMapModifier_texture_size_preset_get(PointerRNA *ptr)
+{
+  const UVWMapModifierData *umd = static_cast<const UVWMapModifierData *>(ptr->data);
+  for (const int size : uvw_texture_sizes) {
+    if (umd->texture_size == size) {
+      return size;
+    }
+  }
+  return 0;
+}
+
+static void rna_UVWMapModifier_texture_size_preset_set(PointerRNA *ptr, int value)
+{
+  UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
+  if (value > 0) {
+    umd->texture_size = value;
+  }
+}
+
+static int rna_UVWMapModifier_texel_density_preset_get(PointerRNA *ptr)
+{
+  const UVWMapModifierData *umd = static_cast<const UVWMapModifierData *>(ptr->data);
+  for (const int density : uvw_densities) {
+    if (umd->texel_density == float(density)) {
+      return density;
+    }
+  }
+  return 0;
+}
+
+static void rna_UVWMapModifier_texel_density_preset_set(PointerRNA *ptr, int value)
+{
+  UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
+  if (value > 0) {
+    umd->texel_density = float(value);
+  }
+}
+
+/* Material slots of the object, as material IDs in 3ds Max. */
+static const EnumPropertyItem *rna_UVWMapModifier_material_slot_itemf(bContext * /*C*/,
+                                                                       PointerRNA *ptr,
+                                                                       PropertyRNA * /*prop*/,
+                                                                       bool *r_free)
+{
+  static char identifiers[64][16];
+  static char empty_names[64][16];
+  Object *ob = reinterpret_cast<Object *>(ptr->owner_id);
+  EnumPropertyItem *item = nullptr, tmp_item = {0};
+  int totitem = 0;
+  const int slots = std::clamp(ob ? int(ob->totcol) : 0, 1, 64);
+  for (int i = 0; i < slots; i++) {
+    SNPRINTF(identifiers[i], "SLOT_%d", i + 1);
+    const Material *ma = ob ? BKE_object_material_get(ob, short(i + 1)) : nullptr;
+    if (ma == nullptr) {
+      SNPRINTF(empty_names[i], "%d: (empty)", i + 1);
+    }
+    tmp_item.value = i;
+    tmp_item.identifier = identifiers[i];
+    tmp_item.name = ma ? ma->id.name + 2 : empty_names[i];
+    RNA_enum_item_add(&item, &totitem, &tmp_item);
+  }
+  RNA_enum_item_end(&item, &totitem);
+  *r_free = true;
+  return item;
+}
+
 /* As the X / Y / Z alignment buttons in 3ds Max: picking an axis turns the gizmo back to it
  * (undoing View Align or a manual rotation). */
 static void rna_UVWMapModifier_axis_update(Main *bmain, Scene *scene, PointerRNA *ptr)
@@ -7804,6 +7889,99 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
                            "Selected Faces Only",
                            "Map only the faces selected in the Edit Poly level below (or the "
                            "mesh); other faces keep their UVs");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  static const EnumPropertyItem size_mode_items[] = {
+      {MOD_UVWMAP_SIZE_GIZMO, "GIZMO", 0, "Gizmo", "One texture tile fills the gizmo"},
+      {MOD_UVWMAP_SIZE_REAL_WORLD,
+       "REAL_WORLD",
+       0,
+       "Real-World Size",
+       "One texture tile covers a width and height in meters; the gizmo only places the map"},
+      {MOD_UVWMAP_SIZE_PIXEL_DENSITY,
+       "PIXEL_DENSITY",
+       0,
+       "Pixel Density",
+       "The texture's pixels are spread at a density (pixels per meter); the gizmo only places "
+       "the map"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+  static const EnumPropertyItem texture_size_items[] = {
+      {0, "CUSTOM", 0, "Custom", ""},
+      {512, "512", 0, "512 px", ""},
+      {1024, "1K", 0, "1K (1024 px)", ""},
+      {2048, "2K", 0, "2K (2048 px)", ""},
+      {4096, "4K", 0, "4K (4096 px)", ""},
+      {8192, "8K", 0, "8K (8192 px)", ""},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+  static const EnumPropertyItem density_items[] = {
+      {0, "CUSTOM", 0, "Custom", ""},
+      {128, "128", 0, "128 px/m (1.28 px/cm)", ""},
+      {256, "256", 0, "256 px/m (2.56 px/cm)", ""},
+      {512, "512", 0, "512 px/m (5.12 px/cm)", ""},
+      {1024, "1024", 0, "1024 px/m (10.24 px/cm)", ""},
+      {2048, "2048", 0, "2048 px/m (20.48 px/cm)", ""},
+      {4096, "4096", 0, "4096 px/m (40.96 px/cm)", ""},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+  static const EnumPropertyItem material_slot_items[] = {
+      {0, "SLOT_1", 0, "1", ""},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+
+  prop = RNA_def_property(srna, "size_mode", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_sdna(prop, nullptr, "size_mode");
+  RNA_def_property_enum_items(prop, size_mode_items);
+  RNA_def_property_enum_funcs(
+      prop, "rna_UVWMapModifier_size_mode_get", "rna_UVWMapModifier_size_mode_set", nullptr);
+  RNA_def_property_ui_text(prop, "Size", "How big the texture is on the mesh");
+  RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
+
+  prop = RNA_def_property(srna, "real_size", PROP_FLOAT, PROP_XYZ_LENGTH);
+  RNA_def_property_array(prop, 2);
+  RNA_def_property_range(prop, 0.0001, FLT_MAX);
+  RNA_def_property_ui_range(prop, 0.001, 1000.0, 1, 3);
+  RNA_def_property_ui_text(
+      prop, "Real-World Size", "Width and height one texture tile covers in the world");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "texture_size_preset", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_items(prop, texture_size_items);
+  RNA_def_property_enum_funcs(prop,
+                              "rna_UVWMapModifier_texture_size_preset_get",
+                              "rna_UVWMapModifier_texture_size_preset_set",
+                              nullptr);
+  RNA_def_property_ui_text(prop, "Texture Resolution", "Width / height of the texture");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "texel_density_preset", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_items(prop, density_items);
+  RNA_def_property_enum_funcs(prop,
+                              "rna_UVWMapModifier_texel_density_preset_get",
+                              "rna_UVWMapModifier_texel_density_preset_set",
+                              nullptr);
+  RNA_def_property_ui_text(prop, "Pixel Density", "Texture pixels per meter");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "use_material", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_MATERIAL);
+  RNA_def_property_ui_text(
+      prop, "Material", "Map only the faces of one material (as a material ID in 3ds Max)");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "material_slot", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_sdna(prop, nullptr, "material_index");
+  RNA_def_property_enum_items(prop, material_slot_items);
+  RNA_def_property_enum_funcs(prop, nullptr, nullptr, "rna_UVWMapModifier_material_slot_itemf");
+  RNA_def_property_ui_text(prop, "Material Slot", "Material whose faces are mapped");
+  RNA_def_property_update(prop, 0, "rna_Modifier_update");
+
+  prop = RNA_def_property(srna, "material_index", PROP_INT, PROP_NONE);
+  RNA_def_property_int_sdna(prop, nullptr, "material_index");
+  RNA_def_property_range(prop, 0, 32766);
+  RNA_def_property_ui_text(
+      prop, "Material Index", "Material slot index (0 is the first slot) whose faces are mapped");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   prop = RNA_def_property(srna, "use_real_world", PROP_BOOLEAN, PROP_NONE);

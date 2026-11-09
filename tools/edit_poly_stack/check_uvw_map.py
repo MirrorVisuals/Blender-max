@@ -165,6 +165,13 @@ check(bpy.context.active_object == ob and "Cube UVW Gizmo" not in bpy.data.objec
 check(close(uvw.gizmo_location[0], 1.5) and close(uvw.gizmo_rotation[2], 0.3) and close(uvw.gizmo_size[0], 6),
       "the gizmo move and rotation are stored in the modifier")
 
+print("Alignment resets the rotation")
+uvw.gizmo_rotation = (0.4, 0.2, 0.3)
+uvw.axis = 'Y'
+check(all(close(r, 0) for r in uvw.gizmo_rotation), "picking an alignment turns the gizmo back to that axis")
+uvw.axis = 'Z'
+uvw.gizmo_rotation = (0.0, 0.0, 0.3)
+
 print("Helpers are put away")
 ob.modifiers.active = uvw
 tab()
@@ -244,6 +251,48 @@ data = faces_uv(cube)
 mapped = [d for d in data if min(u for u, _ in d[1]) > 4]
 check(len(mapped) == len(data),
       "the level can stop passing its selection: the base mesh's (all faces) is used again")
+
+print("Size modes")
+cube_s = new_object("cube", location=(0, 12, 0))   # 2 m wide
+sm = cube_s.modifiers.new("UVW Map", 'UVW_MAP')
+sm.gizmo_size = (10.0, 10.0, 10.0)                   # The gizmo size must not matter.
+def spans(ob):
+    data = faces_uv(ob)
+    top = [d for d in data if d[2][2] > 0.9][0]
+    us = [u for u, _ in top[1]]
+    vs = [v for _, v in top[1]]
+    return max(us) - min(us), max(vs) - min(vs)
+check(sm.size_mode == 'GIZMO', "the default size is the gizmo")
+sm.size_mode = 'REAL_WORLD'
+sm.real_size = (1.0, 1.0)
+su, sv = spans(cube_s)
+check(close(su, 2.0) and close(sv, 2.0), f"Real-World Size 1 x 1 m: a 2 m face is 2 x 2 tiles ({su:.3f} x {sv:.3f})")
+sm.real_size = (2.0, 0.5)
+su, sv = spans(cube_s)
+check(close(su, 1.0) and close(sv, 4.0), f"2 m x 0.5 m tile: 1 x 4 tiles ({su:.3f} x {sv:.3f})")
+sm.size_mode = 'PIXEL_DENSITY'
+sm.texture_size_preset = '1K'
+sm.texel_density_preset = '512'
+check(sm.texture_size == 1024 and close(sm.texel_density, 512), "the presets set 1024 px and 512 px/m")
+su, sv = spans(cube_s)
+check(close(su, 1.0), f"1K at 512 px/m: a 2 m face is one tile ({su:.3f})")
+sm.texel_density = 300.0
+check(sm.texel_density_preset == 'CUSTOM', "a density that is not a preset shows as Custom")
+
+print("Material")
+cube_m = new_object("cube", location=(0, 16, 0))
+for name in ("A", "B"):
+    cube_m.data.materials.append(bpy.data.materials.new(name))
+top = max(cube_m.data.polygons, key=lambda p: p.center.z)
+top.material_index = 1
+mm = cube_m.modifiers.new("UVW Map", 'UVW_MAP')
+mm.offset = (5.0, 0.0)
+mm.use_material = True
+mm.material_slot = 'SLOT_2'
+check(mm.material_index == 1, "material slot 2 is index 1")
+data = faces_uv(cube_m)
+mapped = [d for d in data if min(u for u, _ in d[1]) > 4]
+check(len(mapped) == 1 and mapped[0][2][2] > 0.9, "only the face with material B is mapped")
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
