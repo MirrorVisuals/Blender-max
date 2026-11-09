@@ -51,6 +51,10 @@ below possible.
 - **Size:** from the gizmo, as a Real-World Size (metres per texture tile), or as a Pixel
   Density (px/m for a texture size), with presets for common texture sizes and densities.
 - **Material ID:** maps only the faces of one material slot of the object.
+- **Map Channel,** as in 3ds Max: 1 is the default UV map, 2 and up are UV maps
+  "UVChannel_2" and so on, added when needed. Several UVW Maps on different channels give the
+  textures of one material their own sizes. **Connect to Texture** makes the selected texture
+  node of the material read the modifier's UV map. Unwrap has the same channel and button.
 - **Selected Faces Only:** maps only the faces passed up by the Edit Poly level below.
 - **Gizmo:** drawn in the viewport. Tab (or Edit Gizmo) lets you move, rotate and scale it,
   with snapping, and the texture follows live. Fit, Center and View Align are available, and
