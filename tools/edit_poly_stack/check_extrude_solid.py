@@ -45,7 +45,7 @@ def grid_plane(bm):
     bmesh.ops.create_grid(bm, x_segments=4, y_segments=4, size=1.0)
 
 
-def run(name, build, pick, move, solid=True):
+def run(name, build, pick, move, solid=True, stock=False):
     ob = make_object(name, build)
     bpy.ops.object.mode_set(mode='EDIT')
     bpy.ops.mesh.select_mode(type='FACE')
@@ -59,8 +59,13 @@ def run(name, build, pick, move, solid=True):
     bmesh.update_edit_mesh(ob.data)
     picked = sum(1 for f in bm.faces if f.select)
     faces_before = len(bm.faces)
-    bpy.ops.mesh.extrude_manifold(MESH_OT_extrude_manifold_region={"use_solid": solid},
-                                  TRANSFORM_OT_translate={"value": move})
+    if stock:
+        # Blender's original Extrude Manifold steps.
+        bpy.ops.mesh.extrude_region(use_dissolve_ortho_edges=True)
+        bpy.ops.transform.translate(value=move, use_automerge_and_split=True)
+    else:
+        bpy.ops.mesh.extrude_manifold(MESH_OT_extrude_manifold_region={"use_solid": solid},
+                                      TRANSFORM_OT_translate={"value": move})
     bm = bmesh.from_edit_mesh(ob.data)
     selected = [f for f in bm.faces if f.select]
     # Faces pointing the wrong way: compare with a copy whose directions are recalculated.
@@ -74,6 +79,8 @@ def run(name, build, pick, move, solid=True):
         picked=picked,
         faces_before=faces_before,
         faces=len(bm.faces),
+        verts=len(bm.verts),
+        edges=len(bm.edges),
         open_edges=sum(1 for e in bm.edges if not e.is_manifold),
         euler=len(bm.verts) - len(bm.edges) + len(bm.faces),
         volume=bm.calc_volume(signed=True),
@@ -126,8 +133,21 @@ solid_case("Side face out", side, (1.0, 0, 0), 8 + cell * cell)
 solid_case("Corner face up", corner, (0, 0, 1.0), 8 + cell * cell)
 
 print("Solid turned off")
-r = run("Corner face down one row, not solid", grid_cube, corner, (0, 0, -cell), solid=False)
-check(r['faces'] != 54, f"the old Extrude Manifold result ({r['faces']} faces, not the solid 54)")
+partial_off = None
+for title, move in (("Corner face down part of a row", (0, 0, -0.4)),
+                    ("Corner face down one row", (0, 0, -cell))):
+    off = run(title + ", Solid off", grid_cube, corner, move, solid=False)
+    partial_off = partial_off or off
+    old = run(title + ", original steps", grid_cube, corner, move, stock=True)
+    same = (off['verts'], off['edges'], off['faces']) == (old['verts'], old['edges'], old['faces'])
+    check(same and abs(off['volume'] - old['volume']) < 1e-4,
+          f"{title}: same as Blender's original Extrude Manifold "
+          f"({off['verts']}/{off['edges']}/{off['faces']} against "
+          f"{old['verts']}/{old['edges']}/{old['faces']} vertices/edges/faces)")
+on = run("Corner face down part of a row, Solid on", grid_cube, corner, (0, 0, -0.4))
+off = partial_off
+check((on['verts'], on['faces']) != (off['verts'], off['faces']),
+      f"Solid on gives a different result there ({on['verts']} vertices, {on['faces']} faces)")
 
 print("Other parts of the mesh")
 def cube_and_far_cube(bm):
