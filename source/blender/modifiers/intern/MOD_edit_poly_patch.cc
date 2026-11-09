@@ -14,12 +14,14 @@
 #include "BLI_map.hh"
 #include "BLI_math_vector.hh"
 #include "BLI_set.hh"
+#include "BLI_task.hh"
 
 #include "DNA_mesh_types.h"
 
 #include "BKE_attribute.hh"
 #include "BKE_attribute_math.hh"
 #include "BKE_mesh.hh"
+#include "BKE_mesh_mapping.hh"
 #include "BKE_stable_id_mesh.hh"
 
 #include "MOD_edit_poly.hh"
@@ -208,13 +210,42 @@ static void copy_attributes(const Mesh &src,
   });
 }
 
+/**
+ * Indices in `ids` of the `wanted` IDs (-1 for missing ones). Uses a small table of the wanted
+ * IDs, checked against every element in parallel: much faster than a table of all elements when
+ * a patch refers to only some of them.
+ */
+static Map<uint64_t, int> find_indices(const Span<StableID> ids,
+                                       const Span<Span<StableID>> wanted)
+{
+  Map<uint64_t, int> found;
+  for (const Span<StableID> list : wanted) {
+    for (const StableID id : list) {
+      found.add(key_of(id), -1);
+    }
+  }
+  if (found.is_empty()) {
+    return found;
+  }
+  threading::parallel_for(ids.index_range(), 8192, [&](const IndexRange range) {
+    for (const int i : range) {
+      if (int *index = found.lookup_ptr(key_of(ids[i]))) {
+        *index = i; /* IDs are unique: each slot is written by one element. */
+      }
+    }
+  });
+  return found;
+}
+
 Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
 {
   const Array<StableID> in_vert_ids = read_or_make_root_ids(input, bke::AttrDomain::Point);
   const Array<StableID> in_edge_ids = read_or_make_root_ids(input, bke::AttrDomain::Edge);
   const Array<StableID> in_face_ids = read_or_make_root_ids(input, bke::AttrDomain::Face);
-  const Map<uint64_t, int> in_vert_of = index_map(in_vert_ids);
-  const Map<uint64_t, int> in_face_of = index_map(in_face_ids);
+  const Map<uint64_t, int> in_vert_of = find_indices(
+      in_vert_ids, {patch.removed_verts.as_span(), patch.new_vert_anchors.as_span()});
+  const Map<uint64_t, int> in_face_of = find_indices(
+      in_face_ids, {patch.removed_faces.as_span(), patch.new_face_sources.as_span()});
   const Span<float3> in_positions = input.vert_positions();
   const OffsetIndices<int> in_faces = input.faces();
   const Span<int> in_corner_verts = input.corner_verts();
@@ -249,26 +280,48 @@ Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
   Vector<StableID> vert_parents; /* Anchor for new vertices. */
   Vector<float3> positions;
   Array<int> result_of_input_vert(input.verts_num, -1);
+  /* Result index of the vertices that new faces use (only those are looked up). */
   Map<uint64_t, int> result_vert_of;
+  for (const StableID id : patch.new_face_corner_verts) {
+    result_vert_of.add(key_of(id), -1);
+  }
+  Set<uint64_t> new_vert_keys;
+  for (const StableID id : patch.new_vert_ids) {
+    if (!new_vert_keys.add(key_of(id))) {
+      r_reason = "the patch has a vertex ID that is already used";
+      return nullptr;
+    }
+  }
+  vert_src.reserve(input.verts_num + patch.new_vert_ids.size());
+  vert_ids.reserve(vert_src.capacity());
+  vert_parents.reserve(vert_src.capacity());
+  positions.reserve(vert_src.capacity());
   for (const int i : IndexRange(input.verts_num)) {
     if (vert_removed[i]) {
       continue;
     }
+    const uint64_t key = key_of(in_vert_ids[i]);
+    if (!new_vert_keys.is_empty() && new_vert_keys.contains(key)) {
+      r_reason = "the patch has a vertex ID that is already used";
+      return nullptr;
+    }
+    if (int *index = result_vert_of.lookup_ptr(key)) {
+      *index = int(vert_src.size());
+    }
     result_of_input_vert[i] = int(vert_src.size());
-    result_vert_of.add(key_of(in_vert_ids[i]), int(vert_src.size()));
     vert_src.append(i);
     vert_ids.append(in_vert_ids[i]);
     vert_parents.append(StableID{});
     positions.append(in_positions[i]);
   }
+  const int kept_verts_num = int(vert_src.size());
   for (const int i : patch.new_vert_ids.index_range()) {
     const int anchor = in_vert_of.lookup_default(key_of(patch.new_vert_anchors[i]), -1);
     if (anchor == -1) {
       return missing("anchor vertices");
     }
-    if (!result_vert_of.add(key_of(patch.new_vert_ids[i]), int(vert_src.size()))) {
-      r_reason = "the patch has a vertex ID that is already used";
-      return nullptr;
+    if (int *index = result_vert_of.lookup_ptr(key_of(patch.new_vert_ids[i]))) {
+      *index = int(vert_src.size());
     }
     vert_src.append(anchor);
     vert_ids.append(patch.new_vert_ids[i]);
@@ -301,9 +354,21 @@ Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
     face_ids.append(in_face_ids[f]);
     face_parents.append(StableID{});
   }
+  /* New face IDs must not be used by kept faces or by each other. */
   Set<uint64_t> used_face_ids;
-  for (const StableID id : face_ids) {
-    used_face_ids.add(key_of(id));
+  for (const StableID id : patch.new_face_ids) {
+    if (!used_face_ids.add(key_of(id))) {
+      r_reason = "the patch has a face ID that is already used";
+      return nullptr;
+    }
+  }
+  if (!used_face_ids.is_empty()) {
+    for (const StableID id : face_ids) {
+      if (used_face_ids.contains(key_of(id))) {
+        r_reason = "the patch has a face ID that is already used";
+        return nullptr;
+      }
+    }
   }
   int corner_pos = 0;
   for (const int nf : patch.new_face_sizes.index_range()) {
@@ -333,10 +398,6 @@ Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
       corner_src.append(src_corner);
     }
     corner_pos += size;
-    if (!used_face_ids.add(key_of(patch.new_face_ids[nf]))) {
-      r_reason = "the patch has a face ID that is already used";
-      return nullptr;
-    }
     face_src.append(src_face);
     face_ids.append(patch.new_face_ids[nf]);
     face_parents.append(patch.new_face_sources[nf]);
@@ -366,27 +427,33 @@ Mesh *patch_apply(const Mesh &input, const Patch &patch, std::string &r_reason)
   result->corner_verts_for_write().copy_from(corner_verts);
   bke::mesh_calc_edges(*result, true, false);
 
-  /* Edge sources: the input edge between the same two input vertices. */
-  Map<std::pair<int, int>, int> in_edge_of;
-  in_edge_of.reserve(in_edges.size());
-  for (const int e : in_edges.index_range()) {
-    const int a = in_edges[e][0], b = in_edges[e][1];
-    in_edge_of.add({std::min(a, b), std::max(a, b)}, e);
-  }
+  /* Edge sources: the input edge between the same two input vertices, found through the edges
+   * of each input vertex. */
+  Array<int> vert_to_edge_offsets;
+  Array<int> vert_to_edge_indices;
+  const GroupedSpan<int> in_vert_edges = bke::mesh::build_vert_to_edge_map(
+      in_edges, input.verts_num, vert_to_edge_offsets, vert_to_edge_indices);
   const Span<int2> edges = result->edges();
-  const int kept_verts_num = int(result_vert_of.size()) - int(patch.new_vert_ids.size());
   Array<int> edge_src(edges.size(), -1);
   Array<StableID> edge_ids(edges.size());
-  for (const int e : edges.index_range()) {
-    const int r0 = edges[e][0], r1 = edges[e][1];
-    if (r0 < kept_verts_num && r1 < kept_verts_num) {
-      const int a = vert_src[r0], b = vert_src[r1];
-      edge_src[e] = in_edge_of.lookup_default({std::min(a, b), std::max(a, b)}, -1);
+  threading::parallel_for(edges.index_range(), 4096, [&](const IndexRange range) {
+    for (const int e : range) {
+      const int r0 = edges[e][0], r1 = edges[e][1];
+      if (r0 < kept_verts_num && r1 < kept_verts_num) {
+        const int a = vert_src[r0], b = vert_src[r1];
+        for (const int in_edge : in_vert_edges[a]) {
+          const int2 ie = in_edges[in_edge];
+          if ((ie[0] == a && ie[1] == b) || (ie[0] == b && ie[1] == a)) {
+            edge_src[e] = in_edge;
+            break;
+          }
+        }
+      }
+      edge_ids[e] = edge_src[e] != -1 ?
+                        in_edge_ids[edge_src[e]] :
+                        derive_unordered(Derivation::Generated, vert_ids[r0], vert_ids[r1], 3);
     }
-    edge_ids[e] = edge_src[e] != -1 ?
-                      in_edge_ids[edge_src[e]] :
-                      derive_unordered(Derivation::Generated, vert_ids[r0], vert_ids[r1], 3);
-  }
+  });
 
   copy_attributes(input, *result, bke::AttrDomain::Point, vert_src);
   copy_attributes(input, *result, bke::AttrDomain::Edge, edge_src);

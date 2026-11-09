@@ -16,6 +16,7 @@
  * when modifiers below change. Edits whose elements are missing are paused, not deleted.
  */
 
+#include <atomic>
 #include <cstring>
 #include <string>
 
@@ -24,6 +25,7 @@
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_set.hh"
+#include "BLI_task.hh"
 #include "BLI_vector.hh"
 
 #include "BLT_translation.hh"
@@ -500,7 +502,10 @@ static void write_selection_vertex_group(Mesh &mesh)
   group.finish();
 }
 
-static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
+static void write_selection(const EditPolyModifierData &emd,
+                            Mesh &mesh,
+                            const Span<bke::stable_id::StableID> vert_ids,
+                            const Span<bke::stable_id::StableID> ids)
 {
   using namespace bke::stable_id;
   Set<uint64_t> selected;
@@ -508,7 +513,6 @@ static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
     selected.add(key_of(int2(emd.sel_face_ids[2 * i], emd.sel_face_ids[2 * i + 1])));
   }
   const bool elements = (emd.flag & MOD_EDITPOLY_SELECTION_ELEMENTS) != 0;
-  const Array<StableID> ids = read_or_make_root_ids(mesh, bke::AttrDomain::Face);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
   attributes.remove(".select_poly");
   attributes.remove(".select_vert");
@@ -537,7 +541,6 @@ static void write_selection(const EditPolyModifierData &emd, Mesh &mesh)
     return;
   }
 
-  const Array<StableID> vert_ids = read_or_make_root_ids(mesh, bke::AttrDomain::Point);
   if (emd.sel_verts_num > 0) {
     Set<uint64_t> verts;
     for (int i = 0; i < emd.sel_verts_num; i++) {
@@ -612,24 +615,41 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
     }
   }
 
-  /* 2. Moves. */
+  /* IDs of the mesh being edited, read once for the steps below (without IDs from below, the
+   * incoming mesh is the base mesh: root IDs). */
+  const bool need_ids = (apply_moves && emd->moves_num > 0) || emd->attr_ints_num > 0 ||
+                        (emd->flag & MOD_EDITPOLY_HAS_SELECTION);
+  const Array<StableID> vert_ids = need_ids ?
+                                       read_or_make_root_ids(*result, bke::AttrDomain::Point) :
+                                       Array<StableID>();
+  const Array<StableID> face_ids = need_ids ?
+                                       read_or_make_root_ids(*result, bke::AttrDomain::Face) :
+                                       Array<StableID>();
+
+  /* 2. Moves: a small table of the moved IDs, checked against every vertex in parallel (much
+   * faster than a table of every vertex when only some of them moved). */
   if (apply_moves && emd->moves_num > 0 && result->verts_num > 0) {
-    /* Without IDs from below, the incoming mesh is the base mesh: use root IDs. */
-    const Array<StableID> ids = read_or_make_root_ids(*result, bke::AttrDomain::Point);
-    const IDIndex index(ids.data(), ids.size());
-    MutableSpan<float3> positions = result->vert_positions_for_write();
-    int paused = 0;
+    Map<uint64_t, int> move_of;
+    move_of.reserve(emd->moves_num);
     for (int i = 0; i < emd->moves_num; i++) {
-      const StableID id{uint32_t(emd->move_ids[2 * i]), uint32_t(emd->move_ids[2 * i + 1])};
-      const int vert = index.find(id);
-      if (vert == -1) {
-        paused++;
-        continue;
-      }
-      positions[vert] += float3(emd->move_offsets[3 * i],
-                                emd->move_offsets[3 * i + 1],
-                                emd->move_offsets[3 * i + 2]);
+      move_of.add(key_of(int2(emd->move_ids[2 * i], emd->move_ids[2 * i + 1])), i);
     }
+    MutableSpan<float3> positions = result->vert_positions_for_write();
+    std::atomic<int> found = 0;
+    threading::parallel_for(vert_ids.index_range(), 4096, [&](const IndexRange range) {
+      int local = 0;
+      for (const int v : range) {
+        const int i = move_of.lookup_default(vert_ids[v].as_u64(), -1);
+        if (i != -1) {
+          positions[v] += float3(emd->move_offsets[3 * i],
+                                 emd->move_offsets[3 * i + 1],
+                                 emd->move_offsets[3 * i + 2]);
+          local++;
+        }
+      }
+      found += local;
+    });
+    const int paused = int(move_of.size()) - found.load();
     result->tag_positions_changed();
     if (paused > 0) {
       if (!warning.empty()) {
@@ -642,7 +662,8 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 
   /* 3. Element data (bevel weights, creases...). */
   if (emd->attr_ints_num > 0) {
-    const int paused = edit_poly::attrs_apply(attr_ints(*emd), attr_floats(*emd), *result);
+    const int paused = edit_poly::attrs_apply(
+        attr_ints(*emd), attr_floats(*emd), *result, vert_ids, face_ids);
     if (paused > 0) {
       if (!warning.empty()) {
         warning += "; ";
@@ -654,7 +675,7 @@ static Mesh *modify_mesh(ModifierData *md, const ModifierEvalContext *ctx, Mesh 
 
   /* 4. Face selection, for modifiers above that work on selected faces (e.g. UVW Map). */
   if (emd->flag & MOD_EDITPOLY_HAS_SELECTION) {
-    write_selection(*emd, *result);
+    write_selection(*emd, *result, vert_ids, face_ids);
   }
 
   if (!warning.empty()) {

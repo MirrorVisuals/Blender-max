@@ -6,11 +6,13 @@
  * \ingroup modifiers
  */
 
+#include <atomic>
 #include <cmath>
 #include <utility>
 
 #include "BLI_map.hh"
 #include "BLI_set.hh"
+#include "BLI_task.hh"
 
 #include "DNA_mesh_types.h"
 
@@ -260,25 +262,16 @@ void attrs_compute(const Mesh &input,
   encode(items, r_ints, r_floats);
 }
 
-int attrs_apply(const Span<int> ints, const Span<float> floats, Mesh &mesh)
+int attrs_apply(const Span<int> ints,
+                const Span<float> floats,
+                Mesh &mesh,
+                const Span<StableID> vert_ids,
+                const Span<StableID> face_ids)
 {
-  using namespace bke::stable_id;
   Array<Vector<Item>> items;
   decode(ints, floats, items);
-  bool any = false;
-  for (const Vector<Item> &list : items) {
-    any |= !list.is_empty();
-  }
-  if (!any) {
-    return 0;
-  }
-
-  const Array<StableID> vert_ids = read_or_make_root_ids(mesh, AttrDomain::Point);
-  const Array<StableID> face_ids = read_or_make_root_ids(mesh, AttrDomain::Face);
-  const Map<uint64_t, int> vert_of = index_of(vert_ids);
-  const Map<uint64_t, int> face_of = index_of(face_ids);
-  const Map<EdgeKey, int> edge_of = edge_index_of(mesh, vert_ids);
   bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  const Span<int2> edges = mesh.edges();
 
   int paused = 0;
   for (const int code : IndexRange(ATTRS_NUM)) {
@@ -286,40 +279,62 @@ int attrs_apply(const Span<int> ints, const Span<float> floats, Mesh &mesh)
       continue;
     }
     const AttrInfo &info = ATTRS[code];
-    Vector<std::pair<int, float>> targets;
-    for (const Item &item : items[code]) {
-      int index = -1;
-      switch (info.domain) {
-        case AttrDomain::Point:
-          index = vert_of.lookup_default(item.a.as_u64(), -1);
-          break;
-        case AttrDomain::Face:
-          index = face_of.lookup_default(item.a.as_u64(), -1);
-          break;
-        case AttrDomain::Edge:
-          index = edge_of.lookup_default(edge_key(item.a, item.b), -1);
-          break;
-        default:
-          break;
-      }
-      if (index == -1) {
-        paused++;
+    /* A small table of the stored items, checked against every element in parallel (much faster
+     * than a table of every element when only some of them were edited). */
+    Map<uint64_t, int> item_of;
+    Map<EdgeKey, int> edge_item_of;
+    for (const int i : items[code].index_range()) {
+      const Item &item = items[code][i];
+      if (info.domain == AttrDomain::Edge) {
+        edge_item_of.add(edge_key(item.a, item.b), i);
       }
       else {
-        targets.append({index, item.value});
+        item_of.add(item.a.as_u64(), i);
       }
     }
-    if (targets.is_empty()) {
+    const int64_t size = info.domain == AttrDomain::Point ? vert_ids.size() :
+                         info.domain == AttrDomain::Face  ? face_ids.size() :
+                                                            edges.size();
+    Array<int> target(size, -1);
+    std::atomic<int> found = 0;
+    threading::parallel_for(IndexRange(size), 4096, [&](const IndexRange range) {
+      int local = 0;
+      for (const int64_t e : range) {
+        int i = -1;
+        if (info.domain == AttrDomain::Point) {
+          i = item_of.lookup_default(vert_ids[e].as_u64(), -1);
+        }
+        else if (info.domain == AttrDomain::Face) {
+          i = item_of.lookup_default(face_ids[e].as_u64(), -1);
+        }
+        else {
+          i = edge_item_of.lookup_default(
+              edge_key(vert_ids[edges[e][0]], vert_ids[edges[e][1]]), -1);
+        }
+        target[e] = i;
+        local += (i != -1);
+      }
+      found += local;
+    });
+    paused += int(items[code].size()) - found.load();
+    if (found.load() == 0) {
       continue;
     }
+    auto write = [&](auto &&set) {
+      threading::parallel_for(IndexRange(size), 4096, [&](const IndexRange range) {
+        for (const int64_t e : range) {
+          if (target[e] != -1) {
+            set(e, items[code][target[e]].value);
+          }
+        }
+      });
+    };
     switch (info.type) {
       case ValueType::Float: {
         bke::SpanAttributeWriter<float> w = attributes.lookup_or_add_for_write_span<float>(
             info.name, info.domain);
         if (w) {
-          for (const auto &[i, value] : targets) {
-            w.span[i] = value;
-          }
+          write([&](const int64_t e, const float value) { w.span[e] = value; });
           w.finish();
         }
         break;
@@ -328,9 +343,7 @@ int attrs_apply(const Span<int> ints, const Span<float> floats, Mesh &mesh)
         bke::SpanAttributeWriter<bool> w = attributes.lookup_or_add_for_write_span<bool>(
             info.name, info.domain);
         if (w) {
-          for (const auto &[i, value] : targets) {
-            w.span[i] = value > 0.5f;
-          }
+          write([&](const int64_t e, const float value) { w.span[e] = value > 0.5f; });
           w.finish();
         }
         break;
@@ -339,9 +352,7 @@ int attrs_apply(const Span<int> ints, const Span<float> floats, Mesh &mesh)
         bke::SpanAttributeWriter<int> w = attributes.lookup_or_add_for_write_span<int>(
             info.name, info.domain);
         if (w) {
-          for (const auto &[i, value] : targets) {
-            w.span[i] = int(std::lround(value));
-          }
+          write([&](const int64_t e, const float value) { w.span[e] = int(std::lround(value)); });
           w.finish();
         }
         break;

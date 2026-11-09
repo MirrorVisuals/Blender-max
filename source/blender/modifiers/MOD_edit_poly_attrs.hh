@@ -41,8 +41,15 @@ void attrs_compute(const Mesh &input,
                    Vector<int> &r_ints,
                    Vector<float> &r_floats);
 
-/** Write the stored data on `mesh`. Returns the number of items whose element is missing. */
-int attrs_apply(Span<int> ints, Span<float> floats, Mesh &mesh);
+/**
+ * Write the stored data on `mesh`, whose element IDs are `vert_ids` and `face_ids`. Returns the
+ * number of items whose element is missing.
+ */
+int attrs_apply(Span<int> ints,
+                Span<float> floats,
+                Mesh &mesh,
+                Span<StableID> vert_ids,
+                Span<StableID> face_ids);
 
 /** Number of stored items. */
 int attrs_count(Span<int> ints);

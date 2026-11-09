@@ -89,7 +89,7 @@ drv = driver(ob)
 sub = ob.modifiers.new("Subdivision", 'SUBSURF')
 sub.levels = 2
 update()
-overhead("Subdivision level 2 (writes stable IDs)", ob, drv, [sub])
+overhead("Subdivision level 2 (incl. stable IDs)", ob, drv, [sub])
 
 # 2. Edit Poly: Tab sessions, moves and a topology patch on a big mesh ------------------------
 fresh()
@@ -173,7 +173,7 @@ arr = ob.modifiers.new("Array", 'ARRAY')
 arr.count = 40
 mir = ob.modifiers.new("Mirror", 'MIRROR')
 update()
-overhead("Array x40 + Mirror (write stable IDs)", ob, drv, [arr, mir])
+overhead("Array x40 + Mirror (incl. stable IDs)", ob, drv, [arr, mir])
 
 # 7. Many objects with a full stack ----------------------------------------------------------------
 fresh()
@@ -190,16 +190,20 @@ for i in range(count):
     o.modifiers.new("Unwrap", 'UNWRAP')
     objects.append(o)
 build_ms = ms(t0)
-t0 = time.perf_counter()
-faces = evaluate(objects)
-first = ms(t0)
-single(f"{count} objects: first evaluation (full stacks)", faces, first)
+evaluate(objects)
+def reevaluate_all():
+    """Make every object evaluate its whole stack again, and time it."""
+    for o in objects:
+        o.update_tag(refresh={'DATA'})
+    t0 = time.perf_counter()
+    n = evaluate(objects)
+    return ms(t0), n
+first, faces = reevaluate_all()
+single(f"{count} objects: evaluation (full stacks)", faces, first)
 for o in objects:
     for m in o.modifiers[1:]:
         m.show_viewport = False
-t0 = time.perf_counter()
-evaluate(objects)
-plain = ms(t0)
+plain, _ = reevaluate_all()
 single(f"{count} objects: Subdivision only", faces, plain)
 rows.append((f"{count} objects: cost of our modifiers", faces, first, max(first - plain, 0.0)))
 print(f"  {count} objects: cost of our modifiers             {max(first - plain, 0.0):9.1f} ms")

@@ -13,6 +13,8 @@
 
 #include "BKE_attribute.hh"
 #include "BKE_mesh.hh"
+#include "BLI_sort.hh"
+#include "BLI_array.hh"
 #include "BKE_stable_id_mesh.hh"
 
 namespace blender::bke::stable_id {
@@ -150,6 +152,31 @@ void write_ids(Mesh &mesh,
   }
 }
 
+/**
+ * #resolve_collisions, with a fast check first: duplicates are rare, and sorting a copy of the
+ * IDs in parallel finds out much faster than hashing millions of them one by one.
+ */
+static void resolve_collisions_fast(MutableSpan<StableID> ids)
+{
+  Array<uint64_t> keys(ids.size());
+  threading::parallel_for(ids.index_range(), 8192, [&](const IndexRange range) {
+    for (const int64_t i : range) {
+      keys[i] = ids[i].as_u64(); /* Invalid IDs are 0: they sort first and are skipped. */
+    }
+  });
+  parallel_sort(keys.begin(), keys.end());
+  bool duplicate = false;
+  for (int64_t i = 1; i < keys.size(); i++) {
+    if (keys[i] != 0 && keys[i] == keys[i - 1]) {
+      duplicate = true;
+      break;
+    }
+  }
+  if (duplicate) {
+    resolve_collisions(ids.data(), ids.size());
+  }
+}
+
 void write_part_ids(Mesh &result, const Span<IDPart> parts)
 {
   for (const AttrDomain domain : {AttrDomain::Point, AttrDomain::Edge, AttrDomain::Face}) {
@@ -175,27 +202,31 @@ void write_part_ids(Mesh &result, const Span<IDPart> parts)
       const int start = domain == AttrDomain::Point ? part.vert_start :
                         domain == AttrDomain::Edge  ? part.edge_start :
                                                       part.face_start;
-      for (const int i : src.index_range()) {
-        const int dst = start + i;
-        if (dst < 0 || dst >= size) {
-          continue;
+      threading::parallel_for(src.index_range(), 4096, [&](const IndexRange range) {
+        for (const int i : range) {
+          const int dst = start + i;
+          if (dst < 0 || dst >= size) {
+            continue;
+          }
+          if (part.keep) {
+            ids[dst] = src[i];
+          }
+          else {
+            ids[dst] = derive(part.kind, src[i], part.a, part.b);
+            parents[dst] = src[i];
+          }
         }
-        if (part.keep) {
-          ids[dst] = src[i];
-        }
-        else {
-          ids[dst] = derive(part.kind, src[i], part.a, part.b);
-          parents[dst] = src[i];
-        }
-      }
+      });
     }
     const uint64_t seed = root_seed(domain) ^ 0xA11D;
-    for (const int i : IndexRange(size)) {
-      if (!ids[i].is_valid()) {
-        ids[i] = make_root(seed, i);
+    threading::parallel_for(IndexRange(size), 4096, [&](const IndexRange range) {
+      for (const int i : range) {
+        if (!ids[i].is_valid()) {
+          ids[i] = make_root(seed, i);
+        }
       }
-    }
-    resolve_collisions(ids.data(), size);
+    });
+    resolve_collisions_fast(ids);
     write_ids(result, domain, ids, parents);
   }
 }
