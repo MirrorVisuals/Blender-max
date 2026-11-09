@@ -124,6 +124,8 @@ CUDA 12.8 or newer is installed.
 ### Fixes
 
 - Vulkan: no crash when snapping with Face Midpoint (the snap cursor's midpoint dot).
+- No crash in builds with asserts when a move switches to scale or rotate (G then S or R) while
+  an add-on holds the running operator: Blender warns and carries on, as release builds do.
 
 Documentation and tests
 -----------------------
