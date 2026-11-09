@@ -27,7 +27,7 @@ def evaluated(ob):
         for v in me.vertices:
             w = [g.weight for g in v.groups if g.group == group.index]
             weights.append(w[0] if w else 0.0)
-    out = {"verts": len(me.vertices), "weights": weights}
+    out = {"verts": len(me.vertices), "faces": len(me.polygons), "weights": weights}
     ev.to_mesh_clear()
     return out
 
@@ -89,7 +89,10 @@ tab()
 check(ep.selected_faces_num == 1, "one face is stored")
 bev.affect = 'EDGES'
 data = evaluated(ob)
-check(data["verts"] == 16, f"selecting a face selects its 4 edges for the Bevel ({data['verts']} vertices)")
+# Chamfering the 4 top edges: 12 vertices and 10 faces (6 + one strip per edge). With fewer edges
+# beveled the face count is lower.
+check(data["verts"] == 12 and data["faces"] == 10,
+      f"selecting a face selects its 4 edges for the Bevel ({data['verts']} vertices, {data['faces']} faces)")
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")
