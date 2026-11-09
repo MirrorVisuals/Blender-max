@@ -133,21 +133,20 @@ solid_case("Side face out", side, (1.0, 0, 0), 8 + cell * cell)
 solid_case("Corner face up", corner, (0, 0, 1.0), 8 + cell * cell)
 
 print("Solid turned off")
-partial_off = None
 for title, move in (("Corner face down part of a row", (0, 0, -0.4)),
                     ("Corner face down one row", (0, 0, -cell))):
     off = run(title + ", Solid off", grid_cube, corner, move, solid=False)
-    partial_off = partial_off or off
     old = run(title + ", original steps", grid_cube, corner, move, stock=True)
     same = (off['verts'], off['edges'], off['faces']) == (old['verts'], old['edges'], old['faces'])
     check(same and abs(off['volume'] - old['volume']) < 1e-4,
           f"{title}: same as Blender's original Extrude Manifold "
           f"({off['verts']}/{off['edges']}/{off['faces']} against "
           f"{old['verts']}/{old['edges']}/{old['faces']} vertices/edges/faces)")
-on = run("Corner face down part of a row, Solid on", grid_cube, corner, (0, 0, -0.4))
-off = partial_off
-check((on['verts'], on['faces']) != (off['verts'], off['faces']),
-      f"Solid on gives a different result there ({on['verts']} vertices, {on['faces']} faces)")
+through_off = run("Side face through the whole cube, Solid off", grid_cube, side, (-2.5, 0, 0),
+                  solid=False)
+check(through_off['euler'] != 0,
+      f"pushing through with Solid off opens no hole, as before (V-E+F = {through_off['euler']}); "
+      "with Solid on it does (tested above)")
 
 print("Other parts of the mesh")
 def cube_and_far_cube(bm):
