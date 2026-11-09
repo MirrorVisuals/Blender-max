@@ -385,11 +385,18 @@ static void obmat_to_viewmat(RegionView3D *rv3d, Object *ob)
   rv3d->view = RV3D_VIEW_USER; /* don't show the grid */
 
   normalize_m4_m4(bmat, ob->object_to_world().ptr());
+
+  /* view quat calculation, needed for add object.
+   * From the camera's own orientation, without its tilt correction: navigation (fly, walk,
+   * camera lock) starts from this quat and writes it back to the camera, so with the corrected
+   * one, every redraw would undo the camera's tilt. */
+  float viewmat_camera[4][4];
+  invert_m4_m4(viewmat_camera, bmat);
+  mat4_normalized_to_quat(rv3d->viewquat, viewmat_camera);
+
+  /* What is drawn: the camera as its tilt correction turns it. */
   BKE_camera_tilt_correction_apply(ob, bmat);
   invert_m4_m4(rv3d->viewmat, bmat);
-
-  /* view quat calculation, needed for add object */
-  mat4_normalized_to_quat(rv3d->viewquat, rv3d->viewmat);
 }
 
 void view3d_viewmatrix_set(const Depsgraph *depsgraph,
