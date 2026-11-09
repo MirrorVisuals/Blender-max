@@ -412,8 +412,8 @@ int attrs_apply(const Span<int> ints,
           i = item_of.lookup_default(face_ids[e].as_u64(), -1);
         }
         else {
-          i = edge_item_of.lookup_default(
-              edge_key(vert_ids[edges[e][0]], vert_ids[edges[e][1]]), -1);
+          i = edge_item_of.lookup_default(edge_key(vert_ids[edges[e][0]], vert_ids[edges[e][1]]),
+                                          -1);
         }
         target[e] = i;
         local += (i != -1);

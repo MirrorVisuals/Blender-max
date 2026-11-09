@@ -193,9 +193,7 @@ std::string ops_to_text(const Span<OpRecord> ops)
   std::ostringstream out;
   out.precision(9);
   for (const OpRecord &op : ops) {
-    out << (op.type == OpType::Extrude ? "EXTRUDE" :
-            op.type == OpType::Inset   ? "INSET" :
-                                         "BEVEL");
+    out << (op.type == OpType::Extrude ? "EXTRUDE" : op.type == OpType::Inset ? "INSET" : "BEVEL");
     out << " params=";
     for (const int i : op.params.index_range()) {
       out << (i ? "," : "") << op.params[i];
@@ -650,10 +648,8 @@ Mesh *ops_apply(const Mesh &input,
   convert_params.calc_face_normal = true;
   convert_params.calc_vert_normal = true;
   BMesh *bm = BKE_mesh_to_bmesh_ex(src, &create_params, &convert_params);
-  const int vert_offset = CustomData_get_offset_named(
-      &bm->vdata, CD_PROP_INT32_2D, ATTR_ID_POINT);
-  const int face_offset = CustomData_get_offset_named(
-      &bm->pdata, CD_PROP_INT32_2D, ATTR_ID_FACE);
+  const int vert_offset = CustomData_get_offset_named(&bm->vdata, CD_PROP_INT32_2D, ATTR_ID_POINT);
+  const int face_offset = CustomData_get_offset_named(&bm->pdata, CD_PROP_INT32_2D, ATTR_ID_FACE);
   if (vert_offset == -1 || face_offset == -1) {
     BM_mesh_free(bm);
     BKE_id_free(nullptr, src);

@@ -17,11 +17,11 @@
 #include <cmath>
 
 #include "BLI_math_base.hh"
-#include "BLI_string.h"
 #include "BLI_math_euler.hh"
 #include "BLI_math_matrix.hh"
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
+#include "BLI_string.h"
 
 #include "BLT_translation.hh"
 
@@ -231,13 +231,13 @@ static float2 face_corner(const int k, const int n)
  * mapping type is unknown.
  */
 static void compute(const UVWMapModifierData &umd,
-             const float4x4 &to_gizmo,
-             const Sizing &size,
-             const Span<float3> positions,
-             const OffsetIndices<int> faces,
-             const Span<int> corner_verts,
-             const IndexMask &face_mask,
-             MutableSpan<float2> r_uvs)
+                    const float4x4 &to_gizmo,
+                    const Sizing &size,
+                    const Span<float3> positions,
+                    const OffsetIndices<int> faces,
+                    const Span<int> corner_verts,
+                    const IndexMask &face_mask,
+                    MutableSpan<float2> r_uvs)
 {
   Array<float3> q(positions.size());
   for (const int v : positions.index_range()) {

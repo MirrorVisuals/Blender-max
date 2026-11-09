@@ -19,9 +19,10 @@ Tab picks a level:
 Entering a level starts a session: the object temporarily uses a copy of the mesh as it arrives
 at that level (with the level's moves applied), and the modifiers up to and including the level
 are hidden because their result is already in that copy. Modifiers above stay visible, which
-shows the end result. Clicking another Edit Poly while editing, then Tab (or its Edit Level button), records the
-current level and switches to that one. Tab over a modifier panel acts on that modifier. Tab again records how far each vertex moved as moves of the level and
-puts the original mesh back. The base mesh is never edited.
+shows the end result. Clicking another Edit Poly while editing, then Tab (or its Edit Level
+button), records the current level and switches to that one. Tab over a modifier panel acts on
+that modifier. Tab again records how far each vertex moved as moves of the level and puts the
+original mesh back. The base mesh is never edited.
 
 Any tool can be used. Moves of existing vertices become moves; topology changes become the
 level's patch: removed elements and new geometry anchored to the vertices of the mesh below, so
@@ -32,6 +33,7 @@ level), the patch pauses; such a level cannot be edited until the mesh below mat
 import bmesh
 import bpy
 from bpy.app.handlers import persistent
+from bpy.app.translations import pgettext_rpt as rpt_
 from bpy.types import Operator
 from bpy.props import StringProperty
 
@@ -542,7 +544,7 @@ class OBJECT_OT_edit_poly_collapse_to(Operator):
         mods = ob.modifiers[:]
         level = ob.modifiers.get(self.modifier)
         if level is None:
-            self.report({'ERROR'}, "Modifier not found")
+            self.report({'ERROR'}, rpt_("Modifier not found"))
             return {'CANCELLED'}
         k = mods.index(level)
         disabled = [m.name for m in mods[:k + 1] if not m.show_viewport]
@@ -571,11 +573,10 @@ class OBJECT_OT_edit_poly_collapse_to(Operator):
         collapsed.name = name
 
         if disabled:
-            self.report({'WARNING'}, "Disabled modifiers were removed without effect: " +
-                        ", ".join(disabled))
+            self.report({'WARNING'}, rpt_("Disabled modifiers were removed without effect: {:s}").format(
+                ", ".join(disabled)))
         if had_shape_keys:
-            self.report({'WARNING'}, "Shape keys of the original mesh are not part of the "
-                        "collapsed mesh")
+            self.report({'WARNING'}, rpt_("Shape keys of the original mesh are not part of the collapsed mesh"))
         return {'FINISHED'}
 
 

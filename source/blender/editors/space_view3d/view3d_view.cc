@@ -15,8 +15,8 @@
 #include "BLI_math_vector.h"
 #include "BLI_rect.h"
 
-#include "BKE_camera.h"
 #include "BKE_action.hh"
+#include "BKE_camera.h"
 #include "BKE_context.hh"
 #ifdef WITH_XR_OPENXR
 #  include "BKE_idprop.hh"

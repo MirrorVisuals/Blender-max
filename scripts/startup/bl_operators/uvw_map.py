@@ -17,6 +17,7 @@ selecting something else, puts the helper away. Helpers of deleted modifiers are
 
 import bpy
 from bpy.app.handlers import persistent
+from bpy.app.translations import pgettext_rpt as rpt_
 from bpy.types import Operator
 from bpy.props import StringProperty
 from mathutils import Euler, Matrix, Vector
@@ -67,6 +68,7 @@ def _store(mod, location, rotation, size):
     if not all(math.isfinite(v) for v in values) or min(abs(v) for v in size) < 1e-6:
         return  # A flat or broken gizmo (e.g. scaled to zero while snapping): keep the last good one.
     euler = rotation.to_euler('XYZ', Euler(mod.gizmo_rotation, 'XYZ'))
+
     def differs(a, b):
         return any(abs(x - y) > 1e-6 for x, y in zip(a, b))
     if differs(mod.gizmo_location, location):
@@ -472,7 +474,7 @@ class OBJECT_OT_uvw_map_view_align(_UVWMapOperator, Operator):
         if mod is None:
             return {'CANCELLED'}
         if not view_align(context, ob, mod):
-            self.report({'ERROR'}, "No 3D Viewport to align to")
+            self.report({'ERROR'}, rpt_("No 3D Viewport to align to"))
             return {'CANCELLED'}
         return {'FINISHED'}
 
@@ -530,14 +532,14 @@ class OBJECT_OT_uv_map_connect_texture(Operator):
 
         mat = ob.active_material
         if mat is None or mat.node_tree is None:
-            self.report({'ERROR'}, "The object's active material has no nodes")
+            self.report({'ERROR'}, rpt_("The object's active material has no nodes"))
             return {'CANCELLED'}
         tree = mat.node_tree
         node = tree.nodes.active
         socket = _vector_socket_to_connect(node) if node is not None else None
         if socket is None:
-            self.report({'ERROR'},
-                        "Select the texture node in the Shader Editor first (material \"%s\")" % mat.name)
+            self.report({'ERROR'}, rpt_(
+                "Select the texture node in the Shader Editor first (material \"{:s}\")").format(mat.name))
             return {'CANCELLED'}
 
         uv_node = None
@@ -552,7 +554,7 @@ class OBJECT_OT_uv_map_connect_texture(Operator):
             tree.links.new(uv_node.outputs["UV"], socket)
         uv_node.uv_map = uv_name
         uv_node.label = uv_name
-        self.report({'INFO'}, "\"%s\" reads the UV map \"%s\"" % (node.label or node.name, uv_name))
+        self.report({'INFO'}, rpt_("\"{:s}\" reads the UV map \"{:s}\"").format(node.label or node.name, uv_name))
         return {'FINISHED'}
 
 

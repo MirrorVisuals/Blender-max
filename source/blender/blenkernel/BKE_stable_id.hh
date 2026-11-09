@@ -21,8 +21,8 @@
  *  3. Derived elements record their primary parent ID, so an operation stored on a face can find
  *     the faces it was split into (see #ParentIndex). Surviving elements have no parent.
  *
- * IDs are stored as a pair of 32 bit integers (#blender::bke::AttrType::Int32_2D), because there is
- * no 64 bit attribute type. The value {0, 0} means "no ID".
+ * IDs are stored as a pair of 32 bit integers (#blender::bke::AttrType::Int32_2D), because there
+ * is no 64 bit attribute type. The value {0, 0} means "no ID".
  *
  * This header only depends on the standard library, so the rule can be unit tested on its own.
  */
@@ -407,7 +407,8 @@ class IDIndex {
 
 /**
  * Find the elements that were made from a parent element. Built from the per-element parent IDs
- * (the `.stable_parent_*` attributes). Used to run an operation stored on a face on the faces it was split into.
+ * (the `.stable_parent_*` attributes). Used to run an operation stored on a face on the faces it
+ * was split into.
  */
 class ParentIndex {
  public:

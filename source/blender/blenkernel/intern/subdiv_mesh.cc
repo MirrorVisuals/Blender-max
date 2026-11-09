@@ -913,16 +913,15 @@ static bool subdiv_mesh_topology_info(const ForeachContext *foreach_context,
                                          subdiv_context->subdiv_vert_attrs,
                                          subdiv_context->subdiv_vert_attr_spans);
 
-  create_attrs_and_retrieve_interp_spans(coarse_attrs,
-                                         AttrDomain::Edge,
-                                         {".edge_verts",
-                                          stable_id::ATTR_ID_EDGE,
-                                          stable_id::ATTR_PARENT_EDGE},
-                                         attributes,
-                                         subdiv_context->coarse_edge_attrs,
-                                         subdiv_context->coarse_edge_attr_spans,
-                                         subdiv_context->subdiv_edge_attrs,
-                                         subdiv_context->subdiv_edge_attr_spans);
+  create_attrs_and_retrieve_interp_spans(
+      coarse_attrs,
+      AttrDomain::Edge,
+      {".edge_verts", stable_id::ATTR_ID_EDGE, stable_id::ATTR_PARENT_EDGE},
+      attributes,
+      subdiv_context->coarse_edge_attrs,
+      subdiv_context->coarse_edge_attr_spans,
+      subdiv_context->subdiv_edge_attrs,
+      subdiv_context->subdiv_edge_attr_spans);
 
   create_attrs_and_retrieve_interp_spans(coarse_attrs,
                                          AttrDomain::Face,
@@ -1164,8 +1163,7 @@ static float2 bilinear(const float2 &p00,
                        const float u,
                        const float v)
 {
-  return (1.0f - u) * (1.0f - v) * p00 + u * (1.0f - v) * p10 + u * v * p11 +
-         (1.0f - u) * v * p01;
+  return (1.0f - u) * (1.0f - v) * p00 + u * (1.0f - v) * p10 + u * v * p11 + (1.0f - u) * v * p01;
 }
 
 /** ID of a vertex inside a base face, from its patch coordinates as reported by the traversal. */
@@ -1311,8 +1309,8 @@ static void subdiv_mesh_write_stable_ids(SubdivMeshContext *ctx, Mesh &mesh)
     const float steps = float(ctx->settings->resolution - 1);
     /* Stored as float3 (z = 0): two-component corner attributes count as UV maps. */
     bke::SpanAttributeWriter<float3> uv_writer =
-        mesh.attributes_for_write().lookup_or_add_for_write_only_span<float3>(
-            ATTR_SUBD_UV, AttrDomain::Corner);
+        mesh.attributes_for_write().lookup_or_add_for_write_only_span<float3>(ATTR_SUBD_UV,
+                                                                              AttrDomain::Corner);
     threading::parallel_for(groups.index_range(), 512, [&](const IndexRange range) {
       Vector<StableID, 8> corner_ids;
       for (const int coarse_face : range) {

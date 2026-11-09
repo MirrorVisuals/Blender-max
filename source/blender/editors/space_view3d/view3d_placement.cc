@@ -1094,8 +1094,7 @@ static void view3d_interactive_add_confirm(bContext *C, InteractivePlaceData *ip
     {
       RNA_float_set(&op_props, "radius", 1.0f);
     }
-    if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CYLINDER, PLACE_PRIMITIVE_TYPE_CONE))
-    {
+    if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CYLINDER, PLACE_PRIMITIVE_TYPE_CONE)) {
       RNA_float_set(&op_props, "depth", 2.0f);
     }
     if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CONE) {

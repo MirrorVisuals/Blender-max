@@ -181,7 +181,8 @@ static bool is_skipped_attribute(const StringRef name)
               SESSION_ATTR_FACE_ID_HI);
 }
 
-/** Copy every generic attribute of `domain`; `map[i]` is the source index, -1 keeps the default. */
+/** Copy every generic attribute of `domain`; `map[i]` is the source index, -1 keeps the default.
+ */
 static void copy_attributes(const Mesh &src,
                             Mesh &dst,
                             const bke::AttrDomain domain,
@@ -189,9 +190,7 @@ static void copy_attributes(const Mesh &src,
 {
   IndexMaskMemory memory;
   const IndexMask mask = IndexMask::from_predicate(
-      IndexRange(map.size()), memory, [&](const int64_t i) {
-        return map[i] >= 0;
-      });
+      IndexRange(map.size()), memory, [&](const int64_t i) { return map[i] >= 0; });
   const bke::AttributeAccessor src_attributes = src.attributes();
   bke::MutableAttributeAccessor dst_attributes = dst.attributes_for_write();
   src_attributes.foreach_attribute([&](const bke::AttributeIter &iter) {
@@ -216,8 +215,7 @@ static void copy_attributes(const Mesh &src,
  * IDs, checked against every element in parallel: much faster than a table of all elements when
  * a patch refers to only some of them.
  */
-static Map<uint64_t, int> find_indices(const Span<StableID> ids,
-                                       const Span<Span<StableID>> wanted)
+static Map<uint64_t, int> find_indices(const Span<StableID> ids, const Span<Span<StableID>> wanted)
 {
   Map<uint64_t, int> found;
   for (const Span<StableID> list : wanted) {
@@ -477,10 +475,10 @@ bool read_session_ids(const Mesh &mesh, const bke::AttrDomain domain, Array<Stab
 {
   const bool point = domain == bke::AttrDomain::Point;
   const bke::AttributeAccessor attributes = mesh.attributes();
-  const bke::AttributeReader<int> lo = attributes.lookup<int>(
-      point ? SESSION_ATTR_VERT_ID_LO : SESSION_ATTR_FACE_ID_LO);
-  const bke::AttributeReader<int> hi = attributes.lookup<int>(
-      point ? SESSION_ATTR_VERT_ID_HI : SESSION_ATTR_FACE_ID_HI);
+  const bke::AttributeReader<int> lo = attributes.lookup<int>(point ? SESSION_ATTR_VERT_ID_LO :
+                                                                      SESSION_ATTR_FACE_ID_LO);
+  const bke::AttributeReader<int> hi = attributes.lookup<int>(point ? SESSION_ATTR_VERT_ID_HI :
+                                                                      SESSION_ATTR_FACE_ID_HI);
   if (!lo || !hi || lo.domain != domain || hi.domain != domain) {
     r_ids = {};
     return false;
@@ -582,9 +580,9 @@ std::string patch_compute(const Mesh &input,
   Array<Kind> kind(verts_num);
   Array<StableID> result_ids(verts_num);
   Array<StableID> anchors(verts_num);
-  Array<int> input_of(verts_num, -1);         /* Input vertex of each kept vertex. */
+  Array<int> input_of(verts_num, -1); /* Input vertex of each kept vertex. */
   Array<bool> input_taken(input.verts_num, false);
-  Set<uint64_t> used_new;                     /* IDs given to new vertices. */
+  Set<uint64_t> used_new; /* IDs given to new vertices. */
   for (const int i : IndexRange(verts_num)) {
     const StableID id = session_vert_ids[i];
     const uint64_t key = key_of(id);

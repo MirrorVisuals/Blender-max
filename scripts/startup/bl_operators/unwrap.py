@@ -16,6 +16,7 @@ Only UVs are kept: topology changed in an Unwrap session is not.
 
 import bmesh
 import bpy
+from bpy.app.translations import pgettext_rpt as rpt_
 from bpy.types import Operator
 from bpy.props import StringProperty
 
@@ -120,7 +121,7 @@ def commit_session(context, ob):
         bpy.ops.object.mode_set(mode='OBJECT')
     warning = None
     if len(ob.data.polygons) != ob.get(KEY_FACES, len(ob.data.polygons)):
-        warning = "Topology changes in an Unwrap level are not kept (only UVs are)"
+        warning = rpt_("Topology changes in an Unwrap level are not kept (only UVs are)")
     level = ob.modifiers.get(ob[KEY_MODIFIER])
     if level is not None and level.type == 'UNWRAP':
         level.session_commit(mesh=ob.data)
@@ -160,7 +161,7 @@ class OBJECT_OT_unwrap_level_edit(_UnwrapOperator, Operator):
             if warning:
                 self.report({'WARNING'}, warning)
         if edit_poly.in_session(ob):
-            self.report({'ERROR'}, "Leave the Edit Poly level first (Tab)")
+            self.report({'ERROR'}, rpt_("Leave the Edit Poly level first (Tab)"))
             return {'CANCELLED'}
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -206,7 +207,7 @@ class OBJECT_OT_unwrap_quick(_UnwrapOperator, Operator):
         if mod is None:
             return {'CANCELLED'}
         if in_session(ob) or edit_poly.in_session(ob):
-            self.report({'ERROR'}, "Leave the level being edited first (Tab)")
+            self.report({'ERROR'}, rpt_("Leave the level being edited first (Tab)"))
             return {'CANCELLED'}
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')

@@ -20,8 +20,8 @@
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.hh"
 #include "BKE_mesh_mirror.hh"
-#include "BKE_stable_id_mesh.hh"
 #include "BKE_modifier.hh"
+#include "BKE_stable_id_mesh.hh"
 
 #include "bmesh.hh"
 #include "bmesh_tools.hh"
@@ -463,16 +463,15 @@ Mesh *BKE_mesh_mirror_apply_mirror_on_axis_for_modifier(MirrorModifierData *mmd,
    * them from the original with the axis, so they stay the same when other axes change. */
   {
     namespace sid = blender::bke::stable_id;
-    const sid::IDPart parts[2] = {
-        {mesh, 0, 0, 0, true, sid::Derivation::MirrorCopy, 0, 0},
-        {mesh,
-         src_verts_num,
-         src_edges_num,
-         int(src_faces.size()),
-         false,
-         sid::Derivation::MirrorCopy,
-         uint64_t(axis),
-         0}};
+    const sid::IDPart parts[2] = {{mesh, 0, 0, 0, true, sid::Derivation::MirrorCopy, 0, 0},
+                                  {mesh,
+                                   src_verts_num,
+                                   src_edges_num,
+                                   int(src_faces.size()),
+                                   false,
+                                   sid::Derivation::MirrorCopy,
+                                   uint64_t(axis),
+                                   0}};
     sid::write_part_ids(*result, blender::Span<sid::IDPart>(parts, 2));
   }
 

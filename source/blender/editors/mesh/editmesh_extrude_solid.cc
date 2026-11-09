@@ -26,7 +26,6 @@
  */
 
 #include <algorithm>
-#include <cstdio>
 #include <string>
 
 #include "DNA_mesh_types.h"
@@ -41,6 +40,7 @@
 #include "BLI_math_vector.h"
 #include "BLI_math_vector.hh"
 #include "BLI_set.hh"
+#include "BLI_string.h"
 #include "BLI_time.h"
 #include "BLI_vector.hh"
 #include "BLI_vector_set.hh"
@@ -103,7 +103,7 @@ struct StageTimer {
     }
     const double now = BLI_time_now_seconds();
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "  %s %.1f", stage, (now - last) * 1000.0);
+    SNPRINTF(buf, "  %s %.1f", stage, (now - last) * 1000.0);
     line += buf;
     last = now;
   }
@@ -249,7 +249,6 @@ static BMEdge *copy_edge(BMesh *dst, CopyMaps &maps, BMEdge *e)
   }
   return e_new;
 }
-
 
 /** Copy a face (with its vertices, edges and corner data) into `dst`. */
 static BMFace *copy_face(BMesh *dst, CopyMaps &maps, BMFace *f)
@@ -498,8 +497,7 @@ static void solid_boolean_exact(BMesh *part, BMesh *cutter_bm, const bool push_i
    * not cut as it is, even where a Difference needs it turned around (the floor of a cut that
    * touches nothing), so those faces are flipped afterwards. Faces it creates copy the value. */
   BM_data_layer_add_named(part, &part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
-  const int no_offset = CustomData_get_offset_named(
-      &part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
+  const int no_offset = CustomData_get_offset_named(&part->pdata, CD_PROP_FLOAT3, CUTTER_NO_LAYER);
   {
     BMIter iter;
     BMFace *f;
@@ -675,8 +673,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
     BM_vert_splice(bm, item.value, item.key);
   }
   for (const auto &[e_dst, e_src] : edge_pairs) {
-    if (e_dst != e_src && BM_vert_in_edge(e_src, e_dst->v1) && BM_vert_in_edge(e_src, e_dst->v2))
-    {
+    if (e_dst != e_src && BM_vert_in_edge(e_src, e_dst->v1) && BM_vert_in_edge(e_src, e_dst->v2)) {
       BM_edge_splice(bm, e_dst, e_src);
     }
   }
@@ -754,10 +751,15 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
       top.add(v, BM_vert_create(cutter_bm, float3(v->co) + d, nullptr, BM_CREATE_NOP));
     }
     /* A face of the solid, with the face data of `f_src` and the corner data of `loops_src`. */
-    auto add_face = [&](const Span<BMVert *> verts, BMFace *f_src, const Span<BMLoop *> loops_src) {
-      BMFace *f_new = BM_face_create_verts(
-          cutter_bm, const_cast<BMVert **>(verts.data()), verts.size(), nullptr, BM_CREATE_NOP,
-          true);
+    auto add_face = [&](const Span<BMVert *> verts,
+                        BMFace *f_src,
+                        const Span<BMLoop *> loops_src) {
+      BMFace *f_new = BM_face_create_verts(cutter_bm,
+                                           const_cast<BMVert **>(verts.data()),
+                                           verts.size(),
+                                           nullptr,
+                                           BM_CREATE_NOP,
+                                           true);
       if (f_new == nullptr) {
         return f_new;
       }
@@ -905,7 +907,8 @@ static wmOperatorStatus edbm_extrude_manifold_resolve_exec(bContext *C, wmOperat
     BKE_report(op->reports, RPT_WARNING, "Built without the exact solver: normal extrude kept");
   }
   else if (any_open) {
-    BKE_report(op->reports, RPT_INFO, "The mesh is open (not a closed solid): normal extrude kept");
+    BKE_report(
+        op->reports, RPT_INFO, "The mesh is open (not a closed solid): normal extrude kept");
   }
   return OPERATOR_FINISHED;
 }

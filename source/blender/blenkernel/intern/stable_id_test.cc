@@ -144,7 +144,10 @@ TEST(stable_id, canonical_frame_ignores_winding)
 }
 
 /* Stored corner order of a quad after rotating by `rotation` and optionally flipping winding. */
-static void reorder_quad(const StableID in[4], const int rotation, const bool flip, StableID out[4])
+static void reorder_quad(const StableID in[4],
+                         const int rotation,
+                         const bool flip,
+                         StableID out[4])
 {
   for (int i = 0; i < 4; i++) {
     const int j = flip ? (rotation - i + 8) % 4 : (i + rotation) % 4;

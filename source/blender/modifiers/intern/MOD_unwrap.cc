@@ -120,8 +120,7 @@ static StableID id_from_pair(const int a, const int b)
 static bool decode(const UnwrapModifierData &umd, Stored &r)
 {
   r.ints = umd.face_ints ? Span<int>(umd.face_ints, umd.face_ints_num) : Span<int>();
-  r.floats = umd.face_floats ? Span<float>(umd.face_floats, umd.face_floats_num) :
-                               Span<float>();
+  r.floats = umd.face_floats ? Span<float>(umd.face_floats, umd.face_floats_num) : Span<float>();
   int pi = 0, pf = 0;
   for (int i = 0; i < umd.faces_num; i++) {
     if (pi + 6 > r.ints.size()) {
@@ -463,8 +462,7 @@ static bool resolve_face(const Stored &stored,
           if (!contains(candidates[i].layout, points[c])) {
             continue;
           }
-          const float score = holds_center[i] ? -1.0f :
-                                                math::distance_squared(centers[i], center);
+          const float score = holds_center[i] ? -1.0f : math::distance_squared(centers[i], center);
           if (score < best_score) {
             best_score = score;
             best = i;

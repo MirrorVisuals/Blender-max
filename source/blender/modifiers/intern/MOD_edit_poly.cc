@@ -21,10 +21,10 @@
 #include <string>
 
 #include "BLI_map.hh"
-#include "BLI_string.h"
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_set.hh"
+#include "BLI_string.h"
 #include "BLI_task.hh"
 #include "BLI_vector.hh"
 
@@ -237,9 +237,9 @@ void session_prepare(Mesh &input, Mesh &mesh)
     attributes.remove(name_lo);
     attributes.remove(name_hi);
     bke::SpanAttributeWriter<int> lo = attributes.lookup_or_add_for_write_only_span<int>(name_lo,
-                                                                                        domain);
+                                                                                         domain);
     bke::SpanAttributeWriter<int> hi = attributes.lookup_or_add_for_write_only_span<int>(name_hi,
-                                                                                        domain);
+                                                                                         domain);
     for (const int i : ids.index_range()) {
       lo.span[i] = int(ids[i].lo);
       hi.span[i] = int(ids[i].hi);
@@ -286,14 +286,8 @@ std::string session_commit(EditPolyModifierData &emd,
   Vector<StableID> input_vert_ids;
   Array<StableID> edited_face_ids;
   Array<StableID> edited_vert_ids;
-  const std::string error = patch_compute(input,
-                                          mesh,
-                                          old_patch,
-                                          patch,
-                                          kept_moves,
-                                          input_vert_ids,
-                                          edited_face_ids,
-                                          edited_vert_ids);
+  const std::string error = patch_compute(
+      input, mesh, old_patch, patch, kept_moves, input_vert_ids, edited_face_ids, edited_vert_ids);
   if (!error.empty()) {
     return error;
   }
@@ -380,9 +374,8 @@ std::string session_commit(EditPolyModifierData &emd,
     const int2 id(emd.move_ids[2 * i], emd.move_ids[2 * i + 1]);
     if (!handled[i]) {
       ids.append(id);
-      offsets.append(float3(emd.move_offsets[3 * i],
-                            emd.move_offsets[3 * i + 1],
-                            emd.move_offsets[3 * i + 2]));
+      offsets.append(float3(
+          emd.move_offsets[3 * i], emd.move_offsets[3 * i + 1], emd.move_offsets[3 * i + 2]));
     }
   }
   for (const KeptMove &move : kept_moves) {

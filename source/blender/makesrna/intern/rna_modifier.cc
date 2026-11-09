@@ -896,8 +896,8 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 
 #  include "MOD_edit_poly.hh"
 #  include "MOD_edit_poly_attrs.hh"
-#  include "MOD_unwrap.hh"
 #  include "MOD_nodes.hh"
+#  include "MOD_unwrap.hh"
 
 #  include "NOD_nodes_srna.hh"
 
@@ -1167,7 +1167,8 @@ static void rna_uv_map_channel_to_name(PointerRNA *ptr, const int channel, char 
 
 static int rna_UVWMapModifier_map_channel_get(PointerRNA *ptr)
 {
-  return rna_uv_map_channel_from_name(ptr, static_cast<UVWMapModifierData *>(ptr->data)->uvmap_name);
+  return rna_uv_map_channel_from_name(ptr,
+                                      static_cast<UVWMapModifierData *>(ptr->data)->uvmap_name);
 }
 
 static void rna_UVWMapModifier_map_channel_set(PointerRNA *ptr, int value)
@@ -1178,7 +1179,8 @@ static void rna_UVWMapModifier_map_channel_set(PointerRNA *ptr, int value)
 
 static int rna_UnwrapModifier_map_channel_get(PointerRNA *ptr)
 {
-  return rna_uv_map_channel_from_name(ptr, static_cast<UnwrapModifierData *>(ptr->data)->uvmap_name);
+  return rna_uv_map_channel_from_name(ptr,
+                                      static_cast<UnwrapModifierData *>(ptr->data)->uvmap_name);
 }
 
 static void rna_UnwrapModifier_map_channel_set(PointerRNA *ptr, int value)
@@ -1256,9 +1258,9 @@ static void rna_UVWMapModifier_material_id_set(PointerRNA *ptr, int value)
 
 /* Material slots of the object, as material IDs in 3ds Max. */
 static const EnumPropertyItem *rna_UVWMapModifier_material_slot_itemf(bContext * /*C*/,
-                                                                       PointerRNA *ptr,
-                                                                       PropertyRNA * /*prop*/,
-                                                                       bool *r_free)
+                                                                      PointerRNA *ptr,
+                                                                      PropertyRNA * /*prop*/,
+                                                                      bool *r_free)
 {
   static char identifiers[64][16];
   static char names[64][80];
@@ -1561,8 +1563,7 @@ static int rna_EditPolyModifier_attribute_edits_num_get(PointerRNA *ptr)
   if (!emd->attr_ints) {
     return 0;
   }
-  return blender::edit_poly::attrs_count(
-      blender::Span<int>(emd->attr_ints, emd->attr_ints_num));
+  return blender::edit_poly::attrs_count(blender::Span<int>(emd->attr_ints, emd->attr_ints_num));
 }
 
 static void rna_UnwrapModifier_clear(ID *id, UnwrapModifierData *umd)
@@ -7767,7 +7768,8 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
   RNA_def_parameter_flags(parm, PropertyFlag(0), PARM_REQUIRED);
 
   prop = RNA_def_property(srna, "patch_new_vertices", PROP_INT, PROP_UNSIGNED);
-  RNA_def_property_int_funcs(prop, "rna_EditPolyModifier_patch_new_vertices_get", nullptr, nullptr);
+  RNA_def_property_int_funcs(
+      prop, "rna_EditPolyModifier_patch_new_vertices_get", nullptr, nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop, "New Vertices", "Vertices added by topology edits");
 
@@ -7842,7 +7844,8 @@ static void rna_def_modifier_edit_poly(BlenderRNA *brna)
       "UVW Map with Selected Faces Only)");
 
   prop = RNA_def_property(srna, "attribute_edits_num", PROP_INT, PROP_UNSIGNED);
-  RNA_def_property_int_funcs(prop, "rna_EditPolyModifier_attribute_edits_num_get", nullptr, nullptr);
+  RNA_def_property_int_funcs(
+      prop, "rna_EditPolyModifier_attribute_edits_num_get", nullptr, nullptr);
   RNA_def_property_clear_flag(prop, PROP_EDITABLE);
   RNA_def_property_ui_text(prop,
                            "Edited Data",
@@ -7926,7 +7929,8 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   prop = RNA_def_property(srna, "map_channel", PROP_INT, PROP_NONE);
-  RNA_def_property_int_funcs(prop, "rna_UVWMapModifier_map_channel_get", "rna_UVWMapModifier_map_channel_set", nullptr);
+  RNA_def_property_int_funcs(
+      prop, "rna_UVWMapModifier_map_channel_get", "rna_UVWMapModifier_map_channel_set", nullptr);
   RNA_def_property_range(prop, 0, 99);
   RNA_def_property_ui_range(prop, 1, 99, 1, -1);
   RNA_def_property_ui_text(prop,
@@ -8142,9 +8146,8 @@ static void rna_def_modifier_unwrap(BlenderRNA *brna)
   };
 
   srna = RNA_def_struct(brna, "UnwrapModifier", "Modifier");
-  RNA_def_struct_ui_text(srna,
-                         "Unwrap Modifier",
-                         "UVs edited in a UV session, stored by stable element ID");
+  RNA_def_struct_ui_text(
+      srna, "Unwrap Modifier", "UVs edited in a UV session, stored by stable element ID");
   RNA_def_struct_sdna(srna, "UnwrapModifierData");
   RNA_def_struct_ui_icon(srna, ICON_UV);
 
@@ -8157,7 +8160,8 @@ static void rna_def_modifier_unwrap(BlenderRNA *brna)
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
   prop = RNA_def_property(srna, "map_channel", PROP_INT, PROP_NONE);
-  RNA_def_property_int_funcs(prop, "rna_UnwrapModifier_map_channel_get", "rna_UnwrapModifier_map_channel_set", nullptr);
+  RNA_def_property_int_funcs(
+      prop, "rna_UnwrapModifier_map_channel_get", "rna_UnwrapModifier_map_channel_set", nullptr);
   RNA_def_property_range(prop, 0, 99);
   RNA_def_property_ui_range(prop, 1, 99, 1, -1);
   RNA_def_property_ui_text(prop,

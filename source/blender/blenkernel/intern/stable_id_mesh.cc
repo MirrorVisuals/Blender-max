@@ -13,9 +13,9 @@
 
 #include "BKE_attribute.hh"
 #include "BKE_mesh.hh"
-#include "BLI_sort.hh"
-#include "BLI_array.hh"
 #include "BKE_stable_id_mesh.hh"
+#include "BLI_array.hh"
+#include "BLI_sort.hh"
 
 namespace blender::bke::stable_id {
 
@@ -128,7 +128,7 @@ static void write_attribute(Mesh &mesh,
     }
   }
   SpanAttributeWriter<int2> writer = attributes.lookup_or_add_for_write_only_span<int2>(name,
-                                                                                         domain);
+                                                                                        domain);
   if (!writer) {
     return;
   }
