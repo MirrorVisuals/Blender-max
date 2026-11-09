@@ -216,6 +216,100 @@ single(f"{count} objects: Subdivision only", faces, plain)
 rows.append((f"{count} objects: cost of our modifiers", faces, first, max(first - plain, 0.0)))
 print(f"  {count} objects: cost of our modifiers             {max(first - plain, 0.0):9.1f} ms")
 
+# 8. Extrude Solid (edit mode), against Blender's normal extrude ----------------------------------
+# Each case is built fresh, the extrude is timed (both run the same extrude and move; Extrude
+# Solid adds the Boolean on top), the median of 3 runs is reported.
+def solid_box(bm, cuts):
+    """A 2 x 2 x 2 box cut into (cuts + 1)^3 cells: 6 (cuts + 1)^2 faces."""
+    geom = bmesh.ops.create_cube(bm, size=2.0)
+    edges = list({e for v in geom['verts'] for e in v.link_edges})
+    bmesh.ops.subdivide_edges(bm, edges=edges, cuts=cuts, use_grid_fill=True)
+
+def extrude_case(build, pick, move, solid, repeats=3):
+    times, faces = [], 0
+    for _ in range(repeats):
+        fresh()
+        me = bpy.data.meshes.new("Extrude")
+        bm = bmesh.new()
+        build(bm)
+        bm.to_mesh(me)
+        bm.free()
+        ob = bpy.data.objects.new("Extrude", me)
+        bpy.context.scene.collection.objects.link(ob)
+        ob.select_set(True)
+        bpy.context.view_layer.objects.active = ob
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_mode(type='FACE')
+        bm = bmesh.from_edit_mesh(ob.data)
+        for f in bm.faces:
+            f.select_set(pick(f))
+        bm.select_flush_mode()
+        bmesh.update_edit_mesh(ob.data)
+        faces = len(bm.faces)
+        t0 = time.perf_counter()
+        if solid:
+            bpy.ops.mesh.extrude_solid(TRANSFORM_OT_translate={"value": move})
+        else:
+            bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": move})
+        times.append(ms(t0))
+        bpy.ops.object.mode_set(mode='OBJECT')
+    return faces, statistics.median(times)
+
+def extrude_pair(label, build, pick, move):
+    n, t_normal = extrude_case(build, pick, move, False)
+    _n, t_solid = extrude_case(build, pick, move, True)
+    rows.append((f"{label} (normal extrude)", n, t_normal, None))
+    rows.append((f"{label} (Extrude Solid)", n, t_solid, max(t_solid - t_normal, 0.0)))
+    print(f"  {label:<46} {n:>9,} faces  normal {t_normal:8.1f} ms   solid {t_solid:8.1f} ms"
+          f"   cost {max(t_solid - t_normal, 0.0):8.1f} ms")
+
+def cuts_for(target_faces):
+    """Cuts that give about `target_faces` faces on a box (scaled down in quick mode)."""
+    return max(2, int(((target_faces * SCALE) / 6.0) ** 0.5) - 1)
+
+def top_corner(cuts):
+    cell = 2.0 / (cuts + 1)
+    return lambda f: f.normal.z > 0.9 and min(f.calc_center_median().x, f.calc_center_median().y) > 1 - cell
+
+def top_block(cuts, size):
+    half = size * (2.0 / (cuts + 1)) / 2.0
+    return lambda f: (f.normal.z > 0.9 and abs(f.calc_center_median().x) < half and
+                      abs(f.calc_center_median().y) < half)
+
+def side_center(cuts):
+    cell = 2.0 / (cuts + 1)
+    return lambda f: (f.normal.x > 0.9 and abs(f.calc_center_median().y) < cell / 2 and
+                      abs(f.calc_center_median().z) < cell / 2)
+
+print()
+print("  Extrude Solid (edit mode): time of the whole extrude; cost = time added to a normal extrude")
+for target in (1500, 10000, 50000, 200000):
+    c = cuts_for(target)
+    cell = 2.0 / (c + 1)
+    extrude_pair(f"Corner face pushed in one cell", lambda bm, c=c: solid_box(bm, c),
+                 top_corner(c), (0, 0, -cell))
+c = cuts_for(50000)
+cell = 2.0 / (c + 1)
+extrude_pair("10 x 10 faces pushed in halfway", lambda bm: solid_box(bm, c),
+             top_block(c, 10), (0, 0, -1.0))
+extrude_pair("Side face pushed through (hole)", lambda bm: solid_box(bm, c),
+             side_center(c), (-2.5, 0, 0))
+extrude_pair("10 x 10 faces pulled out", lambda bm: solid_box(bm, c),
+             top_block(c, 10), (0, 0, 1.0))
+extrude_pair("Same, pulled out at an angle", lambda bm: solid_box(bm, c),
+             top_block(c, 10), (0.7, 0.3, 1.0))
+
+def two_parts(bm):
+    """A small box to edit, and a separate dense box far away in the same mesh."""
+    solid_box(bm, cuts_for(200000))
+    bmesh.ops.translate(bm, verts=bm.verts[:], vec=(10.0, 0.0, 0.0))
+    solid_box(bm, 5)
+
+extrude_pair("Small part of a mesh with a 200k-face part", two_parts,
+             lambda f: (f.normal.z > 0.9 and f.calc_center_median().x < 2 and
+                        min(f.calc_center_median().x, f.calc_center_median().y) > 1 - 2.0 / 6),
+             (0, 0, -2.0 / 6))
+
 # Report -----------------------------------------------------------------------------------------
 try:
     commit = subprocess.run(["git", "-C", os.path.join(HERE, "blender"), "rev-parse", "--short", "HEAD"],
