@@ -188,6 +188,10 @@ for i in range(count):
     o.modifiers.new("Edit Poly", 'EDIT_POLY')
     o.modifiers.new("UVW Map", 'UVW_MAP')
     o.modifiers.new("Unwrap", 'UNWRAP')
+    # Blender computes a Subdivision that is the last modifier in a slower, delayed way; a
+    # do-nothing modifier at the end keeps both measurements doing the same Subdivision work.
+    tail = o.modifiers.new("Tail", 'DISPLACE')
+    tail.strength = 0.0
     objects.append(o)
 build_ms = ms(t0)
 evaluate(objects)
@@ -201,7 +205,7 @@ def reevaluate_all():
 first, faces = reevaluate_all()
 single(f"{count} objects: evaluation (full stacks)", faces, first)
 for o in objects:
-    for m in o.modifiers[1:]:
+    for m in o.modifiers[1:4]:   # Edit Poly, UVW Map, Unwrap (Subdivision and Tail stay)
         m.show_viewport = False
 plain, _ = reevaluate_all()
 single(f"{count} objects: Subdivision only", faces, plain)

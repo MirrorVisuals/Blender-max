@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <optional>
 #include <utility>
 
 #include "BLI_map.hh"
@@ -18,6 +19,7 @@
 
 #include "BKE_attribute.hh"
 #include "BKE_mesh.hh"
+#include "BKE_mesh_mapping.hh"
 #include "BKE_stable_id_mesh.hh"
 
 #include "MOD_edit_poly_attrs.hh"
@@ -173,6 +175,31 @@ static Map<EdgeKey, int> edge_index_of(const Mesh &mesh, const Span<StableID> ve
   return map;
 }
 
+/**
+ * Input index of an ID: tries the index the element is expected at first (a session keeps the
+ * order of the input until its topology changes), and builds a table of all IDs only the first
+ * time that guess is wrong.
+ */
+class HintedIndex {
+ public:
+  explicit HintedIndex(const Span<StableID> ids) : ids_(ids) {}
+
+  int find(const StableID id, const int64_t hint)
+  {
+    if (hint >= 0 && hint < ids_.size() && ids_[hint] == id) {
+      return int(hint);
+    }
+    if (!map_) {
+      map_.emplace(index_of(ids_));
+    }
+    return map_->lookup_default(id.as_u64(), -1);
+  }
+
+ private:
+  Span<StableID> ids_;
+  std::optional<Map<uint64_t, int>> map_;
+};
+
 void attrs_compute(const Mesh &input,
                    const Mesh &edited,
                    const Span<StableID> edited_vert_ids,
@@ -192,70 +219,147 @@ void attrs_compute(const Mesh &input,
     return;
   }
 
-  const Array<StableID> in_vert_ids = read_or_make_root_ids(input, AttrDomain::Point);
-  const Array<StableID> in_face_ids = read_or_make_root_ids(input, AttrDomain::Face);
-  const Map<uint64_t, int> in_vert_of = index_of(in_vert_ids);
-  const Map<uint64_t, int> in_face_of = index_of(in_face_ids);
-  const Map<EdgeKey, int> in_edge_of = edge_index_of(input, in_vert_ids);
-  const Span<int2> edges = edited.edges();
   const bke::AttributeAccessor cur_attrs = edited.attributes();
   const bke::AttributeAccessor in_attrs = input.attributes();
+  const Array<StableID> in_vert_ids = read_or_make_root_ids(input, AttrDomain::Point);
+  const Array<StableID> in_face_ids = read_or_make_root_ids(input, AttrDomain::Face);
+  HintedIndex in_vert_of(in_vert_ids);
+  HintedIndex in_face_of(in_face_ids);
+  const Span<int2> edges = edited.edges();
+  const Span<int2> in_edges = input.edges();
+
+  /* Input vertex of every session vertex (-1 for new ones), shared by the attributes below. */
+  std::optional<Array<int>> vert_input;
+  auto input_of_verts = [&]() -> const Array<int> & {
+    if (!vert_input) {
+      vert_input.emplace(edited_vert_ids.size());
+      for (const int64_t v : edited_vert_ids.index_range()) {
+        (*vert_input)[v] = edited_vert_ids[v].is_valid() ? in_vert_of.find(edited_vert_ids[v], v) :
+                                                           -1;
+      }
+    }
+    return *vert_input;
+  };
+  /* Input edges around each input vertex, to find the input edge of a session edge. */
+  Array<int> vert_edge_offsets;
+  Array<int> vert_edge_indices;
+  std::optional<GroupedSpan<int>> in_vert_edges;
 
   for (const int code : IndexRange(ATTRS_NUM)) {
     const AttrInfo &info = ATTRS[code];
-    const VArraySpan<float> cur = *cur_attrs.lookup_or_default<float>(
-        info.name, info.domain, 0.0f);
-    const VArraySpan<float> base = *in_attrs.lookup_or_default<float>(
-        info.name, info.domain, 0.0f);
-    Set<uint64_t> present;
-    Set<EdgeKey> present_edges;
-    auto add_if_changed = [&](const float value, const int in_index, Item item) {
-      const float baseline = in_index >= 0 ? base[in_index] : 0.0f;
-      if (std::abs(value - baseline) > 1e-6f) {
-        item.value = value;
-        items[code].append(item);
-      }
-    };
-    switch (info.domain) {
-      case AttrDomain::Point:
-        for (const int v : edited_vert_ids.index_range()) {
-          const StableID id = edited_vert_ids[v];
-          if (id.is_valid() && present.add(id.as_u64())) {
-            add_if_changed(cur[v], in_vert_of.lookup_default(id.as_u64(), -1), Item{id, {}});
-          }
-        }
-        break;
-      case AttrDomain::Face:
-        for (const int f : edited_face_ids.index_range()) {
-          const StableID id = edited_face_ids[f];
-          if (id.is_valid() && present.add(id.as_u64())) {
-            add_if_changed(cur[f], in_face_of.lookup_default(id.as_u64(), -1), Item{id, {}});
-          }
-        }
-        break;
-      case AttrDomain::Edge:
-        for (const int e : edges.index_range()) {
-          const StableID a = edited_vert_ids[edges[e][0]];
-          const StableID b = edited_vert_ids[edges[e][1]];
-          if (!a.is_valid() || !b.is_valid()) {
-            continue;
-          }
-          const EdgeKey key = edge_key(a, b);
-          if (present_edges.add(key)) {
-            add_if_changed(cur[e], in_edge_of.lookup_default(key, -1), Item{a, b});
-          }
-        }
-        break;
-      default:
-        break;
+    const bool compare = bool(cur_attrs.lookup_meta_data(info.name)) ||
+                         bool(in_attrs.lookup_meta_data(info.name));
+    if (!compare && old[code].is_empty()) {
+      continue; /* Neither mesh has it and nothing is stored: nothing to do. */
     }
-    /* Keep the items of elements that are not in this session (paused). */
-    for (const Item &item : old[code]) {
-      const bool here = info.domain == AttrDomain::Edge ?
-                            present_edges.contains(edge_key(item.a, item.b)) :
-                            present.contains(item.a.as_u64());
-      if (!here) {
-        items[code].append(item);
+    if (compare) {
+      const VArraySpan<float> cur = *cur_attrs.lookup_or_default<float>(
+          info.name, info.domain, 0.0f);
+      const VArraySpan<float> base = *in_attrs.lookup_or_default<float>(
+          info.name, info.domain, 0.0f);
+      auto add_if_changed = [&](const float value, const int in_index, Item item) {
+        const float baseline = in_index >= 0 ? base[in_index] : 0.0f;
+        if (std::abs(value - baseline) > 1e-6f) {
+          item.value = value;
+          items[code].append(item);
+        }
+      };
+      switch (info.domain) {
+        case AttrDomain::Point: {
+          const Array<int> &vin = input_of_verts();
+          for (const int v : edited_vert_ids.index_range()) {
+            if (edited_vert_ids[v].is_valid()) {
+              add_if_changed(cur[v], vin[v], Item{edited_vert_ids[v], {}});
+            }
+          }
+          break;
+        }
+        case AttrDomain::Face:
+          for (const int f : edited_face_ids.index_range()) {
+            const StableID id = edited_face_ids[f];
+            if (id.is_valid()) {
+              add_if_changed(cur[f], in_face_of.find(id, f), Item{id, {}});
+            }
+          }
+          break;
+        case AttrDomain::Edge: {
+          const Array<int> &vin = input_of_verts();
+          if (!in_vert_edges) {
+            in_vert_edges.emplace(bke::mesh::build_vert_to_edge_map(
+                in_edges, input.verts_num, vert_edge_offsets, vert_edge_indices));
+          }
+          for (const int e : edges.index_range()) {
+            const int v0 = edges[e][0], v1 = edges[e][1];
+            const StableID a = edited_vert_ids[v0];
+            const StableID b = edited_vert_ids[v1];
+            if (!a.is_valid() || !b.is_valid()) {
+              continue;
+            }
+            int in_edge = -1;
+            const int ia = vin[v0], ib = vin[v1];
+            if (ia != -1 && ib != -1) {
+              for (const int candidate : (*in_vert_edges)[ia]) {
+                const int2 ie = in_edges[candidate];
+                if ((ie[0] == ia && ie[1] == ib) || (ie[0] == ib && ie[1] == ia)) {
+                  in_edge = candidate;
+                  break;
+                }
+              }
+            }
+            add_if_changed(cur[e], in_edge, Item{a, b});
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    if (old[code].is_empty()) {
+      continue;
+    }
+    /* Keep the stored items of elements that are not in this session (paused): a table of the
+     * stored items, checked against every element of the session. */
+    const bool is_edge = info.domain == AttrDomain::Edge;
+    Map<uint64_t, int> old_of;
+    Map<EdgeKey, int> old_edge_of;
+    for (const int i : old[code].index_range()) {
+      const Item &item = old[code][i];
+      if (is_edge) {
+        old_edge_of.add(edge_key(item.a, item.b), i);
+      }
+      else {
+        old_of.add(item.a.as_u64(), i);
+      }
+    }
+    Array<bool> here(old[code].size(), false);
+    if (info.domain == AttrDomain::Point) {
+      for (const StableID id : edited_vert_ids) {
+        const int i = old_of.lookup_default(id.as_u64(), -1);
+        if (i != -1) {
+          here[i] = true;
+        }
+      }
+    }
+    else if (info.domain == AttrDomain::Face) {
+      for (const StableID id : edited_face_ids) {
+        const int i = old_of.lookup_default(id.as_u64(), -1);
+        if (i != -1) {
+          here[i] = true;
+        }
+      }
+    }
+    else if (is_edge) {
+      for (const int2 &e : edges) {
+        const int i = old_edge_of.lookup_default(
+            edge_key(edited_vert_ids[e[0]], edited_vert_ids[e[1]]), -1);
+        if (i != -1) {
+          here[i] = true;
+        }
+      }
+    }
+    for (const int i : old[code].index_range()) {
+      if (!here[i]) {
+        items[code].append(old[code][i]);
       }
     }
   }

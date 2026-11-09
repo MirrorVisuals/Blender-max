@@ -353,18 +353,32 @@ std::string session_commit(EditPolyModifierData &emd,
   }
 
   /* Moves: keep paused moves (points that are neither in the input nor new), replace the rest. */
-  Set<uint64_t> handled;
-  for (const StableID id : input_vert_ids) {
-    handled.add(id.as_u64());
+  /* Which earlier moves are on points of this session: a table of the earlier moves, checked
+   * against every point (instead of a table of every point). */
+  Map<uint64_t, int> old_move_of;
+  for (int i = 0; i < emd.moves_num; i++) {
+    old_move_of.add(key_of(int2(emd.move_ids[2 * i], emd.move_ids[2 * i + 1])), i);
   }
-  for (const StableID id : patch.new_vert_ids) {
-    handled.add(id.as_u64());
+  Array<bool> handled(emd.moves_num, false);
+  if (!old_move_of.is_empty()) {
+    auto mark = [&](const Span<StableID> list) {
+      threading::parallel_for(list.index_range(), 8192, [&](const IndexRange range) {
+        for (const int64_t v : range) {
+          const int i = old_move_of.lookup_default(list[v].as_u64(), -1);
+          if (i != -1) {
+            handled[i] = true;
+          }
+        }
+      });
+    };
+    mark(input_vert_ids);
+    mark(patch.new_vert_ids);
   }
   Vector<int2> ids;
   Vector<float3> offsets;
   for (int i = 0; i < emd.moves_num; i++) {
     const int2 id(emd.move_ids[2 * i], emd.move_ids[2 * i + 1]);
-    if (!handled.contains(key_of(id))) {
+    if (!handled[i]) {
       ids.append(id);
       offsets.append(float3(emd.move_offsets[3 * i],
                             emd.move_offsets[3 * i + 1],

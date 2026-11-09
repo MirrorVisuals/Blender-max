@@ -7,6 +7,7 @@
  */
 
 #include <cfloat>
+#include <optional>
 
 #include "BLI_array.hh"
 #include "BLI_index_mask.hh"
@@ -493,6 +494,30 @@ bool read_session_ids(const Mesh &mesh, const bke::AttrDomain domain, Array<Stab
   return true;
 }
 
+/**
+ * Input index of an ID: tries the index the element is expected at first, and builds a table of
+ * all IDs only the first time that guess is wrong.
+ */
+class HintedIndex {
+ public:
+  explicit HintedIndex(const Span<StableID> ids) : ids_(ids) {}
+
+  int find(const StableID id, const int hint)
+  {
+    if (hint >= 0 && hint < ids_.size() && ids_[hint] == id) {
+      return hint;
+    }
+    if (!map_) {
+      map_.emplace(index_map(ids_));
+    }
+    return map_->lookup_default(key_of(id), -1);
+  }
+
+ private:
+  Span<StableID> ids_;
+  std::optional<Map<uint64_t, int>> map_;
+};
+
 std::string patch_compute(const Mesh &input,
                           const Mesh &edited,
                           const Patch &old_patch,
@@ -515,8 +540,11 @@ std::string patch_compute(const Mesh &input,
   const Array<StableID> in_vert_ids = read_or_make_root_ids(input, bke::AttrDomain::Point);
   const Array<StableID> in_face_ids = read_or_make_root_ids(input, bke::AttrDomain::Face);
   r_input_vert_ids = Vector<StableID>(in_vert_ids.as_span());
-  const Map<uint64_t, int> in_vert_of = index_map(in_vert_ids);
-  const Map<uint64_t, int> in_face_of = index_map(in_face_ids);
+  /* Session elements usually sit at the same index as in the input (no topology change, or
+   * before the first change): check that first, and only build a table of all input IDs when an
+   * element is not found there. */
+  HintedIndex in_vert_of(in_vert_ids);
+  HintedIndex in_face_of(in_face_ids);
   const Span<float3> in_positions = input.vert_positions();
   const OffsetIndices<int> in_faces = input.faces();
   const Span<int> in_corner_verts = input.corner_verts();
@@ -554,19 +582,24 @@ std::string patch_compute(const Mesh &input,
   Array<Kind> kind(verts_num);
   Array<StableID> result_ids(verts_num);
   Array<StableID> anchors(verts_num);
-  Set<uint64_t> used;
+  Array<int> input_of(verts_num, -1);         /* Input vertex of each kept vertex. */
+  Array<bool> input_taken(input.verts_num, false);
+  Set<uint64_t> used_new;                     /* IDs given to new vertices. */
   for (const int i : IndexRange(verts_num)) {
     const StableID id = session_vert_ids[i];
     const uint64_t key = key_of(id);
-    if (id.is_valid() && in_vert_of.contains(key) && used.add(key)) {
+    const int in = id.is_valid() ? in_vert_of.find(id, i) : -1;
+    if (in != -1 && !input_taken[in]) {
+      input_taken[in] = true;
+      input_of[i] = in;
       kind[i] = Kind::Kept;
       result_ids[i] = id;
       continue;
     }
     if (const StableID *old_anchor = old_anchor_of.lookup_ptr(key)) {
-      if (in_vert_of.contains(key_of(*old_anchor))) {
+      if (in_vert_of.find(*old_anchor, -1) != -1) {
         anchors[i] = *old_anchor;
-        if (used.add(key)) {
+        if (used_new.add(key)) {
           kind[i] = Kind::New;
           result_ids[i] = id;
           continue;
@@ -576,7 +609,7 @@ std::string patch_compute(const Mesh &input,
       }
     }
     kind[i] = Kind::NewNeedsId;
-    if (id.is_valid() && in_vert_of.contains(key)) {
+    if (in != -1) {
       anchors[i] = id;
     }
     else {
@@ -601,36 +634,34 @@ std::string patch_compute(const Mesh &input,
     StableID id;
     do {
       id = derive(Derivation::Generated, anchors[i], 0xED17, ++counter);
-    } while (in_vert_of.contains(key_of(id)) || !used.add(key_of(id)));
+    } while (in_vert_of.find(id, -1) != -1 || !used_new.add(key_of(id)));
     result_ids[i] = id;
     kind[i] = Kind::New;
   }
 
   /* Vertices: moves for kept ones, anchored offsets for new ones, removals. */
-  Set<uint64_t> kept_input_verts;
+  r_moves.reserve(verts_num);
   for (const int i : IndexRange(verts_num)) {
     if (kind[i] == Kind::Kept) {
-      const int in = in_vert_of.lookup(key_of(result_ids[i]));
-      r_moves.append({result_ids[i], positions[i] - in_positions[in]});
-      kept_input_verts.add(key_of(result_ids[i]));
+      r_moves.append({result_ids[i], positions[i] - in_positions[input_of[i]]});
     }
     else {
-      const int anchor = in_vert_of.lookup(key_of(anchors[i]));
+      const int anchor = in_vert_of.find(anchors[i], -1);
       r_patch.new_vert_ids.append(result_ids[i]);
       r_patch.new_vert_anchors.append(anchors[i]);
       r_patch.new_vert_offsets.append(positions[i] - in_positions[anchor]);
     }
   }
-  for (const StableID id : in_vert_ids) {
-    if (!kept_input_verts.contains(key_of(id))) {
-      r_patch.removed_verts.append(id);
+  for (const int j : in_vert_ids.index_range()) {
+    if (!input_taken[j]) {
+      r_patch.removed_verts.append(in_vert_ids[j]);
     }
   }
 
   /* Faces: kept when the face keeps its input ID and the same ring of kept vertices. */
   const OffsetIndices<int> faces = edited.faces();
   const Span<int> corner_verts = edited.corner_verts();
-  Set<uint64_t> kept_input_faces;
+  Array<bool> face_taken(input.faces_num, false);
   Vector<int> new_faces;
   Array<StableID> face_keys(faces.size());
   r_edited_face_ids.reinitialize(faces.size());
@@ -638,11 +669,9 @@ std::string patch_compute(const Mesh &input,
   for (const int f : faces.index_range()) {
     const StableID fid = session_face_ids.is_empty() ? StableID{} : session_face_ids[f];
     face_keys[f] = fid;
-    const int in_face = fid.is_valid() ? in_face_of.lookup_default(key_of(fid), -1) : -1;
+    const int in_face = fid.is_valid() ? in_face_of.find(fid, f) : -1;
     bool kept = false;
-    if (in_face != -1 && !kept_input_faces.contains(key_of(fid)) &&
-        in_faces[in_face].size() == faces[f].size())
-    {
+    if (in_face != -1 && !face_taken[in_face] && in_faces[in_face].size() == faces[f].size()) {
       const IndexRange ring = in_faces[in_face];
       const IndexRange edited_ring = faces[f];
       const int size = int(ring.size());
@@ -673,38 +702,45 @@ std::string patch_compute(const Mesh &input,
       }
     }
     if (kept) {
-      kept_input_faces.add(key_of(fid));
+      face_taken[in_face] = true;
       r_edited_face_ids[f] = fid;
     }
     else {
       new_faces.append(f);
     }
   }
-  for (const StableID id : in_face_ids) {
-    if (!kept_input_faces.contains(key_of(id))) {
-      r_patch.removed_faces.append(id);
+  for (const int j : in_face_ids.index_range()) {
+    if (!face_taken[j]) {
+      r_patch.removed_faces.append(in_face_ids[j]);
     }
   }
-  Set<uint64_t> taken_face_ids;
-  for (const StableID id : in_face_ids) {
-    if (kept_input_faces.contains(key_of(id))) {
-      taken_face_ids.add(key_of(id));
+  /* IDs given to new faces; an input face ID is taken when its face is kept or reused. */
+  Set<uint64_t> taken_new;
+  auto take = [&](const StableID id) {
+    const int j = in_face_of.find(id, -1);
+    if (j != -1) {
+      if (face_taken[j]) {
+        return false;
+      }
+      face_taken[j] = true;
+      return true;
     }
-  }
+    return taken_new.add(key_of(id));
+  };
   for (const int f : new_faces) {
     const StableID fid = face_keys[f];
     const uint64_t key = key_of(fid);
+    const bool is_input_face = fid.is_valid() && in_face_of.find(fid, -1) != -1;
     StableID source{};
-    if (fid.is_valid() && in_face_of.contains(key)) {
+    if (is_input_face) {
       source = fid;
     }
     else if (const StableID *old_source = old_source_of.lookup_ptr(key)) {
       source = *old_source;
     }
     StableID id;
-    const bool reusable = fid.is_valid() &&
-                          (in_face_of.contains(key) || old_source_of.contains(key));
-    if (reusable && taken_face_ids.add(key)) {
+    const bool reusable = fid.is_valid() && (is_input_face || old_source_of.contains(key));
+    if (reusable && take(fid)) {
       /* The first replacement of a face keeps its ID, so later levels still find it. */
       id = fid;
     }
@@ -713,7 +749,7 @@ std::string patch_compute(const Mesh &input,
         const StableID base = source.is_valid() ? source :
                                                   result_ids[corner_verts[faces[f].first()]];
         id = derive(Derivation::Generated, base, 0xFACE, ++counter);
-      } while (in_face_of.contains(key_of(id)) || !taken_face_ids.add(key_of(id)));
+      } while (in_face_of.find(id, -1) != -1 || !taken_new.add(key_of(id)));
     }
     r_patch.new_face_sizes.append(int(faces[f].size()));
     r_patch.new_face_ids.append(id);
