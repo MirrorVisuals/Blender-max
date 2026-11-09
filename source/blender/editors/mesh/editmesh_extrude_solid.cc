@@ -74,8 +74,16 @@
 
 namespace blender {
 
-/** Position of every vertex before the extrude (internal, never shown). */
-static constexpr const char *ORIG_CO_LAYER = ".extrude_solid_co";
+/**
+ * Meshes whose extrude was started as a solid, between the first and the last step of the
+ * macro. (The move between them is a translation, so where the faces started is found from the
+ * mesh itself: nothing is stored on the elements.)
+ */
+static Set<const Mesh *> &solid_pending()
+{
+  static Set<const Mesh *> meshes;
+  return meshes;
+}
 /** Outward direction of the faces of the swept solid, zero on other faces (internal). */
 static constexpr const char *CUTTER_NO_LAYER = ".extrude_solid_no";
 
@@ -106,13 +114,6 @@ struct StageTimer {
     }
   }
 };
-
-static void orig_co_layer_free(BMesh *bm)
-{
-  if (CustomData_get_offset_named(&bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER) != -1) {
-    BM_data_layer_free_named(bm, &bm->vdata, ORIG_CO_LAYER);
-  }
-}
 
 /** The vertices, edges and faces of a connected part of the mesh. */
 struct Part {
@@ -325,7 +326,8 @@ static wmOperatorStatus edbm_extrude_manifold_region_exec(bContext *C, wmOperato
   for (Object *obedit : objects) {
     BMEditMesh *em = BKE_editmesh_from_object(obedit);
     BMesh *bm = em->bm;
-    orig_co_layer_free(bm);
+    const Mesh *mesh = id_cast<const Mesh *>(obedit->data);
+    solid_pending().remove(mesh);
     if (bm->totvertsel == 0) {
       continue;
     }
@@ -339,21 +341,14 @@ static wmOperatorStatus edbm_extrude_manifold_region_exec(bContext *C, wmOperato
 #endif
     timer.mark("closed check");
     if (solid) {
-      BM_data_layer_add_named(bm, &bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER);
-      const int offset = CustomData_get_offset_named(&bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER);
-      BMIter iter;
-      BMVert *v;
-      BM_ITER_MESH (v, &iter, bm, BM_VERTS_OF_MESH) {
-        copy_v3_v3(static_cast<float *>(BM_ELEM_CD_GET_VOID_P(v, offset)), v->co);
-      }
+      solid_pending().add(mesh);
     }
 
-    timer.mark("store positions");
     /* A solid is rebuilt from the plain extrude, so its side edges must not be dissolved. */
     if (!edbm_extrude_mesh_ex(
             obedit, em, op, use_normal_flip, solid ? false : use_dissolve_ortho_edges))
     {
-      orig_co_layer_free(bm);
+      solid_pending().remove(mesh);
       continue;
     }
     timer.mark("extrude");
@@ -554,13 +549,6 @@ static void solid_boolean_exact(BMesh *part, BMesh *cutter_bm, const bool push_i
 static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
 {
   BMesh *bm = em->bm;
-  const int offset = CustomData_get_offset_named(&bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER);
-  if (offset == -1) {
-    return SolidResult::None;
-  }
-  auto orig_co = [&](BMVert *v) -> float3 {
-    return float3(static_cast<const float *>(BM_ELEM_CD_GET_VOID_P(v, offset)));
-  };
 
   /* The extruded caps are the selected faces. */
   Vector<BMFace *> caps;
@@ -580,10 +568,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   return SolidResult::NoSolver;
 #else
 
-  if (!part_is_closed(tag_connected(bm, caps))) {
-    return SolidResult::Open;
-  }
-  timer.mark("closed check");
+  /* (The first step checked that the part is closed; extruding it keeps it closed.) */
 
   VectorSet<BMVert *> cap_verts;
   for (BMFace *f : caps) {
@@ -595,16 +580,15 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   }
 
   /* Each vertex on the border of the caps is joined by a side edge to the vertex it was
-   * extruded from, which is still where the cap vertex started. */
+   * extruded from, which did not move. */
   Map<BMVert *, BMVert *> source_of;
   Vector<BMEdge *> side_edges;
   for (BMVert *v : cap_verts) {
-    const float3 start = orig_co(v);
     BMIter iter;
     BMEdge *e;
     BM_ITER_ELEM (e, &iter, v, BM_EDGES_OF_VERT) {
       BMVert *v_other = BM_edge_other_vert(e, v);
-      if (!cap_verts.contains(v_other) && float3(v_other->co) == start) {
+      if (!cap_verts.contains(v_other)) {
         source_of.add(v, v_other);
         side_edges.append(e);
         break;
@@ -615,6 +599,17 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
     /* The whole part was extruded: there are no side walls, it was simply moved. */
     return SolidResult::None;
   }
+  /* The move is a translation: every vertex moved as far as the border ones. */
+  const auto first = *source_of.items().begin();
+  const float3 move = float3(first.key->co) - float3(first.value->co);
+  for (const auto item : source_of.items()) {
+    const float3 d = float3(item.key->co) - float3(item.value->co);
+    if (math::distance(d, move) > 1e-4f * math::length(move) + 1e-6f) {
+      /* Not one translation (not what this macro does): keep the plain extrude. */
+      return SolidResult::None;
+    }
+  }
+  auto orig_co = [&](BMVert *v) -> float3 { return float3(v->co) - move; };
 
   /* How far each vertex moved. */
   Map<BMVert *, float3> moved;
@@ -698,21 +693,25 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
   /* Copy the edited part into its own mesh: the Boolean then only works on that part, however
    * big the rest of the mesh is. */
   const Part edited = tag_connected(bm, caps);
-  /* The part is the whole mesh (one piece): the result replaces the mesh, instead of the part
-   * being removed element by element. */
+  /* The part is the whole mesh (one piece): it is converted directly and the result replaces the
+   * mesh. Otherwise the part is copied into its own mesh and removed, and the result added. */
   const bool whole_mesh = edited.verts.size() == bm->totvert && edited.faces.size() == bm->totface;
   BMeshCreateParams create_params{};
   create_params.use_toolflags = true;
-  BMesh *part = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
-  BM_mesh_copy_init_customdata(part, bm, &bm_mesh_allocsize_default);
-  Vector<BMFace *> caps_part;
-  {
+  /* Where the edited part is: the mesh itself, or a copy. */
+  BMesh *source = bm;
+  BMesh *part = nullptr;
+  Vector<BMFace *> caps_source = caps;
+  if (!whole_mesh) {
+    part = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
+    BM_mesh_copy_init_customdata(part, bm, &bm_mesh_allocsize_default);
     CopyMaps to_part(*bm, *part);
     Set<BMFace *> caps_set(caps);
+    caps_source.clear();
     for (BMFace *f : edited.faces) {
       BMFace *f_new = copy_face(part, to_part, f);
       if (caps_set.contains(f)) {
-        caps_part.append(f_new);
+        caps_source.append(f_new);
       }
     }
     Map<BMVert *, float3> moved_part;
@@ -720,26 +719,28 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
       moved_part.add(to_part.verts[BM_elem_index_get(item.key)], item.value);
     }
     moved_kept = std::move(moved_part);
-  }
-  timer.mark("copy out");
-  /* Remove the part from the mesh; the result is put back at the end. */
-  BM_select_history_clear(bm);
-  if (!whole_mesh) {
+    source = part;
+    timer.mark("copy out");
+    /* Remove the part from the mesh; the result is added at the end. */
+    BM_select_history_clear(bm);
     for (BMVert *v_kill : edited.verts) {
       BM_vert_kill(bm, v_kill);
     }
+    timer.mark("remove part");
+  }
+  else {
+    BM_select_history_clear(bm);
   }
 
-  timer.mark("remove part");
   /* The swept solid, in a mesh of its own. It starts a little behind the faces, so the faces
    * themselves end up inside it and are removed. */
   BMesh *cutter_bm = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
-  BM_mesh_copy_init_customdata(cutter_bm, part, &bm_mesh_allocsize_default);
+  BM_mesh_copy_init_customdata(cutter_bm, source, &bm_mesh_allocsize_default);
   Vector<BMFace *> new_tops;
   {
-    const BMCustomDataCopyMap face_map = CustomData_bmesh_copy_map_calc(part->pdata,
+    const BMCustomDataCopyMap face_map = CustomData_bmesh_copy_map_calc(source->pdata,
                                                                         cutter_bm->pdata);
-    const BMCustomDataCopyMap loop_map = CustomData_bmesh_copy_map_calc(part->ldata,
+    const BMCustomDataCopyMap loop_map = CustomData_bmesh_copy_map_calc(source->ldata,
                                                                         cutter_bm->ldata);
     const float eps = std::max(max_move * 1e-3f, max_coord * 1e-6f);
     const float3 fallback_dir = math::normalize(sum_move);
@@ -771,8 +772,8 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
       return f_new;
     };
 
-    Set<BMFace *> caps_set(caps_part);
-    for (BMFace *f : caps_part) {
+    Set<BMFace *> caps_set(caps_source);
+    for (BMFace *f : caps_source) {
       Vector<BMVert *, 8> verts_bottom, verts_top;
       Vector<BMLoop *, 8> loops;
       BMLoop *l_iter, *l_first;
@@ -812,7 +813,7 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
     BMO_op_callf(cutter_bm, BMO_FLAG_DEFAULTS, "recalc_face_normals faces=%hf", BM_ELEM_TAG);
   }
   /* The result keeps the selection of the faces it comes from: select the new caps only. */
-  BM_mesh_elem_hflag_disable_all(part, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_SELECT, false);
+  BM_mesh_elem_hflag_disable_all(source, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_SELECT, false);
   BM_mesh_elem_hflag_disable_all(cutter_bm, BM_VERT | BM_EDGE | BM_FACE, BM_ELEM_SELECT, false);
   for (BMFace *f : new_tops) {
     BM_face_select_set(cutter_bm, f, true);
@@ -828,16 +829,24 @@ static SolidResult extrude_solid_resolve(BMEditMesh *em, StageTimer &timer)
     target = BM_mesh_create(&bm_mesh_allocsize_default, &target_params);
     BM_mesh_copy_init_customdata(target, bm, &bm_mesh_allocsize_default);
   }
-  bool done = solid_boolean_manifold(target, part, cutter_bm, push_in, timer);
+  bool done = solid_boolean_manifold(target, source, cutter_bm, push_in, timer);
   if (!done) {
-    /* The fast solver could not do it (e.g. the swept solid crosses itself): use the exact one. */
+    /* The fast solver could not do it (e.g. the swept solid crosses itself): use the exact one,
+     * on a copy of the part. */
+    if (part == nullptr) {
+      part = BM_mesh_create(&bm_mesh_allocsize_default, &create_params);
+      BM_mesh_copy_init_customdata(part, bm, &bm_mesh_allocsize_default);
+      copy_all_faces(part, bm);
+    }
     solid_boolean_exact(part, cutter_bm, push_in);
     timer.mark("exact boolean");
     copy_all_faces(target, part);
     timer.mark("copy back");
   }
   BM_mesh_free(cutter_bm);
-  BM_mesh_free(part);
+  if (part) {
+    BM_mesh_free(part);
+  }
   if (whole_mesh) {
     /* Swap the contents, keeping what belongs to the edit-mesh itself. */
     std::swap(*bm, *target);
@@ -865,11 +874,9 @@ static wmOperatorStatus edbm_extrude_manifold_resolve_exec(bContext *C, wmOperat
   bool any_open = false, no_solver = false;
   for (Object *obedit : objects) {
     BMEditMesh *em = BKE_editmesh_from_object(obedit);
-    const bool is_solid =
-        CustomData_get_offset_named(&em->bm->vdata, CD_PROP_FLOAT3, ORIG_CO_LAYER) != -1;
+    const bool is_solid = solid_pending().remove(id_cast<const Mesh *>(obedit->data));
     StageTimer timer;
-    const SolidResult result = extrude_solid_resolve(em, timer);
-    orig_co_layer_free(em->bm);
+    const SolidResult result = is_solid ? extrude_solid_resolve(em, timer) : SolidResult::None;
     any_open |= result == SolidResult::Open;
     no_solver |= result == SolidResult::NoSolver;
     if (result == SolidResult::Done && em->selectmode != SCE_SELECT_FACE) {
