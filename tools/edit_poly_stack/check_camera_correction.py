@@ -32,7 +32,8 @@ scene.world.color = (0, 0, 0)
 
 def emission(name, strength):
     mat = bpy.data.materials.new(name)
-    mat.use_nodes = True
+    if mat.node_tree is None:
+        mat.use_nodes = True
     nodes = mat.node_tree.nodes
     nodes.clear()
     em = nodes.new('ShaderNodeEmission')
@@ -58,7 +59,7 @@ cam.rotation_euler = (math.radians(90) + tilt, 0, 0)   # Looking along +Y, tilte
 scene.camera = cam
 
 # A small, brighter marker exactly where the camera aims, in front of the box.
-aim = cam.matrix_world.to_3x3() @ Vector((0, 0, -1))
+aim = cam.rotation_euler.to_matrix() @ Vector((0, 0, -1))
 bpy.ops.mesh.primitive_uv_sphere_add(radius=0.15, location=cam.location + aim * 8)
 marker = bpy.context.active_object
 marker.data.materials.append(emission("Marker", 20.0))
@@ -142,7 +143,7 @@ box.scale = (16, 0.2, 3)
 box.location = (0, 12, 1.5)
 turn = math.radians(20)
 cam.rotation_euler = (math.radians(90), 0, -turn)
-aim = cam.matrix_world.to_3x3() @ Vector((0, 0, -1))
+aim = cam.rotation_euler.to_matrix() @ Vector((0, 0, -1))
 marker.location = cam.location + aim * 8
 
 
