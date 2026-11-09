@@ -1,6 +1,7 @@
-# UV map channels check: Map Channel on UVW Map and Unwrap (1 = default UV map, N = "UVChannel_N",
-# added to the mesh when needed), two UVW Maps on different channels with different sizes, and
-# Connect to Texture (a UV Map node in front of the selected texture node).
+# UV map channels check: Map Channel on UVW Map and Unwrap (1 = default UV map, N = "UVChannel_N";
+# setting it does not change the mesh, the modifier writes the UV map to its result, Add UV Map
+# adds it to the mesh), two UVW Maps on different channels with different sizes, and Connect to
+# Texture (a UV Map node in front of the selected texture node, the UV map added to the mesh).
 # Run with CHECK_UV_CHANNELS.bat (Blender in background mode).
 import bpy
 
@@ -27,11 +28,17 @@ check(base.map_channel == 1, f"a new UVW Map is on channel 1, the default UV map
 detail = ob.modifiers.new("Detail", 'UVW_MAP')
 detail.map_type = 'BOX'
 detail.map_channel = 2
-names = [layer.name for layer in me.uv_layers]
 check(detail.uv_layer == "UVChannel_2" and detail.map_channel == 2,
       f"channel 2 writes the UV map \"UVChannel_2\" ({detail.uv_layer!r})")
-check(names[:1] == ["UVMap"] and "UVChannel_2" in names,
-      f"the mesh had no UV map: it gets \"UVMap\" (channel 1) first, then \"UVChannel_2\" ({names})")
+check(len(me.uv_layers) == 0, "setting the channel does not change the mesh")
+dg = bpy.context.evaluated_depsgraph_get()
+ev_names = list(ob.evaluated_get(dg).data.uv_layers.keys())
+check("UVMap" in ev_names and "UVChannel_2" in ev_names,
+      f"the modifiers write both UV maps to their result ({ev_names})")
+bpy.ops.object.uv_map_add_for_modifier(modifier=detail.name)
+names = [layer.name for layer in me.uv_layers]
+check(names == ["UVMap", "UVChannel_2"],
+      f"Add UV Map: a mesh without UV maps gets \"UVMap\" (channel 1) first, then \"UVChannel_2\" ({names})")
 default = next((l.name for l in me.uv_layers if l.active_render), None)
 check(default == "UVMap", f"the default UV map stays \"UVMap\" ({default})")
 
@@ -58,8 +65,8 @@ detail.map_channel = 2
 
 unwrap = ob.modifiers.new("Unwrap", 'UNWRAP')
 unwrap.map_channel = 3
-check(unwrap.uv_layer == "UVChannel_3" and "UVChannel_3" in [l.name for l in me.uv_layers],
-      "Unwrap has the channel too (channel 3 adds \"UVChannel_3\")")
+check(unwrap.uv_layer == "UVChannel_3" and "UVChannel_3" not in me.uv_layers,
+      "Unwrap has the channel too (channel 3 is \"UVChannel_3\", not on the mesh yet)")
 
 print("Connect to Texture")
 mat = bpy.data.materials.new("Mat")
@@ -93,6 +100,13 @@ src = mapping.inputs["Vector"].links[0].from_node if mapping.inputs["Vector"].is
 check(src is not None and src.type == 'UVMAP' and src.uv_map == "UVChannel_2" and
       image2.inputs["Vector"].links[0].from_node == mapping,
       "through a Mapping node, the UV Map node feeds the Mapping node (which still feeds the texture)")
+
+image3 = tree.nodes.new('ShaderNodeTexImage')
+tree.nodes.active = image3
+bpy.ops.object.uv_map_connect_texture(modifier=unwrap.name)
+check("UVChannel_3" in me.uv_layers and image3.inputs["Vector"].is_linked and
+      image3.inputs["Vector"].links[0].from_node.uv_map == "UVChannel_3",
+      "connecting a texture adds the UV map to the mesh when it is not there")
 
 tree.nodes.active = tree.nodes.new('ShaderNodeMath')
 try:

@@ -18,6 +18,7 @@
 #include "DNA_modifier_types.h"
 #include "DNA_node_tree_interface_types.h"
 #include "DNA_node_types.h"
+#include "DNA_object_types.h"
 #include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_windowmanager_types.h"
@@ -911,6 +912,24 @@ void blo_do_versions_520(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
       }
     }
     FOREACH_NODETREE_END;
+  }
+
+  /* UVW Map: the Real-World Size option (a flag) became the Pixel Density size mode. */
+  if (!MAIN_VERSION_FILE_ATLEAST(bmain, 502, 46)) {
+    for (Object &object : bmain->objects) {
+      for (ModifierData &md : object.modifiers) {
+        if (md.type != eModifierType_UVWMap) {
+          continue;
+        }
+        UVWMapModifierData &umd = reinterpret_cast<UVWMapModifierData &>(md);
+        if (umd.flag & MOD_UVWMAP_REAL_WORLD) {
+          if (umd.size_mode == MOD_UVWMAP_SIZE_GIZMO) {
+            umd.size_mode = MOD_UVWMAP_SIZE_PIXEL_DENSITY;
+          }
+          umd.flag &= ~MOD_UVWMAP_REAL_WORLD;
+        }
+      }
+    }
   }
 
   /**

@@ -28,6 +28,8 @@
 #include <algorithm>
 #include <string>
 
+#include "CLG_log.h"
+
 #include "DNA_mesh_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
@@ -48,7 +50,6 @@
 #include "BKE_context.hh"
 #include "BKE_customdata.hh"
 #include "BKE_editmesh.hh"
-#include "BKE_global.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_mesh.h"
@@ -87,12 +88,14 @@ static Set<const Mesh *> &solid_pending()
 /** Outward direction of the faces of the swept solid, zero on other faces (internal). */
 static constexpr const char *CUTTER_NO_LAYER = ".extrude_solid_no";
 
+static CLG_LogRef LOG = {"mesh.extrude"};
+
 /**
- * With Debug Value 701 (F3 > Debug Menu, or `bpy.app.debug_value` in Python), print how long
- * each stage takes, to the console.
+ * With debug logging of `mesh.extrude` (`--log "mesh.extrude" --log-level debug`), log how long
+ * each stage takes.
  */
 struct StageTimer {
-  bool on = G.debug_value == 701;
+  bool on = CLOG_CHECK(&LOG, CLG_LEVEL_DEBUG);
   double last = on ? BLI_time_now_seconds() : 0.0;
   std::string line;
 
@@ -110,7 +113,7 @@ struct StageTimer {
   void print(const char *title) const
   {
     if (on) {
-      printf("Extrude Manifold %s (ms):%s\n", title, line.c_str());
+      CLOG_DEBUG(&LOG, "Extrude Manifold %s (ms):%s", title, line.c_str());
     }
   }
 };

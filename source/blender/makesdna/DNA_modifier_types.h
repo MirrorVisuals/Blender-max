@@ -125,9 +125,12 @@ enum ModifierType : int {
   eModifierType_GreasePencilBuild = 84,
   eModifierType_GreasePencilSimplify = 85,
   eModifierType_GreasePencilTexture = 86,
-  eModifierType_EditPoly = 87,
-  eModifierType_UVWMap = 88,
-  eModifierType_Unwrap = 89,
+  /* Modifiers of the Edit Poly stack (experimental). Numbered apart from the other modifiers so
+   * that modifiers added later keep their own numbers. Files saved by Blender 5.2 builds that
+   * numbered them 87 to 89 are converted when read, see #BKE_modifier_blend_read_data. */
+  eModifierType_EditPoly = 200,
+  eModifierType_UVWMap = 201,
+  eModifierType_Unwrap = 202,
   NUM_MODIFIER_TYPES,
 };
 
@@ -2261,8 +2264,10 @@ enum UVWMapModifierFlag {
   MOD_UVWMAP_FLIP_V = (1 << 1),
   MOD_UVWMAP_CAP = (1 << 2),
   MOD_UVWMAP_SELECTION = (1 << 3),
-  /** Old files: map size from a texel density (now #UVWMapModifierData.size_mode). */
+#ifdef DNA_DEPRECATED_ALLOW
+  /** Deprecated: became #MOD_UVWMAP_SIZE_PIXEL_DENSITY of #UVWMapModifierData.size_mode. */
   MOD_UVWMAP_REAL_WORLD = (1 << 4),
+#endif
   /** Only faces with #UVWMapModifierData.material_index. */
   MOD_UVWMAP_MATERIAL = (1 << 5),
 };

@@ -16,6 +16,7 @@
 #include "BKE_modifier.hh"
 #include "BKE_screen.hh"
 
+#include "DNA_mesh_types.h"
 #include "DNA_object_types.h"
 #include "DNA_particle_types.h"
 #include "DNA_screen_types.h"
@@ -87,6 +88,36 @@ static void set_modifier_expand_flag(const bContext * /*C*/, Panel *panel, short
 /* -------------------------------------------------------------------- */
 /** \name Modifier Panel Layouts
  * \{ */
+void modifier_uv_map_channel_draw(ui::Layout &layout, PointerRNA *ptr, PointerRNA *ob_ptr)
+{
+  const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
+  PointerRNA obj_data_ptr = RNA_pointer_get(ob_ptr, "data");
+
+  layout.prop(ptr, "map_channel", UI_ITEM_NONE, std::nullopt, ICON_NONE);
+  layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
+
+  /* The modifier adds a missing UV map to its result; on the mesh it can be listed and edited. */
+  const Object *ob = static_cast<const Object *>(ob_ptr->data);
+  const std::string name = RNA_string_get(ptr, "uv_layer");
+  if (ob && ob->type == OB_MESH && !name.empty()) {
+    const Mesh *mesh = id_cast<const Mesh *>(ob->data);
+    if (!mesh->uv_map_names().contains(name)) {
+      ui::Layout &row = layout.row(true);
+      row.use_property_split_set(false);
+      row.label(IFACE_("Not on the mesh"), ICON_INFO);
+      PointerRNA op_ptr = row.op(
+          "OBJECT_OT_uv_map_add_for_modifier", IFACE_("Add UV Map"), ICON_ADD);
+      RNA_string_set(&op_ptr, "modifier", md->name);
+    }
+  }
+
+  ui::Layout &row = layout.row(true);
+  row.use_property_split_set(false);
+  PointerRNA op_ptr = row.op(
+      "OBJECT_OT_uv_map_connect_texture", IFACE_("Connect to Texture"), ICON_NODE_TEXTURE);
+  RNA_string_set(&op_ptr, "modifier", md->name);
+}
+
 void modifier_error_message_draw(ui::Layout &layout, PointerRNA *ptr)
 {
   ModifierData *md = static_cast<ModifierData *>(ptr->data);

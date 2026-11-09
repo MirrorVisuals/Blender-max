@@ -901,7 +901,6 @@ static const EnumPropertyItem grease_pencil_build_time_mode_items[] = {
 
 #  include "NOD_nodes_srna.hh"
 
-#  include "ED_mesh.hh"
 #  include "ED_object.hh"
 
 #  ifdef WITH_ALEMBIC
@@ -1138,8 +1137,11 @@ static int rna_uv_map_channel_from_name(const PointerRNA *ptr, const char *name)
   return 0;
 }
 
-/** Set the UV map name for a channel, adding the UV map to the mesh if it has none of it. */
-static void rna_uv_map_channel_to_name(PointerRNA *ptr, const int channel, char *name, int maxncpy)
+/**
+ * Set the UV map name for a channel. The UV map does not have to be on the mesh: the modifier adds
+ * it to its result (#OBJECT_OT_uv_map_add_for_modifier adds it to the mesh).
+ */
+static void rna_uv_map_channel_to_name(const int channel, char *name, const int maxncpy)
 {
   if (channel <= 0) {
     return;
@@ -1148,21 +1150,7 @@ static void rna_uv_map_channel_to_name(PointerRNA *ptr, const int channel, char 
     name[0] = '\0';
     return;
   }
-  const std::string channel_name = "UVChannel_" + std::to_string(channel);
-  Object *ob = reinterpret_cast<Object *>(ptr->owner_id);
-  if (ob->type == OB_MESH && ob->data) {
-    Mesh *mesh = id_cast<Mesh *>(ob->data);
-    /* Channel 1 stays the first (default) UV map. */
-    if (mesh->uv_map_names().is_empty()) {
-      ED_mesh_uv_add(mesh, "UVMap", true, false, nullptr);
-      mesh->uv_maps_active_set("UVMap");
-      mesh->uv_maps_default_set("UVMap");
-    }
-    if (!mesh->uv_map_names().contains(channel_name)) {
-      ED_mesh_uv_add(mesh, channel_name.c_str(), false, false, nullptr);
-    }
-  }
-  BLI_strncpy(name, channel_name.c_str(), maxncpy);
+  BLI_snprintf(name, maxncpy, "UVChannel_%d", channel);
 }
 
 static int rna_UVWMapModifier_map_channel_get(PointerRNA *ptr)
@@ -1174,7 +1162,7 @@ static int rna_UVWMapModifier_map_channel_get(PointerRNA *ptr)
 static void rna_UVWMapModifier_map_channel_set(PointerRNA *ptr, int value)
 {
   UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
-  rna_uv_map_channel_to_name(ptr, value, umd->uvmap_name, sizeof(umd->uvmap_name));
+  rna_uv_map_channel_to_name(value, umd->uvmap_name, sizeof(umd->uvmap_name));
 }
 
 static int rna_UnwrapModifier_map_channel_get(PointerRNA *ptr)
@@ -1186,23 +1174,7 @@ static int rna_UnwrapModifier_map_channel_get(PointerRNA *ptr)
 static void rna_UnwrapModifier_map_channel_set(PointerRNA *ptr, int value)
 {
   UnwrapModifierData *umd = static_cast<UnwrapModifierData *>(ptr->data);
-  rna_uv_map_channel_to_name(ptr, value, umd->uvmap_name, sizeof(umd->uvmap_name));
-}
-
-static int rna_UVWMapModifier_size_mode_get(PointerRNA *ptr)
-{
-  const UVWMapModifierData *umd = static_cast<const UVWMapModifierData *>(ptr->data);
-  if (umd->size_mode == MOD_UVWMAP_SIZE_GIZMO && (umd->flag & MOD_UVWMAP_REAL_WORLD)) {
-    return MOD_UVWMAP_SIZE_PIXEL_DENSITY; /* Saved before size modes existed. */
-  }
-  return umd->size_mode;
-}
-
-static void rna_UVWMapModifier_size_mode_set(PointerRNA *ptr, int value)
-{
-  UVWMapModifierData *umd = static_cast<UVWMapModifierData *>(ptr->data);
-  umd->size_mode = value;
-  umd->flag &= ~MOD_UVWMAP_REAL_WORLD;
+  rna_uv_map_channel_to_name(value, umd->uvmap_name, sizeof(umd->uvmap_name));
 }
 
 static const int uvw_texture_sizes[] = {512, 1024, 2048, 4096, 8192};
@@ -7936,8 +7908,8 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Map Channel",
                            "UV map to write, as a channel like in 3ds Max: 1 is the default UV "
-                           "map, 2 and up the UV maps \"UVChannel_2\" and so on (added when "
-                           "needed). 0: another UV map, chosen by name");
+                           "map, 2 and up the UV maps \"UVChannel_2\" and so on. 0: another UV "
+                           "map, chosen by name");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 
@@ -8035,8 +8007,6 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
   prop = RNA_def_property(srna, "size_mode", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_sdna(prop, nullptr, "size_mode");
   RNA_def_property_enum_items(prop, size_mode_items);
-  RNA_def_property_enum_funcs(
-      prop, "rna_UVWMapModifier_size_mode_get", "rna_UVWMapModifier_size_mode_set", nullptr);
   RNA_def_property_ui_text(prop, "Size", "How big the texture is on the mesh");
   RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
 
@@ -8095,14 +8065,6 @@ static void rna_def_modifier_uvw_map(BlenderRNA *brna)
   RNA_def_property_ui_text(
       prop, "Material Index", "Material slot index (0 is the first slot) whose faces are mapped");
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
-
-  prop = RNA_def_property(srna, "use_real_world", PROP_BOOLEAN, PROP_NONE);
-  RNA_def_property_boolean_sdna(prop, nullptr, "flag", MOD_UVWMAP_REAL_WORLD);
-  RNA_def_property_ui_text(prop,
-                           "Real-World Size",
-                           "Size the texture by pixel density instead of by the gizmo: the "
-                           "gizmo only places and turns the map");
-  RNA_def_property_update(prop, 0, "rna_Modifier_dependency_update");
 
   prop = RNA_def_property(srna, "texel_density", PROP_FLOAT, PROP_NONE);
   RNA_def_property_range(prop, 0.001, FLT_MAX);
@@ -8167,8 +8129,8 @@ static void rna_def_modifier_unwrap(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Map Channel",
                            "UV map to write, as a channel like in 3ds Max: 1 is the default UV "
-                           "map, 2 and up the UV maps \"UVChannel_2\" and so on (added when "
-                           "needed). 0: another UV map, chosen by name");
+                           "map, 2 and up the UV maps \"UVChannel_2\" and so on. 0: another UV "
+                           "map, chosen by name");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
   RNA_def_property_update(prop, 0, "rna_Modifier_update");
 

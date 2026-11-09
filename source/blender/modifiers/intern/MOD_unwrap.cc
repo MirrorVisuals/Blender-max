@@ -793,7 +793,6 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
   const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
-  PointerRNA obj_data_ptr = RNA_pointer_get(&ob_ptr, "data");
 
   ui::Layout *row = &layout.row(true);
   PointerRNA op_ptr = row->op("OBJECT_OT_unwrap_level_edit", IFACE_("Edit UVs"), ICON_UV);
@@ -814,16 +813,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   }
 
   layout.use_property_split_set(true);
-  layout.prop(ptr, "map_channel", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
-  {
-    /* Make the selected texture node of the active material read this UV map. */
-    ui::Layout &row_tex = layout.row(true);
-    row_tex.use_property_split_set(false);
-    PointerRNA tex_ptr = row_tex.op(
-        "OBJECT_OT_uv_map_connect_texture", IFACE_("Connect to Texture"), ICON_NODE_TEXTURE);
-    RNA_string_set(&tex_ptr, "modifier", md->name);
-  }
+  modifier_uv_map_channel_draw(layout, ptr, &ob_ptr);
   layout.prop(ptr, "new_faces", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   layout.prop(ptr, "faces_num", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 

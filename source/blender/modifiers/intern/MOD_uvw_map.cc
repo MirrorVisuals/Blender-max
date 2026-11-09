@@ -76,9 +76,7 @@ static void update_depsgraph(ModifierData *md, const ModifierUpdateDepsgraphCont
         ctx->node, umd->gizmo_object, DEG_OB_COMP_TRANSFORM, "UVW Map Modifier");
   }
   /* The gizmo object is used relative to the object; real-world size uses its scale. */
-  if (umd->gizmo_object != nullptr || (umd->flag & MOD_UVWMAP_REAL_WORLD) ||
-      umd->size_mode != MOD_UVWMAP_SIZE_GIZMO)
-  {
+  if (umd->gizmo_object != nullptr || umd->size_mode != MOD_UVWMAP_SIZE_GIZMO) {
     DEG_add_depends_on_transform_relation(ctx->node, "UVW Map Modifier");
   }
 }
@@ -113,18 +111,10 @@ struct Sizing {
   float2 tile = float2(1.0f);
 };
 
-static int size_mode(const UVWMapModifierData &umd)
-{
-  if (umd.size_mode == MOD_UVWMAP_SIZE_GIZMO && (umd.flag & MOD_UVWMAP_REAL_WORLD)) {
-    return MOD_UVWMAP_SIZE_PIXEL_DENSITY; /* Saved before size modes existed. */
-  }
-  return umd.size_mode;
-}
-
 static Sizing sizing(const UVWMapModifierData &umd, const float4x4 &gizmo, const Object *ob)
 {
   Sizing r;
-  const int mode = size_mode(umd);
+  const int mode = umd.size_mode;
   if (mode == MOD_UVWMAP_SIZE_REAL_WORLD) {
     r.tile = float2(std::max(umd.real_size[0], 1e-6f), std::max(umd.real_size[1], 1e-6f));
   }
@@ -440,7 +430,6 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
   PointerRNA ob_ptr;
   PointerRNA *ptr = modifier_panel_get_property_pointers(panel, &ob_ptr);
   const ModifierData *md = static_cast<const ModifierData *>(ptr->data);
-  PointerRNA obj_data_ptr = RNA_pointer_get(&ob_ptr, "data");
 
   layout.use_property_split_set(true);
   layout.prop(ptr, "map_type", UI_ITEM_NONE, std::nullopt, ICON_NONE);
@@ -448,16 +437,7 @@ static void panel_draw(const bContext * /*C*/, Panel *panel)
     layout.prop(ptr, "use_cap", UI_ITEM_NONE, std::nullopt, ICON_NONE);
   }
   layout.prop(ptr, "axis", ui::ITEM_R_EXPAND, std::nullopt, ICON_NONE);
-  layout.prop(ptr, "map_channel", UI_ITEM_NONE, std::nullopt, ICON_NONE);
-  layout.prop_search(ptr, "uv_layer", &obj_data_ptr, "uv_layers", std::nullopt, ICON_GROUP_UVS);
-  {
-    /* Make the selected texture node of the active material read this UV map. */
-    ui::Layout &row_tex = layout.row(true);
-    row_tex.use_property_split_set(false);
-    PointerRNA tex_ptr = row_tex.op(
-        "OBJECT_OT_uv_map_connect_texture", IFACE_("Connect to Texture"), ICON_NODE_TEXTURE);
-    RNA_string_set(&tex_ptr, "modifier", md->name);
-  }
+  modifier_uv_map_channel_draw(layout, ptr, &ob_ptr);
   layout.prop(ptr, "use_selection", UI_ITEM_NONE, std::nullopt, ICON_NONE);
 
   {

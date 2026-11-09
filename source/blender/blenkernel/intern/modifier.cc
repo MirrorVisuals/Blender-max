@@ -1368,13 +1368,37 @@ static size_t modifier_struct_size(const ModifierType type)
   }
 }
 
+/**
+ * The modifier type of a modifier read from a file. The Edit Poly stack modifiers were numbered
+ * 87 to 89 in Blender 5.2 builds; no other 5.2 modifier has these numbers.
+ */
+static ModifierType modifier_type_from_file(const ModifierType type, const int file_version)
+{
+  if (file_version <= 502) {
+    switch (int(type)) {
+      case 87:
+        return eModifierType_EditPoly;
+      case 88:
+        return eModifierType_UVWMap;
+      case 89:
+        return eModifierType_Unwrap;
+      default:
+        break;
+    }
+  }
+  return type;
+}
+
 void BKE_modifier_blend_read_data(BlendDataReader *reader, ListBaseT<ModifierData> *lb, Object *ob)
 {
-  BLO_read_struct_list_with_type_size<ModifierData>(
-      reader, lb, [](const ModifierData &md) { return modifier_struct_size(md.type); });
+  const int file_version = BLO_read_fileversion_get(reader);
+  BLO_read_struct_list_with_type_size<ModifierData>(reader, lb, [&](const ModifierData &md) {
+    return modifier_struct_size(modifier_type_from_file(md.type, file_version));
+  });
 
   for (ModifierData &md_iter : lb->items_mutable()) {
     ModifierData *md = &md_iter;
+    md->type = modifier_type_from_file(md->type, file_version);
     md->error = nullptr;
     md->runtime = nullptr;
 

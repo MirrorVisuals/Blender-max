@@ -218,7 +218,8 @@ print(f"  {count} objects: cost of our modifiers             {max(first - plain,
 
 # 8. Extrude Manifold (solid, edit mode), against Blender's normal extrude ----------------------------------
 # Each case is built fresh, the extrude is timed (both run the same extrude and move; Extrude
-# Manifold adds the solid Boolean on top), the median of 3 runs is reported.
+# Manifold adds the solid Boolean on top), the median of 3 runs is reported. BENCHMARK.bat turns
+# on the "mesh.extrude" log, so each solid run also logs how long its stages take.
 def solid_box(bm, cuts):
     """A 2 x 2 x 2 box cut into (cuts + 1)^3 cells: 6 (cuts + 1)^2 faces."""
     geom = bmesh.ops.create_cube(bm, size=2.0)
@@ -246,15 +247,12 @@ def extrude_case(build, pick, move, solid, repeats=3):
         bm.select_flush_mode()
         bmesh.update_edit_mesh(ob.data)
         faces = len(bm.faces)
-        # Last solid run: Extrude Manifold prints how long each of its stages takes.
-        bpy.app.debug_value = 701 if (solid and run == repeats - 1) else 0
         t0 = time.perf_counter()
         if solid:
             bpy.ops.mesh.extrude_manifold(TRANSFORM_OT_translate={"value": move})
         else:
             bpy.ops.mesh.extrude_region_move(TRANSFORM_OT_translate={"value": move})
         times.append(ms(t0))
-        bpy.app.debug_value = 0
         bpy.ops.object.mode_set(mode='OBJECT')
     return faces, statistics.median(times)
 

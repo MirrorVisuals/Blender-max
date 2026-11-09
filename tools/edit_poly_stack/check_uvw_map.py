@@ -191,7 +191,7 @@ print("Real-world size (pixel density)")
 cube_rw = new_object("cube", location=(0, 8, 0))   # 2 m wide
 rw = cube_rw.modifiers.new("UVW Map", 'UVW_MAP')
 rw.gizmo_size = (10.0, 10.0, 10.0)                  # The gizmo size must not matter.
-rw.use_real_world = True
+rw.size_mode = 'PIXEL_DENSITY'
 rw.texture_size = 1024
 rw.texel_density = 512.0                            # 1024 px / 512 px/m = 2 m per tile.
 data = faces_uv(cube_rw)

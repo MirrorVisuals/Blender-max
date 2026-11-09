@@ -52,6 +52,13 @@ void modifier_error_message_draw(ui::Layout &layout, PointerRNA *ptr);
 PointerRNA *modifier_panel_get_property_pointers(Panel *panel, PointerRNA *r_ob_ptr);
 
 /**
+ * Draw the UV map of a modifier that writes one (`map_channel` and `uv_layer` properties):
+ * channel, UV map, a button to add the UV map to the mesh when it is not there, and a button to
+ * make the selected texture node read it.
+ */
+void modifier_uv_map_channel_draw(ui::Layout &layout, PointerRNA *ptr, PointerRNA *ob_ptr);
+
+/**
  * Create a panel in the context's region
  */
 PanelType *modifier_panel_register(ARegionType *region_type, ModifierType type, PanelDrawFn draw);

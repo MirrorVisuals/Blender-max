@@ -490,6 +490,21 @@ def modifier_uv_map_name(ob, mod):
     return uv_layers.active.name if uv_layers.active else "UVMap"
 
 
+def ensure_modifier_uv_map(ob, mod):
+    """Add the UV map a UVW Map or Unwrap modifier writes to the mesh, when it is not there.
+    The first UV map of a mesh is its default one (channel 1), so a mesh without UV maps gets
+    "UVMap" first. Returns true when a UV map was added."""
+    uv_layers = ob.data.uv_layers
+    added = False
+    if len(uv_layers) == 0:
+        uv_layers.new(name="UVMap", do_init=False)
+        added = True
+    if mod.uv_layer and mod.uv_layer not in uv_layers:
+        uv_layers.new(name=mod.uv_layer, do_init=False)
+        added = True
+    return added
+
+
 def _vector_socket_to_connect(node):
     """The socket a UV Map node should feed for `node`: its Vector input, or, when that comes
     from a node that transforms a vector (e.g. Mapping), that node's Vector input."""
@@ -510,6 +525,34 @@ def _vector_socket_to_connect(node):
     return socket
 
 
+def _uv_modifier_from_operator(context, name):
+    ob = context.active_object
+    if is_gizmo(ob):
+        ob = owner_of(ob)[0]
+    if ob is None or ob.type != 'MESH':
+        return None, None
+    mod = ob.modifiers.get(name) if name else ob.modifiers.active
+    if mod is None or mod.type not in {'UVW_MAP', 'UNWRAP'}:
+        return None, None
+    return ob, mod
+
+
+class OBJECT_OT_uv_map_add_for_modifier(Operator):
+    """Add the UV map of this modifier to the mesh, to list and edit it like the others"""
+    bl_idname = "object.uv_map_add_for_modifier"
+    bl_label = "Add UV Map"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    modifier: StringProperty(name="Modifier")
+
+    def execute(self, context):
+        ob, mod = _uv_modifier_from_operator(context, self.modifier)
+        if mod is None:
+            return {'CANCELLED'}
+        ensure_modifier_uv_map(ob, mod)
+        return {'FINISHED'}
+
+
 class OBJECT_OT_uv_map_connect_texture(Operator):
     """Make the selected texture node of the active material read the UV map of this modifier """ \
         """(adds or updates a UV Map node in front of it)"""
@@ -520,14 +563,11 @@ class OBJECT_OT_uv_map_connect_texture(Operator):
     modifier: StringProperty(name="Modifier")
 
     def execute(self, context):
-        ob = context.active_object
-        if is_gizmo(ob):
-            ob = owner_of(ob)[0]
-        if ob is None or ob.type != 'MESH':
+        ob, mod = _uv_modifier_from_operator(context, self.modifier)
+        if mod is None:
             return {'CANCELLED'}
-        mod = ob.modifiers.get(self.modifier) if self.modifier else ob.modifiers.active
-        if mod is None or mod.type not in {'UVW_MAP', 'UNWRAP'}:
-            return {'CANCELLED'}
+        # The texture should find its UV map on the mesh (it can also come from the modifier).
+        ensure_modifier_uv_map(ob, mod)
         uv_name = modifier_uv_map_name(ob, mod)
 
         mat = ob.active_material
@@ -559,6 +599,7 @@ class OBJECT_OT_uv_map_connect_texture(Operator):
 
 
 classes = (
+    OBJECT_OT_uv_map_add_for_modifier,
     OBJECT_OT_uv_map_connect_texture,
     OBJECT_OT_uvw_map_gizmo_edit,
     OBJECT_OT_uvw_map_fit,
