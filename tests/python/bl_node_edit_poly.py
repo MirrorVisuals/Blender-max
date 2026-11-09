@@ -181,6 +181,11 @@ check(plain_ob.mode == 'OBJECT', "Tab leaves that level")
 print("Removing the node")
 bpy.context.view_layer.objects.active = ob
 tab()
+check(ob.mode == 'OBJECT',
+      "the second node was edited with 12 points arriving, now 8 (first node reset): Tab refuses")
+bpy.ops.object.edit_poly_node_reset(modifier=mod.name, node_id=second_id)
+tab()
+check(ob.mode == 'EDIT', "after resetting it, the second node can be edited again")
 bm = bmesh.from_edit_mesh(ob.data)
 for v in bm.verts:
     v.co.z += 0.25
@@ -193,6 +198,44 @@ tree.links.new(group_in.outputs[0], transform.inputs[0])
 info = evaluated(ob)
 check(info["verts"] == 8 and info["max_z"] == 2.25,
       "removing the first node: the other node's edits still apply (no crash)")
+
+print("More points before the node, without stable IDs: the edits pause")
+grid_tree = bpy.data.node_groups.new("Grid Tree", 'GeometryNodeTree')
+grid_tree.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+grid_tree.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+grid = grid_tree.nodes.new('GeometryNodeMeshGrid')
+grid.inputs["Vertices X"].default_value = 10
+grid.inputs["Vertices Y"].default_value = 10
+grid_edit = grid_tree.nodes.new('GeometryNodeEditPoly')
+grid_out = grid_tree.nodes.new('NodeGroupOutput')
+grid_tree.links.new(grid.outputs["Mesh"], grid_edit.inputs[0])
+grid_tree.links.new(grid_edit.outputs[0], grid_out.inputs[0])
+bpy.ops.mesh.primitive_cube_add(location=(0.0, 6.0, 0.0))
+grid_ob = bpy.context.active_object
+grid_mod = add_nodes_modifier(grid_ob, grid_tree)
+tab()
+bm = bmesh.from_edit_mesh(grid_ob.data)
+corner = max(bm.verts, key=lambda v: v.co.x + v.co.y * 1.001)
+corner.co.z += 1.0
+bm.normal_update()
+bmesh.update_edit_mesh(grid_ob.data)
+tab()
+check(evaluated(grid_ob)["max_z"] == 1.0, "10 x 10 grid: the corner is raised")
+grid.inputs["Vertices X"].default_value = 12
+grid.inputs["Vertices Y"].default_value = 12
+info = evaluated(grid_ob)
+check(info["verts"] == 144 and info["max_z"] == 0.0,
+      "12 x 12 grid: the edit pauses instead of raising another point")
+tab()
+check(grid_ob.mode == 'OBJECT', "Tab refuses to edit while the edits are paused")
+grid.inputs["Vertices X"].default_value = 10
+grid.inputs["Vertices Y"].default_value = 10
+check(evaluated(grid_ob)["max_z"] == 1.0, "back to 10 x 10: the edit applies again")
+bpy.ops.object.edit_poly_node_reset(modifier=grid_mod.name, node_id=grid_mod.edit_poly_pick())
+grid.inputs["Vertices X"].default_value = 12
+tab()
+check(grid_ob.mode == 'EDIT', "after Reset the node can be edited at the new size")
+tab()
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")

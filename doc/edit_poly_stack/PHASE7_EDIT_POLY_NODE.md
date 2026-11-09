@@ -42,8 +42,13 @@ The node applies its entry to the incoming mesh exactly like an Edit Poly modifi
 geometry (curves, instances...) passes through unchanged. Without stored edits the node passes the
 geometry through.
 
-Elements are found by stable IDs. Nodes before the Edit Poly node that do not keep stable IDs give
-the mesh new ones: the edits then pause, as an Edit Poly level does when the mesh below changes.
+Elements are found by stable IDs. Most nodes do not write them; without them, elements are found by
+index. That is only right while the number of points and faces is the one the edits were made on, so
+each level stores those numbers when it is edited (`input_verts_num`, `input_faces_num`): if they
+change and the mesh has no stable IDs, the edits pause instead of landing on other elements, and the
+level cannot be edited until the numbers match again or its edits are reset. This also applies to
+Edit Poly modifiers. A node that changes the order of elements without changing their number is not
+detected. `tools/edit_poly_stack/benchmark_node_edit_poly.py` reports what happens in typical setups.
 
 ## Sessions
 

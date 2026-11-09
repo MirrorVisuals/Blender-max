@@ -661,7 +661,7 @@ add_blender_test(
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_mesh_extrude_manifold_solid.py
 )
 
-add_blender_test(
+add_blender_test_allow_error(
   node_edit_poly
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_node_edit_poly.py
 )

@@ -2239,6 +2239,13 @@ struct EditPolyModifierData {
   int attr_floats_num = 0;
   int sel_verts_num = 0;
   int sel_edges_num = 0;
+  /**
+   * Number of points and faces of the mesh arriving at the level when it was last edited. Used
+   * when that mesh has no stable IDs (they are made from element indices then): if the numbers
+   * change, the indices no longer match and the edits pause. Zero: not known (older files).
+   */
+  int input_verts_num = 0;
+  int input_faces_num = 0;
   char _pad[4] = {};
 };
 

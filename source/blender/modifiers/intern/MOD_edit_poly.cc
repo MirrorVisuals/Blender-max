@@ -251,8 +251,36 @@ void session_prepare(Mesh &input, Mesh &mesh)
   write_pair(SESSION_ATTR_FACE_ID_LO, SESSION_ATTR_FACE_ID_HI, bke::AttrDomain::Face, face_ids);
 }
 
+/**
+ * Without stable IDs, the elements of the mesh arriving at the level are found by index. That is
+ * only right while the number of elements is the one the edits were made on (e.g. a node before an
+ * Edit Poly node made more points): otherwise the edits would land on other elements, so they
+ * pause. Returns the reason, or empty.
+ */
+static std::string index_ids_changed(const EditPolyModifierData &emd, const Mesh &mesh)
+{
+  using namespace bke::stable_id;
+  if (emd.input_verts_num > 0 && mesh.verts_num != emd.input_verts_num &&
+      !has_ids(mesh, bke::AttrDomain::Point))
+  {
+    return "the mesh arriving here has " + std::to_string(mesh.verts_num) + " points instead of " +
+           std::to_string(emd.input_verts_num) + " and no stable IDs to find the edited ones";
+  }
+  if (emd.input_faces_num > 0 && mesh.faces_num != emd.input_faces_num &&
+      !has_ids(mesh, bke::AttrDomain::Face))
+  {
+    return "the mesh arriving here has " + std::to_string(mesh.faces_num) + " faces instead of " +
+           std::to_string(emd.input_faces_num) + " and no stable IDs to find the edited ones";
+  }
+  return "";
+}
+
 std::string session_check(const EditPolyModifierData &emd, const Mesh &input)
 {
+  if (const std::string reason = index_ids_changed(emd, input); !reason.empty()) {
+    return "This level's edits are paused (" + reason +
+           "). Restore what changed below, or reset the edits, to edit it";
+  }
   if (emd.patch_ints_num == 0) {
     return "";
   }
@@ -291,6 +319,8 @@ std::string session_commit(EditPolyModifierData &emd,
   if (!error.empty()) {
     return error;
   }
+  emd.input_verts_num = input.verts_num;
+  emd.input_faces_num = input.faces_num;
 
   /* Element data (bevel weights, creases, sharp edges, seams, materials, flat shading). */
   {
@@ -584,6 +614,11 @@ Mesh *apply(const EditPolyModifierData &emd_ref, Mesh *mesh, std::string &warnin
 {
   using namespace bke::stable_id;
   const EditPolyModifierData *emd = &emd_ref;
+
+  if (const std::string reason = index_ids_changed(*emd, *mesh); !reason.empty()) {
+    warning = "Edits paused: " + reason;
+    return mesh;
+  }
 
   /* 1. Topology patch. */
   Mesh *result = mesh;
