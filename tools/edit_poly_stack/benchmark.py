@@ -135,6 +135,25 @@ t_out3 = tab()
 single("Tab out, storing bevel weights + selection", n, t_out3)
 overhead("Edit Poly replay (+ weights, selection)", ob, drv, [ep])
 
+# 3b. Edit Poly above a Subdivision: the mesh arriving at the level has stable IDs ------------
+fresh()
+ob = grid(250, "EditPolySubdiv")
+sub = ob.modifiers.new("Subdivision", 'SUBSURF')
+sub.levels = 1
+ep = ob.modifiers.new("Edit Poly", 'EDIT_POLY')
+tab()
+bm = bmesh.from_edit_mesh(ob.data)
+bm.verts.ensure_lookup_table()
+step = max(1, len(bm.verts) // 1000)
+for v in list(bm.verts)[::step]:
+    v.co.z += 0.01
+bm.normal_update()
+bmesh.update_edit_mesh(ob.data)
+tab()
+drv = driver(ob)
+update()
+overhead("Edit Poly replay above Subdivision (moves)", ob, drv, [ep])
+
 # 4. UVW Map on a very big mesh ---------------------------------------------------------------
 fresh()
 ob = grid(1000, "UVW")
