@@ -174,7 +174,8 @@ go = plain_tree.nodes.new('NodeGroupOutput')
 plain_tree.links.new(gi.outputs[0], go.inputs[0])
 add_nodes_modifier(plain_ob, plain_tree)
 tab()
-check(any(m.type == 'EDIT_POLY' for m in plain_ob.modifiers), "an Edit Poly modifier is placed, as before")
+check(plain_ob.mode == 'EDIT' and not any(m.type == 'EDIT_POLY' for m in plain_ob.modifiers),
+      "no Edit Poly modifier or node: Blender's usual Edit Mode, nothing is added")
 tab()
 check(plain_ob.mode == 'OBJECT', "Tab leaves that level")
 
@@ -305,6 +306,23 @@ check(chain_ob.mode == 'OBJECT' and after["faces"] == bevelled["faces"] - 1,
 tab()
 tab()
 check(chain_ob.mode == 'OBJECT' and evaluated(chain_ob) == after, "editing it again and leaving: no crash")
+
+print("A session survives saving and reloading the file")
+chain_name = chain_ob.name
+tab()
+session_id = chain_ob.modifiers["GeometryNodes"].edit_poly_session_get()
+check(session_id != -1, "editing the node again")
+path = os.path.join(tempfile.gettempdir(), "edit_poly_node_session_check.blend")
+bpy.ops.wm.save_as_mainfile(filepath=path)
+bpy.ops.wm.open_mainfile(filepath=path)
+chain_ob = bpy.data.objects[chain_name]
+bpy.context.view_layer.objects.active = chain_ob
+check(chain_ob.modifiers["GeometryNodes"].edit_poly_session_get() == session_id,
+      "the node is still the one being edited after reload")
+tab()
+check(chain_ob.mode == 'OBJECT' and chain_ob.modifiers["GeometryNodes"].edit_poly_session_get() == -1,
+      "Tab leaves the session")
+check(evaluated(chain_ob) == after, "the result is the same as before")
 
 print()
 print("RESULT:", "ALL PASSED" if not failures else f"{len(failures)} FAILED")

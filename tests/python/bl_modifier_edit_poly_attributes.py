@@ -54,6 +54,7 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.mesh.primitive_cube_add()
 ob = bpy.context.active_object
 base = ob.data
+ob.modifiers.new("Edit Poly", 'EDIT_POLY')
 
 print("Edit the data in a level")
 tab()

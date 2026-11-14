@@ -56,10 +56,18 @@ sub = ob.modifiers.new("Subdivision", 'SUBSURF')
 sub.levels = 1
 
 before = points(ob)  # Object Mode, Subdivision level 1, no Edit Poly yet
-print("Tab on a cube with only a Subdivision")
+print("Tab without an Edit Poly: Blender's usual Edit Mode")
+tab()
+check(ob.mode == 'EDIT' and ob.data == base, "Edit Mode on the mesh itself")
+check(not any(m.type == 'EDIT_POLY' for m in ob.modifiers), "no Edit Poly modifier was added")
+tab()
+check(ob.mode == 'OBJECT' and ob.data == base, "Tab again: back in Object Mode")
+
+print("Tab on a cube with a Subdivision and an Edit Poly placed on top")
+ob.modifiers.new("Edit Poly", 'EDIT_POLY')
 tab()
 ep = ob.modifiers.get("Edit Poly")
-check(ep is not None and ob.modifiers[:].index(ep) == 1, "Tab added an Edit Poly at the top of the stack")
+check(ep is not None and ob.modifiers[:].index(ep) == 1, "Tab edits the Edit Poly at the top of the stack")
 check(ob.mode == 'EDIT', "now in Edit Mode")
 check(ob.data != base and len(ob.data.vertices) == 26, "editing the subdivided mesh (26 vertices), not the base")
 check(not sub.show_viewport, "Subdivision hidden while editing (its result is in the edited mesh)")

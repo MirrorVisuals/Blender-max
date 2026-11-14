@@ -26,7 +26,8 @@ below possible.
 ### Edit Poly modifier
 
 - **Tab edits a modifier level, not the base mesh.** It edits the active Edit Poly, or the
-  nearest Edit Poly below the active modifier, or adds one at the top of the stack. While you
+  nearest Edit Poly below the active modifier. Objects without an Edit Poly modifier or node
+  get Blender's usual Edit Mode, so nothing changes until you place one. While you
   edit, the modifiers above stay visible. Tab again stores the edits in the modifier, and the
   base mesh is never changed.
 - **Any modeling tool can be used.** Vertex moves are stored as moves. Topology changes

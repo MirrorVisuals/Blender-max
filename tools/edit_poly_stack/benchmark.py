@@ -95,6 +95,8 @@ overhead("Subdivision level 2 (incl. stable IDs)", ob, drv, [sub])
 fresh()
 ob = grid(500, "EditPoly")
 n = len(ob.data.polygons)
+# Tab only edits a level once an Edit Poly has been placed.
+ob.modifiers.new("Edit Poly", 'EDIT_POLY')
 t_in = tab()
 bm = bmesh.from_edit_mesh(ob.data)
 bm.verts.ensure_lookup_table()

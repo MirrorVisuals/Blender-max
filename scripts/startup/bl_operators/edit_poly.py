@@ -14,7 +14,8 @@ Tab picks a level:
 - the active modifier, if it is an Edit Poly;
 - otherwise the nearest Edit Poly below the active modifier;
 - otherwise the topmost Edit Poly;
-- otherwise a new Edit Poly is added at the top of the stack.
+- otherwise (no Edit Poly modifier or node placed) Tab is Blender's usual Edit Mode on the mesh,
+  so nothing changes for objects that do not use the Edit Poly stack.
 
 Entering a level starts a session: the object temporarily uses a copy of the mesh as it arrives
 at that level (with the level's moves applied), and the modifiers up to and including the level
@@ -52,8 +53,9 @@ KEY_NODE = "_edit_poly_node"
 
 SELECTION_GROUP = "Edit Poly Selection"
 
-# Tab on an object without an Edit Poly adds one, so the base mesh is never edited directly.
-AUTO_ADD = True
+# Tab on an object without an Edit Poly modifier or node: False is Blender's usual Edit Mode on
+# the mesh; True adds an Edit Poly modifier, so the base mesh is never edited directly.
+AUTO_ADD = False
 
 # Session ID attributes (see MOD_edit_poly.hh).
 VERT_LO, VERT_HI = "edit_poly_vertex_id_lo", "edit_poly_vertex_id_hi"

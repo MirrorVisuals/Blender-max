@@ -75,6 +75,7 @@ def new_cube():
     ob = bpy.context.active_object
     sub = ob.modifiers.new("Subdivision", 'SUBSURF')
     sub.levels = 1
+    ob.modifiers.new("Edit Poly", 'EDIT_POLY')
     return ob, sub
 
 

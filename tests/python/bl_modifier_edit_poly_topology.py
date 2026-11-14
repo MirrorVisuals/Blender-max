@@ -60,6 +60,7 @@ base = ob.data
 base_co = [tuple(v.co) for v in base.vertices]
 sub = ob.modifiers.new("Subdivision", 'SUBSURF')
 sub.levels = 1
+ob.modifiers.new("Edit Poly", 'EDIT_POLY')
 plain = evaluated(ob)
 
 print("Extrude the top of the subdivided cube")
