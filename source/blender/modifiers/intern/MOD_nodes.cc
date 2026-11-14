@@ -1738,8 +1738,9 @@ class NodesModifierBakeParams : public nodes::GeoNodesBakeParams {
  *
  * The edits of Edit Poly nodes are stored per object in #NodesModifierData::edit_polys. Sessions
  * (editing a node's result in Edit Mode) need the mesh arriving at a node and its result (a
- * capture), and while editing, the node outputs the edited mesh, which is the input of the
- * modifier then. Both are requested on the original object and read during evaluation.
+ * capture, requested on the original object and filled during evaluation). While editing, the
+ * node outputs the edited mesh, which is the input of the modifier then
+ * (#NodesModifierData::edit_poly_session_id).
  * \{ */
 
 namespace edit_poly_node {
@@ -1755,7 +1756,6 @@ struct Capture {
 
 struct Registry {
   Mutex mutex;
-  Map<Key, int> session_by_modifier;
   Map<Key, Capture> captures;
 };
 
@@ -1813,25 +1813,6 @@ bool capture_take(const Object &object,
   return true;
 }
 
-void session_set(const Object &object, const NodesModifierData &nmd, const int id)
-{
-  Registry &reg = registry();
-  std::scoped_lock lock(reg.mutex);
-  if (id == -1) {
-    reg.session_by_modifier.remove(key_of(object, nmd));
-  }
-  else {
-    reg.session_by_modifier.add_overwrite(key_of(object, nmd), id);
-  }
-}
-
-int session_get(const Object &object, const NodesModifierData &nmd)
-{
-  Registry &reg = registry();
-  std::scoped_lock lock(reg.mutex);
-  return reg.session_by_modifier.lookup_default(key_of(object, nmd), -1);
-}
-
 }  // namespace edit_poly_node
 
 class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
@@ -1851,10 +1832,8 @@ class NodesModifierEditPolyParams : public nodes::GeoNodesEditPolyParams {
                               const bke::GeometrySet &input)
       : nmd_(nmd), object_(object), key_(edit_poly_node::key_of(object_orig, nmd))
   {
-    edit_poly_node::Registry &reg = edit_poly_node::registry();
-    std::scoped_lock lock(reg.mutex);
-    session_id_ = reg.session_by_modifier.lookup_default(key_, -1);
-    if (session_id_ != -1) {
+    if (nmd.flag & NODES_MODIFIER_EDIT_POLY_SESSION) {
+      session_id_ = nmd.edit_poly_session_id;
       session_input_ = input;
     }
   }

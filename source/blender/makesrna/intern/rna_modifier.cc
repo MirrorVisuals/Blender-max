@@ -2546,13 +2546,20 @@ static void rna_NodesModifier_edit_poly_session_set(ID *id,
                                                     NodesModifierData *nmd,
                                                     const int node_id)
 {
-  blender::edit_poly_node::session_set(*id_cast<Object *>(id), *nmd, node_id);
+  if (node_id == -1) {
+    nmd->flag &= ~NODES_MODIFIER_EDIT_POLY_SESSION;
+    nmd->edit_poly_session_id = 0;
+  }
+  else {
+    nmd->flag |= NODES_MODIFIER_EDIT_POLY_SESSION;
+    nmd->edit_poly_session_id = node_id;
+  }
   DEG_id_tag_update(id, ID_RECALC_GEOMETRY);
 }
 
-static int rna_NodesModifier_edit_poly_session_get(ID *id, NodesModifierData *nmd)
+static int rna_NodesModifier_edit_poly_session_get(NodesModifierData *nmd)
 {
-  return blender::edit_poly_node::session_get(*id_cast<Object *>(id), *nmd);
+  return (nmd->flag & NODES_MODIFIER_EDIT_POLY_SESSION) ? nmd->edit_poly_session_id : -1;
 }
 
 static void rna_NodesModifier_edit_poly_session_prepare(NodesModifierData * /*nmd*/,
@@ -9511,7 +9518,6 @@ static void rna_def_modifier_nodes(BlenderRNA *brna)
 
   func = RNA_def_function(
       srna, "edit_poly_session_get", "rna_NodesModifier_edit_poly_session_get");
-  RNA_def_function_flag(func, FUNC_USE_SELF_ID);
   RNA_def_function_ui_description(func, "The Edit Poly node being edited, or -1");
   parm = RNA_def_int(func, "id", -1, INT_MIN, INT_MAX, "", "Nested node ID", INT_MIN, INT_MAX);
   RNA_def_function_return(func, parm);

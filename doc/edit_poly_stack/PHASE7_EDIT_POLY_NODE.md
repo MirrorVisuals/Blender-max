@@ -65,7 +65,8 @@ selected.
 2. The result is edited in Edit Mode as for a modifier level (session IDs, operation log); the
    modifiers before the Geometry Nodes modifier are hidden.
 3. While editing, the node outputs the edited mesh (the input of the modifier), so the nodes after
-   it and the modifiers above show the edit live.
+   it and the modifiers above show the edit live. Which node is edited is stored in the modifier
+   (`edit_poly_session_id`), so a session follows undo and saving.
 4. Tab records the edits into the node's entry, as `session_commit` does for a level.
 
 Check: `tests/python/bl_node_edit_poly.py`.

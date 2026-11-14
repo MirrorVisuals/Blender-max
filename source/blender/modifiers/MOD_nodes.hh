@@ -69,7 +69,8 @@ struct NodesModifierRuntime {
 namespace edit_poly_node {
 
 /**
- * Edit Poly node sessions. `object` is the original object, `id` the nested node ID of the node.
+ * Edit Poly node sessions and UVW Map node tools. `object` is the original object, `id` the
+ * nested node ID of the node.
  *
  * At the next evaluation, keep a copy of the mesh arriving at the node and of its result.
  */
@@ -77,9 +78,6 @@ void capture_request(const Object &object, const NodesModifierData &nmd, int id)
 /** The captured meshes (owned by the caller, outside of Main). False if there is no capture. */
 bool capture_take(
     const Object &object, const NodesModifierData &nmd, int id, Mesh **r_input, Mesh **r_result);
-/** While node `id` is edited, it outputs the input of the modifier. -1 ends the session. */
-void session_set(const Object &object, const NodesModifierData &nmd, int id);
-int session_get(const Object &object, const NodesModifierData &nmd);
 
 }  // namespace edit_poly_node
 

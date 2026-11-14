@@ -2592,6 +2592,8 @@ enum GeometryNodesModifierPanel : int {
 enum NodesModifierFlag : int8_t {
   NODES_MODIFIER_HIDE_DATABLOCK_SELECTOR = (1 << 0),
   NODES_MODIFIER_HIDE_MANAGE_PANEL = (1 << 1),
+  /** An Edit Poly node is being edited, see #NodesModifierData::edit_poly_session_id. */
+  NODES_MODIFIER_EDIT_POLY_SESSION = (1 << 2),
 };
 ENUM_OPERATORS(NodesModifierFlag);
 
@@ -2730,7 +2732,12 @@ struct NodesModifierData {
   int panels_num = 0;
   NodesModifierPanel *panels = nullptr;
 
-  char _pad3[4] = {};
+  /**
+   * Nested node ID of the Edit Poly node being edited (with #NODES_MODIFIER_EDIT_POLY_SESSION):
+   * it outputs the input of the modifier, which is the mesh being edited. Stored with the
+   * modifier so that it follows undo and saving like the rest of a session.
+   */
+  int edit_poly_session_id = 0;
   int edit_polys_num = 0;
   /** Edits of the Edit Poly nodes in the node tree, for this object. */
   NodesModifierEditPoly *edit_polys = nullptr;

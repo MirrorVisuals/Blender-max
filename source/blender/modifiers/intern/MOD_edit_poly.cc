@@ -16,6 +16,7 @@
  * when modifiers below change. Edits whose elements are missing are paused, not deleted.
  */
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <string>
@@ -24,6 +25,7 @@
 #include "BLI_math_vector.hh"
 #include "BLI_math_vector_types.hh"
 #include "BLI_set.hh"
+#include "BLI_sort.hh"
 #include "BLI_string.h"
 #include "BLI_task.hh"
 #include "BLI_vector.hh"
@@ -223,31 +225,34 @@ namespace edit_poly {
 bool remove_repeated_ids(Mesh &mesh)
 {
   using namespace bke::stable_id;
-  bool removed = false;
-  for (const bke::AttrDomain domain :
-       {bke::AttrDomain::Point, bke::AttrDomain::Edge, bke::AttrDomain::Face})
-  {
-    if (!has_ids(mesh, domain)) {
+  /* Points and faces are checked (sorted in parallel: this runs at every evaluation); edges get
+   * their IDs from the same sources, so the IDs of all domains are removed together. */
+  bool repeated = false;
+  for (const bke::AttrDomain domain : {bke::AttrDomain::Point, bke::AttrDomain::Face}) {
+    if (repeated || !has_ids(mesh, domain)) {
       continue;
     }
     const Array<StableID> ids = read_or_make_root_ids(mesh, domain);
-    Set<uint64_t> seen;
-    seen.reserve(ids.size());
-    bool repeated = false;
-    for (const StableID id : ids) {
-      if (!seen.add(id.as_u64())) {
-        repeated = true;
-        break;
+    Array<uint64_t> keys(ids.size());
+    threading::parallel_for(ids.index_range(), 8192, [&](const IndexRange range) {
+      for (const int64_t i : range) {
+        keys[i] = ids[i].as_u64();
       }
-    }
-    if (repeated) {
-      bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
-      attributes.remove(id_attribute_name(domain));
-      attributes.remove(parent_attribute_name(domain));
-      removed = true;
-    }
+    });
+    parallel_sort(keys.begin(), keys.end());
+    repeated = std::adjacent_find(keys.begin(), keys.end()) != keys.end();
   }
-  return removed;
+  if (!repeated) {
+    return false;
+  }
+  bke::MutableAttributeAccessor attributes = mesh.attributes_for_write();
+  for (const bke::AttrDomain domain :
+       {bke::AttrDomain::Point, bke::AttrDomain::Edge, bke::AttrDomain::Face})
+  {
+    attributes.remove(id_attribute_name(domain));
+    attributes.remove(parent_attribute_name(domain));
+  }
+  return true;
 }
 
 void session_prepare(Mesh &input, Mesh &mesh)
