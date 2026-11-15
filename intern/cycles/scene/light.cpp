@@ -108,13 +108,9 @@ NODE_ABSTRACT_DEFINE(Light)
   SOCKET_BOOLEAN(normalize, "Normalize", true);
 
   SOCKET_INT(map_range_type, "Map Range Type", LIGHT_MAP_RANGE_NONE);
-  SOCKET_BOOLEAN(map_range_clamp, "Map Range Clamp", true);
-  SOCKET_FLOAT(map_range_from_min, "Map Range From Min", 0.0f);
-  SOCKET_FLOAT(map_range_from_max, "Map Range From Max", 1.0f);
-  SOCKET_FLOAT(map_range_to_min, "Map Range To Min", 0.0f);
-  SOCKET_FLOAT(map_range_to_max, "Map Range To Max", 1.0f);
+  SOCKET_FLOAT(min_distance, "Min Distance", 0.0f);
+  SOCKET_FLOAT(max_distance, "Max Distance", 10.0f);
   SOCKET_FLOAT(map_range_steps, "Map Range Steps", 4.0f);
-  SOCKET_BOOLEAN(map_range_fade_in, "Map Range Fade In", false);
   SOCKET_INT(falloff_type, "Falloff Type", LIGHT_FALLOFF_NONE);
   SOCKET_FLOAT(falloff_smooth, "Falloff Smooth", 0.0f);
 
@@ -501,13 +497,9 @@ void Light::copy_to_kernel(KernelLight *klight,
   KernelLightAttenuation &att = klight->attenuation;
   att = KernelLightAttenuation{};
   att.map_range_type = local ? map_range_type : LIGHT_MAP_RANGE_NONE;
-  att.map_range_clamp = map_range_clamp ? 1 : 0;
-  att.from_min = map_range_from_min;
-  att.from_max = map_range_from_max;
-  att.to_min = map_range_to_min;
-  att.to_max = map_range_to_max;
+  att.min_distance = max(min_distance, 0.0f);
+  att.max_distance = max(max_distance, att.min_distance);
   att.steps = map_range_steps;
-  att.map_range_fade_in = map_range_fade_in ? 1 : 0;
   att.falloff_type = local ? falloff_type : LIGHT_FALLOFF_NONE;
   att.falloff_smooth = falloff_smooth;
 }

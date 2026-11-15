@@ -45,16 +45,12 @@ class Light : public Geometry {
   /* Normalize power by the surface area of the light. */
   NODE_SOCKET_API(bool, normalize)
 
-  /* Attenuation of point, spot and area lights by the ray length, as Map Range and Light Falloff
-   * nodes (#LightMapRangeType, #LightFalloffType; zero: not used). */
+  /* Attenuation of point, spot and area lights by the ray length (#light_attenuation_factor):
+   * #LightMapRangeType between Min and Max Distance, #LightFalloffType (zero: not used). */
   NODE_SOCKET_API(int, map_range_type)
-  NODE_SOCKET_API(bool, map_range_clamp)
-  NODE_SOCKET_API(float, map_range_from_min)
-  NODE_SOCKET_API(float, map_range_from_max)
-  NODE_SOCKET_API(float, map_range_to_min)
-  NODE_SOCKET_API(float, map_range_to_max)
+  NODE_SOCKET_API(float, min_distance)
+  NODE_SOCKET_API(float, max_distance)
   NODE_SOCKET_API(float, map_range_steps)
-  NODE_SOCKET_API(bool, map_range_fade_in)
   NODE_SOCKET_API(int, falloff_type)
   NODE_SOCKET_API(float, falloff_smooth)
 

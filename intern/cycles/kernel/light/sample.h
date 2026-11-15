@@ -442,6 +442,9 @@ ccl_device_forceinline void light_sample_update(KernelGlobals kg,
   const ccl_global KernelLight *klight = &kernel_data_fetch(lights, ls->prim);
 
   if (ls->type == LIGHT_POINT) {
+    /* The update keeps `eval_fac`, which has the attenuation by distance of the first sample:
+     * start again from the factor of the light, the attenuation is applied below. */
+    ls->eval_fac = klight->spot.eval_fac;
     point_light_mnee_sample_update(klight, ls, P, N, path_flag);
   }
   else if (ls->type == LIGHT_SPOT) {

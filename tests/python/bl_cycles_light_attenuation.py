@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Map Range and Light Falloff of Cycles lights: the light is multiplied by a Map Range and a Light
-# Falloff of the ray length, as Light Path > Map Range and Light Falloff nodes would do. With Full
-# Visible Surface, the surface of an area light as seen by the camera is not changed by them.
+# Map Range and Light Falloff of Cycles lights, by the ray length (the distance to the light): no
+# falloff up to Min Distance, a fade to zero at Max Distance, and the Light Falloff node's outputs.
+# With Full Visible Surface, the surface of an area light as seen by the camera is not changed.
 # ./blender.bin --background --factory-startup --python tests/python/bl_cycles_light_attenuation.py
 import sys
 import math
@@ -81,20 +81,15 @@ def smoothstep(e0, e1, x):
     return (3.0 - 2.0 * t) * t * t
 
 
-def map_range(d, kind, from_min, from_max, to_min, to_max, clamp=True):
-    """The Map Range node (Float), as Cycles computes it."""
-    if from_max == from_min:
-        result = 0.0
-    else:
-        if kind == 'SMOOTHSTEP':
-            f = smoothstep(from_min, from_max, d)
-        else:
-            f = (d - from_min) / (from_max - from_min)
-        result = to_min + f * (to_max - to_min)
-    if clamp:
-        lo, hi = min(to_min, to_max), max(to_min, to_max)
-        result = min(max(result, lo), hi)
-    return result
+def fade(d, kind, min_distance, max_distance):
+    """Map Range part: 1 up to Min Distance, fading to 0 at Max Distance (Smooth Step or Linear)."""
+    if d >= max_distance:
+        return 0.0
+    if d <= min_distance:
+        return 1.0
+    if kind == 'SMOOTHSTEP':
+        return 1.0 - smoothstep(min_distance, max_distance, d)
+    return 1.0 - (d - min_distance) / (max_distance - min_distance)
 
 
 def light_falloff(d, output, smooth):
@@ -103,6 +98,22 @@ def light_falloff(d, output, smooth):
     if smooth > 0.0:
         s *= d * d / (smooth + d * d)
     return s
+
+
+def attenuation(d, kind, min_distance, max_distance, output=None, smooth=0.0):
+    """Expected factor: inside Min Distance the light is as bright as at Min Distance (the usual
+    1 / d^2 undone), with the Light Falloff evaluated there."""
+    factor = 1.0
+    e = d
+    if kind is not None:
+        if d < min_distance:
+            factor = (d / min_distance) ** 2
+            e = min_distance
+        else:
+            factor = fade(d, kind, min_distance, max_distance)
+    if output is not None:
+        factor *= light_falloff(e, output, smooth)
+    return factor
 
 
 def compare(label, on, off, fn, tolerance):
@@ -114,89 +125,57 @@ def compare(label, on, off, fn, tolerance):
 
 clight = light_data.cycles
 check(not clight.use_map_range and not clight.use_light_falloff, "off by default")
+check(not hasattr(clight, "map_range_fade_in") and not hasattr(clight, "map_range_to_min"),
+      "no Fade In, To Min or To Max")
 off = render("attenuation_off")
 
-clight.map_range_from_max = 6.0
+clight.map_range_max_distance = 6.0
 clight.light_falloff_output = 'LINEAR'
 same = render("attenuation_not_enabled")
 check(same == off, "the values do nothing until Map Range / Light Falloff are enabled")
 
-# Pixels cover a range of distances: steep parts of a curve get a larger tolerance.
-print("Map Range (Fade In off: exactly the node)")
+print("Map Range: Max Distance")
 clight.use_map_range = True
-clight.map_range_fade_in = False
 clight.map_range_interpolation_type = 'SMOOTHSTEP'
-clight.map_range_from_min = 0.0
-clight.map_range_from_max = 6.0
-clight.map_range_to_min = 1.0
-clight.map_range_to_max = 0.0
-on = render("map_range_smoothstep")
-compare("Smooth Step, From 0..6, To 1..0", on, off,
-        lambda d: map_range(d, 'SMOOTHSTEP', 0.0, 6.0, 1.0, 0.0), 0.06)
+clight.map_range_min_distance = 0.0
+clight.map_range_max_distance = 6.0
+on = render("max_distance")
+compare("Smooth Step to zero at 6 m", on, off, lambda d: attenuation(d, 'SMOOTHSTEP', 0.0, 6.0), 0.06)
 beyond = [i for i in range(len(on)) if distance(i) > 6.0 + SIZE / RES]
-check(beyond and max(on[i] for i in beyond) == 0.0, "no light beyond From Max (To Max 0)")
+check(beyond and max(on[i] for i in beyond) == 0.0, "no light beyond Max Distance")
 
-clight.map_range_from_min = 3.0
-on = render("map_range_from_min")
-inside = [i for i in range(len(on)) if distance(i) < 3.0 - SIZE / RES]
-check(all(on[i] == off[i] for i in inside), "full strength up to From Min (To Min 1)")
-compare("Smooth Step, From 3..6", on, off, lambda d: map_range(d, 'SMOOTHSTEP', 3.0, 6.0, 1.0, 0.0), 0.06)
-
+print("Map Range: Min Distance 3, Max Distance 6")
+clight.map_range_min_distance = 3.0
+on = render("min_distance")
+compare("constant inside 3 m, Smooth Step to zero at 6 m", on, off,
+        lambda d: attenuation(d, 'SMOOTHSTEP', 3.0, 6.0), 0.06)
 clight.map_range_interpolation_type = 'LINEAR'
-clight.map_range_from_min = 2.0
-clight.map_range_from_max = 8.0
-clight.map_range_to_min = 1.5
-clight.map_range_to_max = 1.0
-on = render("map_range_linear")
-compare("Linear, From 2..8, To 1.5..1.0, Clamp", on, off,
-        lambda d: map_range(d, 'LINEAR', 2.0, 8.0, 1.5, 1.0), 0.03)
-clight.map_range_clamp = False
-on = render("map_range_linear_unclamped")
-compare("Linear without Clamp", on, off,
-        lambda d: map_range(d, 'LINEAR', 2.0, 8.0, 1.5, 1.0, clamp=False), 0.03)
-clight.map_range_clamp = True
-
-print("Fade In: zero at the light, full at From Min, zero again at From Max")
-clight.map_range_fade_in = True
-clight.map_range_interpolation_type = 'SMOOTHSTEP'
-clight.map_range_from_min = 3.0
-clight.map_range_from_max = 6.0
-clight.map_range_to_min = 1.0
-clight.map_range_to_max = 0.0
-
-
-def fade_in(d):
-    return smoothstep(0.0, 3.0, d) if d < 3.0 else map_range(d, 'SMOOTHSTEP', 3.0, 6.0, 1.0, 0.0)
-
-
-on = render("map_range_fade_in")
-compare("Smooth Step fade in 0..3, fade out 3..6", on, off, fade_in, 0.06)
-near = [i for i in range(len(on)) if distance(i) < 1.5 and off[i] > 1e-4]
-# The floor is 1 m below the light: there the Smooth Step fade in is at 26% to 50%.
-check(near and all(on[i] < 0.6 * off[i] for i in near), "close to the light the light is faded in (dim)")
+clight.map_range_min_distance = 2.0
+clight.map_range_max_distance = 8.0
+on = render("linear")
+compare("Linear, Min 2, Max 8", on, off, lambda d: attenuation(d, 'LINEAR', 2.0, 8.0), 0.06)
 clight.use_map_range = False
 
 print("Light Falloff")
-clight.use_light_falloff = True
 check(not hasattr(clight, "light_falloff_strength"), "Light Falloff has no Strength (it would change the brightness)")
+clight.use_light_falloff = True
 for output, smooth in (('QUADRATIC', 0.0), ('LINEAR', 0.0), ('CONSTANT', 0.0), ('QUADRATIC', 4.0)):
     clight.light_falloff_output = output
     clight.light_falloff_smooth = smooth
     on = render("falloff_" + output.lower())
-    compare(f"{output.title()}, Smooth {smooth}", on, off, lambda d: light_falloff(d, output, smooth), 0.06)
+    compare(f"{output.title()}, Smooth {smooth}", on, off,
+            lambda d: attenuation(d, None, 0.0, 0.0, output, smooth), 0.06)
 
-print("Both: Map Range x Light Falloff")
+print("Both: Map Range and Light Falloff")
 clight.use_map_range = True
 clight.map_range_interpolation_type = 'SMOOTHSTEP'
-clight.map_range_from_min = 0.0
-clight.map_range_from_max = 3.8
-clight.map_range_to_min = 1.0
-clight.map_range_to_max = 0.0
+clight.map_range_min_distance = 2.0
+clight.map_range_max_distance = 6.0
 clight.light_falloff_output = 'LINEAR'
 clight.light_falloff_smooth = 0.0
 on = render("both")
-compare("Smooth Step 0..3.8 x Linear", on, off,
-        lambda d: map_range(d, 'SMOOTHSTEP', 0.0, 3.8, 1.0, 0.0) * d, 0.06)
+compare("Min 2, Max 6, Linear falloff", on, off,
+        lambda d: attenuation(d, 'SMOOTHSTEP', 2.0, 6.0, 'LINEAR'), 0.06)
 
 print("Area light seen by the camera, Full Visible Surface")
 light_data.type = 'AREA'
@@ -211,7 +190,8 @@ light_data.use_full_visible_surface = True
 seen_off = render("seen_off")
 surface = [i for i in range(len(seen_off)) if seen_off[i] > 1e-3]
 clight.use_map_range = True
-clight.map_range_from_max = 2.0         # The camera is 9 m away: far beyond.
+clight.map_range_min_distance = 0.0
+clight.map_range_max_distance = 2.0     # The camera is 9 m away: far beyond.
 seen_fvs = render("seen_fvs")
 check(surface and all(abs(seen_fvs[i] - seen_off[i]) <= 1e-4 * seen_off[i] for i in surface),
       f"Full Visible Surface: the light's surface looks the same ({len(surface)} pixels)")

@@ -1249,59 +1249,40 @@ class CyclesLightSettings(bpy.types.PropertyGroup):
     # (names as in the nodes). The order of the enum items is the order of the Cycles types.
     use_map_range: BoolProperty(
         name="Map Range",
-        description="Multiply the light by a Map Range of the ray length (the distance to the light), "
-        "as a Light Path and a Map Range node would do. Not physically based",
+        description="Limit the light by the distance from it: no falloff up to Min Distance, "
+        "zero from Max Distance (fading between them). Not physically based",
         default=False,
     )
     map_range_interpolation_type: EnumProperty(
         name="Interpolation Type",
         items=(
-            ('LINEAR', "Linear", "Linear interpolation between From Min and From Max values"),
-            ('STEPPED', "Stepped Linear", "Stepped linear interpolation between From Min and From Max values"),
-            ('SMOOTHSTEP', "Smooth Step", "Smooth Hermite edge interpolation between From Min and From Max values"),
-            ('SMOOTHERSTEP', "Smoother Step",
-             "Smoother Hermite edge interpolation between From Min and From Max values"),
+            ('LINEAR', "Linear", "Linear fade between Min and Max Distance"),
+            ('STEPPED', "Stepped Linear", "Stepped linear fade between Min and Max Distance"),
+            ('SMOOTHSTEP', "Smooth Step", "Smooth Hermite edge fade between Min and Max Distance"),
+            ('SMOOTHERSTEP', "Smoother Step", "Smoother Hermite edge fade between Min and Max Distance"),
         ),
         default='SMOOTHSTEP',
     )
-    map_range_from_min: FloatProperty(
-        name="From Min",
-        description="Lower bound of the ray length range to map",
+    map_range_min_distance: FloatProperty(
+        name="Min Distance",
+        description="Up to this distance from the light there is no falloff: "
+        "the light is as bright as it is at this distance (as Decay Start in 3ds Max)",
+        min=0.0, soft_max=100.0,
         default=0.0,
         subtype='DISTANCE',
     )
-    map_range_from_max: FloatProperty(
-        name="From Max",
-        description="Upper bound of the ray length range to map",
+    map_range_max_distance: FloatProperty(
+        name="Max Distance",
+        description="Distance from the light where it reaches zero, fading from full at Min Distance",
+        min=0.0, soft_max=100.0,
         default=10.0,
         subtype='DISTANCE',
-    )
-    map_range_to_min: FloatProperty(
-        name="To Min",
-        description="Value at From Min",
-        default=1.0,
-    )
-    map_range_to_max: FloatProperty(
-        name="To Max",
-        description="Value at From Max",
-        default=0.0,
     )
     map_range_steps: FloatProperty(
         name="Steps",
         description="Number of steps (Stepped Linear)",
         min=0.0,
         default=4.0,
-    )
-    map_range_fade_in: BoolProperty(
-        name="Fade In",
-        description="Also fade the light in, from zero at the light to To Min at From Min "
-        "(as the near attenuation of 3ds Max). Off: as the Map Range node, To Min up to From Min",
-        default=True,
-    )
-    map_range_clamp: BoolProperty(
-        name="Clamp",
-        description="Clamp the result to the target range [To Min, To Max]",
-        default=True,
     )
     use_light_falloff: BoolProperty(
         name="Light Falloff",

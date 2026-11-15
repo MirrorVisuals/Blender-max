@@ -72,18 +72,15 @@ void BlenderSync::sync_light(BObjectInfo &b_ob_info, Light *light)
 
   light->set_max_bounces(get_int(clight, "max_bounces"));
 
-  /* Attenuation by the ray length, as a Map Range and a Light Falloff node would do. The RNA enums
-   * list the types in the order of #LightMapRangeType and #LightFalloffType, without "none". */
+  /* Attenuation by the ray length (Map Range between Min and Max Distance, Light Falloff). The RNA
+   * enums list the types in the order of #LightMapRangeType and #LightFalloffType, without "none".
+   */
   light->set_map_range_type(get_boolean(clight, "use_map_range") ?
                                 get_enum(clight, "map_range_interpolation_type") + 1 :
                                 0);
-  light->set_map_range_clamp(get_boolean(clight, "map_range_clamp"));
-  light->set_map_range_from_min(get_float(clight, "map_range_from_min"));
-  light->set_map_range_from_max(get_float(clight, "map_range_from_max"));
-  light->set_map_range_to_min(get_float(clight, "map_range_to_min"));
-  light->set_map_range_to_max(get_float(clight, "map_range_to_max"));
+  light->set_min_distance(get_float(clight, "map_range_min_distance"));
+  light->set_max_distance(get_float(clight, "map_range_max_distance"));
   light->set_map_range_steps(get_float(clight, "map_range_steps"));
-  light->set_map_range_fade_in(get_boolean(clight, "map_range_fade_in"));
   light->set_falloff_type(
       get_boolean(clight, "use_light_falloff") ? get_enum(clight, "light_falloff_output") + 1 : 0);
   light->set_falloff_smooth(get_float(clight, "light_falloff_smooth"));

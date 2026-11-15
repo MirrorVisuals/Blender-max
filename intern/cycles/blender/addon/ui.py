@@ -1759,18 +1759,11 @@ class CYCLES_LIGHT_PT_map_range(CyclesLightAttenuationPanel, Panel):
 
         col = layout.column()
         col.prop(clight, "map_range_interpolation_type")
-        col.label(text="Value: Ray Length")
         sub = col.column(align=True)
-        sub.prop(clight, "map_range_from_min")
-        sub.prop(clight, "map_range_from_max")
-        col.prop(clight, "map_range_fade_in")
-        sub = col.column(align=True)
-        sub.prop(clight, "map_range_to_min")
-        sub.prop(clight, "map_range_to_max")
+        sub.prop(clight, "map_range_min_distance")
+        sub.prop(clight, "map_range_max_distance")
         if clight.map_range_interpolation_type == 'STEPPED':
             col.prop(clight, "map_range_steps")
-        if clight.map_range_interpolation_type in {'LINEAR', 'STEPPED'}:
-            col.prop(clight, "map_range_clamp")
 
 
 class CYCLES_LIGHT_PT_light_falloff(CyclesLightAttenuationPanel, Panel):

@@ -1513,8 +1513,8 @@ struct KernelSunLight {
 };
 
 /* Attenuation of point, spot and area lights by the distance from the shaded point to the point on
- * the light (the ray length), as a Map Range and a Light Falloff node multiplied with the light
- * would do. See #light_attenuation_factor. */
+ * the light (the ray length): a Min and Max Distance with a Map Range interpolation, and a Light
+ * Falloff as the shader node. See #light_attenuation_factor. */
 enum LightMapRangeType {
   LIGHT_MAP_RANGE_NONE = 0,
   LIGHT_MAP_RANGE_LINEAR = 1,
@@ -1532,14 +1532,11 @@ enum LightFalloffType {
 
 struct KernelLightAttenuation {
   int map_range_type;
-  int map_range_clamp;
-  float from_min;
-  float from_max;
-  float to_min;
-  float to_max;
+  /* No falloff up to `min_distance` (as bright as there); from `min_distance` the usual falloff,
+   * and the Map Range fades the light to zero at `max_distance`. */
+  float min_distance;
+  float max_distance;
   float steps;
-  /* The light also fades in from zero at the light to To Min at From Min. */
-  int map_range_fade_in;
   int falloff_type;
   float falloff_smooth;
   int pad[2];

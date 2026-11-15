@@ -63,49 +63,53 @@ ccl_device_inline float light_map_range_factor(
 }
 
 /* Attenuation of point, spot and area lights by `t`, the distance from the shaded point to the
- * point on the light: a Map Range of the ray length times a Light Falloff, computed as the Map
- * Range and Light Falloff shader nodes do. With Fade In, the Map Range also rises from zero at the
- * light to To Min at From Min (as the near attenuation of 3ds Max). 1 when neither is used. */
+ * point on the light. 1 when neither part is used.
+ *
+ * Map Range: up to Min Distance there is no falloff, the light is as bright as at Min Distance
+ * (as Decay Start in 3ds Max). The light falls off as usual (including the Light Falloff) from
+ * there, and fades from full to zero between Min and Max Distance with the interpolation type of
+ * the Map Range node.
+ *
+ * Light Falloff: as the Light Falloff shader node with Strength 1. */
 ccl_device_inline float light_attenuation_factor(const ccl_global KernelLight *klight,
                                                  const float t)
 {
   const ccl_global KernelLightAttenuation *att = &klight->attenuation;
+  if (t == FLT_MAX) {
+    return 1.0f;
+  }
   float factor = 1.0f;
+  float te = t;
 
   if (att->map_range_type != LIGHT_MAP_RANGE_NONE) {
-    const float from_min = att->from_min;
-    const float from_max = att->from_max;
-    float result;
-    if (att->map_range_fade_in && from_min > 0.0f && from_min < from_max && t < from_min) {
-      /* Fade in: zero at the light, To Min at From Min. */
-      const float f = light_map_range_factor(att->map_range_type, 0.0f, from_min, att->steps, t);
-      result = att->to_min * clamp(f, 0.0f, 1.0f);
+    const float min_distance = att->min_distance;
+    const float max_distance = att->max_distance;
+    if (t >= max_distance) {
+      return 0.0f;
     }
-    else {
-      result = 0.0f;
-      if (from_max != from_min) {
-        const float f = light_map_range_factor(
-            att->map_range_type, from_min, from_max, att->steps, t);
-        result = att->to_min + f * (att->to_max - att->to_min);
-      }
-      if (att->map_range_clamp) {
-        result = (att->to_min > att->to_max) ? clamp(result, att->to_max, att->to_min) :
-                                               clamp(result, att->to_min, att->to_max);
-      }
+    if (t < min_distance) {
+      /* The usual falloff is 1 / t^2: undo it relative to Min Distance, and evaluate the rest at
+       * Min Distance, so that the light is constant inside it. */
+      factor = sqr(t / min_distance);
+      te = min_distance;
     }
-    factor *= result;
+    else if (max_distance > min_distance) {
+      const float f = light_map_range_factor(
+          att->map_range_type, min_distance, max_distance, att->steps, t);
+      factor = 1.0f - clamp(f, 0.0f, 1.0f);
+    }
   }
 
-  if (att->falloff_type != LIGHT_FALLOFF_NONE && t != FLT_MAX) {
+  if (att->falloff_type != LIGHT_FALLOFF_NONE) {
     float strength = 1.0f;
     if (att->falloff_type == LIGHT_FALLOFF_LINEAR) {
-      strength *= t;
+      strength *= te;
     }
     else if (att->falloff_type == LIGHT_FALLOFF_CONSTANT) {
-      strength *= t * t;
+      strength *= te * te;
     }
     if (att->falloff_smooth > 0.0f) {
-      const float squared = t * t;
+      const float squared = te * te;
       strength *= squared / (att->falloff_smooth + squared);
     }
     factor *= strength;
