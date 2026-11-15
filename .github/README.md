@@ -125,6 +125,18 @@ mesh add almost nothing.
 The Add tool in the toolbar (Object and Edit Mode) can draw a plane, like the cube and the
 other primitives: drag its base and it is added with the size drawn.
 
+### Slice Plane, as in 3ds Max
+
+- **Plane empty:** Add > Empty > Plane, or the **Add Slice Plane** tool in the Object Mode
+  toolbar (drag it on a surface like the Add Plane tool). It is a helper for an infinite plane:
+  its size is only for display, and the line from its center is the normal.
+- **Mesh > Slice** (also in the right-click menu) in Edit Mode cuts the selected geometry of
+  every object in Edit Mode with the selected Plane empties, or with every visible Plane empty
+  when none is selected: **Slice** (add edges), **Split** (two parts), **Remove Above** /
+  **Remove Below** (Above is the side the normal points to), and the same with **Fill**. The
+  cut edges are selected afterwards, as with Bisect. Mode, Fill and threshold can be changed
+  in the Adjust Last Operation panel.
+
 ### Camera: Tilt Correction
 
 Keeps lines parallel when the camera is tilted (two-point perspective), like a shift lens or
@@ -146,6 +158,8 @@ camera can still be tilted with Fly/Walk navigation or Lock Camera to View.
 - **Map Range:** up to Min Distance there is no falloff (the light is as bright as at Min
   Distance, as Decay Start in 3ds Max); from there it fades to zero at Max Distance, with the
   interpolation types of the Map Range node. No shadow ray is traced beyond Max Distance.
+- **To Min / To Max:** the brightness at Min and at Max Distance (1 and 0 by default). Lower
+  To Min, or swap them, to change or reverse the fade.
 - **Light Falloff:** the Quadratic, Linear and Constant outputs and Smooth of the Light Falloff
   node.
 - **Full Visible Surface** keeps the surface of an area light as seen unchanged by them.

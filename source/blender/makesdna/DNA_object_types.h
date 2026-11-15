@@ -204,6 +204,8 @@ enum eObject_EmptyDrawType : char {
   OB_EMPTY_SPHERE = 6,
   OB_EMPTY_CONE = 7,
   OB_EMPTY_IMAGE = 8,
+  /** Square with its normal, used as an infinite slice plane in Edit Mode. */
+  OB_EMPTY_PLANE = 9,
 };
 
 /**

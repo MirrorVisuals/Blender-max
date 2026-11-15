@@ -11,11 +11,15 @@
  * including library assets & non-mesh types.
  */
 
+#include <algorithm>
+
 #include "MEM_guardedalloc.h"
 
 #include "BLI_math_geom.h"
 #include "BLI_math_matrix.h"
 #include "BLI_math_rotation.h"
+
+#include "DNA_object_types.h"
 
 #include "BKE_context.hh"
 #include "BKE_lib_id.hh"
@@ -66,7 +70,15 @@ enum ePlace_PrimType {
   PLACE_PRIMITIVE_TYPE_SPHERE_ICO = 5,
   /** Flat: placed with the base step only. */
   PLACE_PRIMITIVE_TYPE_PLANE = 6,
+  /** Flat: adds a Plane empty, used as a slice plane in Edit Mode. */
+  PLACE_PRIMITIVE_TYPE_SLICE_PLANE = 7,
 };
+
+/** Flat primitives are placed with the base step only, they have no depth step. */
+static bool place_primitive_is_flat(const ePlace_PrimType primitive_type)
+{
+  return ELEM(primitive_type, PLACE_PRIMITIVE_TYPE_PLANE, PLACE_PRIMITIVE_TYPE_SLICE_PLANE);
+}
 
 enum ePlace_Origin {
   PLACE_ORIGIN_BASE = 1,
@@ -590,7 +602,9 @@ static void draw_primitive_view_impl(const bContext *C,
 
   draw_line_bounds(&bounds, color);
 
-  if (ELEM(ipd->primitive_type, PLACE_PRIMITIVE_TYPE_CUBE, PLACE_PRIMITIVE_TYPE_PLANE)) {
+  if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CUBE ||
+      place_primitive_is_flat(ipd->primitive_type))
+  {
     /* pass */
   }
   else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CYLINDER) {
@@ -881,6 +895,9 @@ static void view3d_interactive_add_begin(bContext *C, wmOperator *op, const wmEv
       else if (tref && STREQ(tref->idname, "builtin.primitive_plane_add")) {
         ipd->primitive_type = PLACE_PRIMITIVE_TYPE_PLANE;
       }
+      else if (tref && STREQ(tref->idname, "builtin.slice_plane_add")) {
+        ipd->primitive_type = PLACE_PRIMITIVE_TYPE_SLICE_PLANE;
+      }
       else {
         /* If the user runs this as an operator they should set the 'primitive_type',
          * however running from operator search will end up at this point. */
@@ -1042,7 +1059,7 @@ static void view3d_interactive_add_confirm(bContext *C, InteractivePlaceData *ip
     /* Primitives have size 2 by default, compensate for this here. */
     scale[i] /= 2.0f;
   }
-  if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_PLANE) {
+  if (place_primitive_is_flat(ipd->primitive_type)) {
     /* A plane has no depth: keep its Z scale at 1 (a zero scale breaks normals). */
     scale[2] = 1.0f;
   }
@@ -1053,6 +1070,9 @@ static void view3d_interactive_add_confirm(bContext *C, InteractivePlaceData *ip
   }
   else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_PLANE) {
     ot = WM_operatortype_find("MESH_OT_primitive_plane_add", false);
+  }
+  else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_SLICE_PLANE) {
+    ot = WM_operatortype_find("OBJECT_OT_empty_add", false);
   }
   else if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_CYLINDER) {
     ot = WM_operatortype_find("MESH_OT_primitive_cylinder_add", false);
@@ -1080,7 +1100,15 @@ static void view3d_interactive_add_confirm(bContext *C, InteractivePlaceData *ip
 
     RNA_float_set_array(&op_props, "rotation", rotation);
     RNA_float_set_array(&op_props, "location", location);
-    RNA_float_set_array(&op_props, "scale", scale);
+    if (ipd->primitive_type == PLACE_PRIMITIVE_TYPE_SLICE_PLANE) {
+      /* Empties have no scale option: the drawn rectangle sets the display size of a square
+       * plane. The plane cuts as an infinite plane, its size is only for display. */
+      RNA_enum_set(&op_props, "type", OB_EMPTY_PLANE);
+      RNA_float_set(&op_props, "radius", std::max(scale[0], scale[1]));
+    }
+    else {
+      RNA_float_set_array(&op_props, "scale", scale);
+    }
 
     /* Always use the defaults here since desired bounds have been set interactively, it does
      * not make sense to use a different values from a previous command. */
@@ -1191,7 +1219,7 @@ static wmOperatorStatus view3d_interactive_add_modal(bContext *C,
 
   if (ipd->step_index == STEP_BASE) {
     if (ELEM(event->type, ipd->launch_event, LEFTMOUSE) && event->val == KM_RELEASE &&
-        ipd->primitive_type == PLACE_PRIMITIVE_TYPE_PLANE)
+        place_primitive_is_flat(ipd->primitive_type))
     {
       /* A plane is done once its base is drawn. A click without a drag adds nothing. */
       BoundBox bounds;
@@ -1379,6 +1407,7 @@ void VIEW3D_OT_interactive_add(wmOperatorType *ot)
       {PLACE_PRIMITIVE_TYPE_SPHERE_UV, "SPHERE_UV", 0, "UV Sphere", ""},
       {PLACE_PRIMITIVE_TYPE_SPHERE_ICO, "SPHERE_ICO", 0, "ICO Sphere", ""},
       {PLACE_PRIMITIVE_TYPE_PLANE, "PLANE", 0, "Plane", ""},
+      {PLACE_PRIMITIVE_TYPE_SLICE_PLANE, "SLICE_PLANE", 0, "Slice Plane", ""},
       {0, nullptr, 0, nullptr, nullptr},
   };
 

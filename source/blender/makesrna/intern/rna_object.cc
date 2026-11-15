@@ -116,6 +116,11 @@ const EnumPropertyItem rna_enum_object_empty_drawtype_items[] = {
     {OB_CUBE, "CUBE", ICON_CUBE, "Cube", ""},
     {OB_EMPTY_SPHERE, "SPHERE", ICON_SPHERE, "Sphere", ""},
     {OB_EMPTY_CONE, "CONE", ICON_CONE, "Cone", ""},
+    {OB_EMPTY_PLANE,
+     "PLANE",
+     ICON_MESH_PLANE,
+     "Plane",
+     "Square with its normal, used by Slice to cut meshes in Edit Mode"},
     {OB_EMPTY_IMAGE, "IMAGE", ICON_FILE_IMAGE, "Image", ""},
     {0, nullptr, 0, nullptr, nullptr},
 };

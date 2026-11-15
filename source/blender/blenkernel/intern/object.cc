@@ -3928,6 +3928,12 @@ bool BKE_object_minmax_empty_drawtype(const Object *ob, float r_min[3], float r_
       ok = true;
       break;
     }
+    case OB_EMPTY_PLANE: {
+      min = float3(-radius, -radius, 0.0f);
+      max = float3(radius, radius, radius * 0.5f);
+      ok = true;
+      break;
+    }
     case OB_EMPTY_CONE: {
       min = float3(-radius, 0.0f, -radius);
       max = float3(radius, radius * 2.0f, radius);

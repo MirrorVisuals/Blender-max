@@ -47,6 +47,7 @@ class Empties : Overlay {
     EmptyInstanceBuf sphere_buf = {selection_type_, "sphere_buf"};
     EmptyInstanceBuf cone_buf = {selection_type_, "cone_buf"};
     EmptyInstanceBuf arrows_buf = {selection_type_, "arrows_buf"};
+    EmptyInstanceBuf plane_buf = {selection_type_, "plane_buf"};
     EmptyInstanceBuf image_buf = {selection_type_, "image_buf"};
   } call_buffers_;
 
@@ -107,6 +108,7 @@ class Empties : Overlay {
     call_buffers.sphere_buf.clear();
     call_buffers.cone_buf.clear();
     call_buffers.arrows_buf.clear();
+    call_buffers.plane_buf.clear();
     call_buffers.image_buf.clear();
   }
 
@@ -172,6 +174,9 @@ class Empties : Overlay {
       case OB_ARROWS:
         call_buffers.arrows_buf.append(data, select_id);
         break;
+      case OB_EMPTY_PLANE:
+        call_buffers.plane_buf.append(data, select_id);
+        break;
     }
   }
 
@@ -204,6 +209,7 @@ class Empties : Overlay {
     call_buffers.sphere_buf.end_sync(ps, res.shapes.empty_sphere.get());
     call_buffers.cone_buf.end_sync(ps, res.shapes.empty_cone.get());
     call_buffers.arrows_buf.end_sync(ps, res.shapes.arrows.get());
+    call_buffers.plane_buf.end_sync(ps, res.shapes.empty_plane.get());
     call_buffers.image_buf.end_sync(ps, res.shapes.quad_wire.get());
   }
 

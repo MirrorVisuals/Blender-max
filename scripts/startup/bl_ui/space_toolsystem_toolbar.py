@@ -645,6 +645,28 @@ class _defs_view3d_add:
         )
 
     @ToolDef.from_fn
+    def slice_plane_add():
+        def draw_settings(context, layout, tool, *, extra=False):
+            show_extra = _defs_view3d_add.draw_settings_interactive_add(layout, context.tool_settings, tool, extra)
+            if show_extra:
+                layout.popover("TOPBAR_PT_tool_settings_extra", text="...")
+
+        return dict(
+            idname="builtin.slice_plane_add",
+            label="Add Slice Plane",
+            icon="ops.mesh.bisect",
+            description=lambda *args: _defs_view3d_add.description_interactive_add(
+                *args, prefix=tip_(
+                    "Add a Plane empty interactively, to cut meshes with Mesh > Slice in Edit Mode "
+                    "(the plane is infinite)"
+                ),
+            ),
+            widget="VIEW3D_GGT_placement",
+            keymap="3D View Tool: Object, Add Primitive",
+            draw_settings=draw_settings,
+        )
+
+    @ToolDef.from_fn
     def cone_add():
         def draw_settings(context, layout, tool, *, extra=False):
             show_extra = _defs_view3d_add.draw_settings_interactive_add(layout, context.tool_settings, tool, extra)
@@ -3822,6 +3844,7 @@ class VIEW3D_PT_tools_active(ToolSelectPanelHelper, Panel):
             *_tools_default,
             None,
             _tools_view3d_add,
+            _defs_view3d_add.slice_plane_add,
             None,
             _tools_pose,
         ],

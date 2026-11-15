@@ -640,6 +640,29 @@ ShapeCache::ShapeCache()
     empty_sphere = BatchPtr(
         GPU_batch_create_ex(GPU_PRIM_LINES, vbo_from_vector(verts), nullptr, GPU_BATCH_OWNS_VBO));
   }
+  /* empty_plane */
+  {
+    /* A square, its two center lines and the normal, so the side that "Remove Above" removes
+     * can be seen. */
+    const float3 lines[][2] = {
+        {{-1.0f, -1.0f, 0.0f}, {1.0f, -1.0f, 0.0f}},
+        {{1.0f, -1.0f, 0.0f}, {1.0f, 1.0f, 0.0f}},
+        {{1.0f, 1.0f, 0.0f}, {-1.0f, 1.0f, 0.0f}},
+        {{-1.0f, 1.0f, 0.0f}, {-1.0f, -1.0f, 0.0f}},
+        {{-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+        {{0.0f, -1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+        {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.5f}},
+        {{0.0f, 0.0f, 0.5f}, {0.05f, 0.0f, 0.4f}},
+        {{0.0f, 0.0f, 0.5f}, {-0.05f, 0.0f, 0.4f}},
+    };
+    Vector<Vertex> verts;
+    for (const auto &line : lines) {
+      verts.append({line[0], VCLASS_EMPTY_SCALED});
+      verts.append({line[1], VCLASS_EMPTY_SCALED});
+    }
+    empty_plane = BatchPtr(
+        GPU_batch_create_ex(GPU_PRIM_LINES, vbo_from_vector(verts), nullptr, GPU_BATCH_OWNS_VBO));
+  }
   /* empty_cone */
   {
     constexpr int resolution = 8;

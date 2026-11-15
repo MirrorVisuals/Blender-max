@@ -2674,6 +2674,7 @@ class VIEW3D_MT_empty_add(Menu):
         layout.operator("object.empty_add", text="Cube", icon='CUBE').type = 'CUBE'
         layout.operator("object.empty_add", text="Sphere", icon='SPHERE').type = 'SPHERE'
         layout.operator("object.empty_add", text="Cone", icon='CONE').type = 'CONE'
+        layout.operator("object.empty_add", text="Plane", icon='MESH_PLANE').type = 'PLANE'
 
 
 class VIEW3D_MT_add(Menu):
@@ -4535,6 +4536,7 @@ class VIEW3D_MT_edit_mesh(Menu):
         layout.separator()
 
         layout.operator("mesh.bisect")
+        layout.menu("VIEW3D_MT_edit_mesh_slice")
         layout.operator("mesh.knife_project")
         props = layout.operator("mesh.knife_tool")
         props.use_occlude_geometry = True
@@ -4566,6 +4568,30 @@ class VIEW3D_MT_edit_mesh(Menu):
         layout.menu("VIEW3D_MT_edit_mesh_delete")
 
         layout.template_node_operator_asset_menu_items(catalog_path=self.bl_label)
+
+
+class VIEW3D_MT_edit_mesh_slice(Menu):
+    bl_label = "Slice"
+
+    def draw(self, _context):
+        layout = self.layout
+        # The cut uses the selected Plane empties, or all visible ones when none is selected.
+        layout.operator("mesh.slice_plane", text="Slice").mode = 'SLICE'
+        layout.operator("mesh.slice_plane", text="Split").mode = 'SPLIT'
+
+        layout.separator()
+
+        layout.operator("mesh.slice_plane", text="Remove Above").mode = 'REMOVE_ABOVE'
+        layout.operator("mesh.slice_plane", text="Remove Below").mode = 'REMOVE_BELOW'
+
+        layout.separator()
+
+        props = layout.operator("mesh.slice_plane", text="Remove Above and Fill")
+        props.mode = 'REMOVE_ABOVE'
+        props.use_fill = True
+        props = layout.operator("mesh.slice_plane", text="Remove Below and Fill")
+        props.mode = 'REMOVE_BELOW'
+        props.use_fill = True
 
 
 class VIEW3D_MT_edit_mesh_context_menu(Menu):
@@ -4690,6 +4716,7 @@ class VIEW3D_MT_edit_mesh_context_menu(Menu):
 
             col.operator("mesh.knife_tool")
             col.operator("mesh.bisect")
+            col.menu("VIEW3D_MT_edit_mesh_slice")
 
             col.separator()
 
@@ -9406,6 +9433,7 @@ classes = (
     VIEW3D_MT_edit_mesh_delete,
     VIEW3D_MT_edit_mesh_merge,
     VIEW3D_MT_edit_mesh_split,
+    VIEW3D_MT_edit_mesh_slice,
     VIEW3D_MT_edit_mesh_showhide,
     VIEW3D_MT_greasepencil_material_active,
     VIEW3D_MT_paint_grease_pencil,

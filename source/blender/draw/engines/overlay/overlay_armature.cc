@@ -597,6 +597,9 @@ static void drw_shgroup_bone_custom_empty(const Armatures::DrawContext *ctx,
     case OB_ARROWS:
       geom = ctx->res->shapes.arrows.get();
       break;
+    case OB_EMPTY_PLANE:
+      geom = ctx->res->shapes.empty_plane.get();
+      break;
     case OB_EMPTY_IMAGE:
       /* Not supported. */
       return;

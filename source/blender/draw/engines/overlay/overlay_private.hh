@@ -364,6 +364,7 @@ class ShapeCache {
   BatchPtr circle;
   BatchPtr empty_sphere;
   BatchPtr empty_cone;
+  BatchPtr empty_plane;
   BatchPtr cylinder;
   BatchPtr capsule_body;
   BatchPtr capsule_cap;

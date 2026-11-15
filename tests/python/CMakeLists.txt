@@ -671,6 +671,11 @@ add_blender_test(
   --python ${CMAKE_CURRENT_LIST_DIR}/bl_node_uvw_map.py
 )
 
+add_blender_test(
+  slice_plane
+  --python ${CMAKE_CURRENT_LIST_DIR}/bl_slice_plane.py
+)
+
 # Rendered with Cycles (CPU).
 if(WITH_CYCLES)
   add_blender_test(
