@@ -1245,6 +1245,85 @@ class CyclesLightSettings(bpy.types.PropertyGroup):
         "Lights, caster and receiver objects must have shadow caustics options set to enable this",
         default=False,
     )
+    # Attenuation by the ray length, as a Map Range and a Light Falloff node multiplied with the light
+    # (names as in the nodes). The order of the enum items is the order of the Cycles types.
+    use_map_range: BoolProperty(
+        name="Map Range",
+        description="Multiply the light by a Map Range of the ray length (the distance to the light), "
+        "as a Light Path and a Map Range node would do. Not physically based",
+        default=False,
+    )
+    map_range_interpolation_type: EnumProperty(
+        name="Interpolation Type",
+        items=(
+            ('LINEAR', "Linear", "Linear interpolation between From Min and From Max values"),
+            ('STEPPED', "Stepped Linear", "Stepped linear interpolation between From Min and From Max values"),
+            ('SMOOTHSTEP', "Smooth Step", "Smooth Hermite edge interpolation between From Min and From Max values"),
+            ('SMOOTHERSTEP', "Smoother Step",
+             "Smoother Hermite edge interpolation between From Min and From Max values"),
+        ),
+        default='SMOOTHSTEP',
+    )
+    map_range_from_min: FloatProperty(
+        name="From Min",
+        description="Lower bound of the ray length range to map",
+        default=0.0,
+        subtype='DISTANCE',
+    )
+    map_range_from_max: FloatProperty(
+        name="From Max",
+        description="Upper bound of the ray length range to map",
+        default=10.0,
+        subtype='DISTANCE',
+    )
+    map_range_to_min: FloatProperty(
+        name="To Min",
+        description="Value at From Min",
+        default=1.0,
+    )
+    map_range_to_max: FloatProperty(
+        name="To Max",
+        description="Value at From Max",
+        default=0.0,
+    )
+    map_range_steps: FloatProperty(
+        name="Steps",
+        description="Number of steps (Stepped Linear)",
+        min=0.0,
+        default=4.0,
+    )
+    map_range_clamp: BoolProperty(
+        name="Clamp",
+        description="Clamp the result to the target range [To Min, To Max]",
+        default=True,
+    )
+    use_light_falloff: BoolProperty(
+        name="Light Falloff",
+        description="Multiply the light by a Light Falloff of the ray length, "
+        "as a Light Falloff node would do",
+        default=False,
+    )
+    light_falloff_output: EnumProperty(
+        name="Output",
+        items=(
+            ('QUADRATIC', "Quadratic", "Quadratic light falloff (physically based)"),
+            ('LINEAR', "Linear", "Linear light falloff"),
+            ('CONSTANT', "Constant", "Constant light falloff, independent of the distance"),
+        ),
+        default='QUADRATIC',
+    )
+    light_falloff_strength: FloatProperty(
+        name="Strength",
+        description="Multiplier of the light",
+        min=0.0, soft_max=100.0,
+        default=1.0,
+    )
+    light_falloff_smooth: FloatProperty(
+        name="Smooth",
+        description="Smooth intensity of the light near the light (avoids harsh highlights)",
+        min=0.0, soft_max=1000.0,
+        default=0.0,
+    )
 
     @classmethod
     def register(cls):

@@ -45,6 +45,19 @@ class Light : public Geometry {
   /* Normalize power by the surface area of the light. */
   NODE_SOCKET_API(bool, normalize)
 
+  /* Attenuation of point, spot and area lights by the ray length, as Map Range and Light Falloff
+   * nodes (#LightMapRangeType, #LightFalloffType; zero: not used). */
+  NODE_SOCKET_API(int, map_range_type)
+  NODE_SOCKET_API(bool, map_range_clamp)
+  NODE_SOCKET_API(float, map_range_from_min)
+  NODE_SOCKET_API(float, map_range_from_max)
+  NODE_SOCKET_API(float, map_range_to_min)
+  NODE_SOCKET_API(float, map_range_to_max)
+  NODE_SOCKET_API(float, map_range_steps)
+  NODE_SOCKET_API(int, falloff_type)
+  NODE_SOCKET_API(float, falloff_strength)
+  NODE_SOCKET_API(float, falloff_smooth)
+
   void tag_update(Scene *scene);
 
   /* Check whether the light has contribution the scene. */

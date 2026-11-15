@@ -1732,6 +1732,64 @@ class CYCLES_LIGHT_PT_beam_shape(CyclesButtonsPanel, Panel):
             col.prop(light, "use_full_visible_surface")
 
 
+class CyclesLightAttenuationPanel(CyclesButtonsPanel):
+    bl_parent_id = "CYCLES_LIGHT_PT_light"
+    bl_context = "data"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        light = context.light
+        return (light and light.type in {'POINT', 'SPOT', 'AREA'} and
+                not (light.type == 'AREA' and light.cycles.is_portal) and
+                CyclesButtonsPanel.poll(context))
+
+
+class CYCLES_LIGHT_PT_map_range(CyclesLightAttenuationPanel, Panel):
+    bl_label = "Map Range"
+
+    def draw_header(self, context):
+        self.layout.prop(context.light.cycles, "use_map_range", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        clight = context.light.cycles
+        layout.use_property_split = True
+        layout.active = clight.use_map_range
+
+        col = layout.column()
+        col.prop(clight, "map_range_interpolation_type")
+        col.label(text="Value: Ray Length")
+        sub = col.column(align=True)
+        sub.prop(clight, "map_range_from_min")
+        sub.prop(clight, "map_range_from_max")
+        sub = col.column(align=True)
+        sub.prop(clight, "map_range_to_min")
+        sub.prop(clight, "map_range_to_max")
+        if clight.map_range_interpolation_type == 'STEPPED':
+            col.prop(clight, "map_range_steps")
+        if clight.map_range_interpolation_type in {'LINEAR', 'STEPPED'}:
+            col.prop(clight, "map_range_clamp")
+
+
+class CYCLES_LIGHT_PT_light_falloff(CyclesLightAttenuationPanel, Panel):
+    bl_label = "Light Falloff"
+
+    def draw_header(self, context):
+        self.layout.prop(context.light.cycles, "use_light_falloff", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        clight = context.light.cycles
+        layout.use_property_split = True
+        layout.active = clight.use_light_falloff
+
+        col = layout.column()
+        col.prop(clight, "light_falloff_output")
+        col.prop(clight, "light_falloff_strength")
+        col.prop(clight, "light_falloff_smooth")
+
+
 class CYCLES_WORLD_PT_preview(CyclesButtonsPanel, Panel):
     bl_label = "Preview"
     bl_context = "world"
@@ -2652,6 +2710,8 @@ classes = (
     CYCLES_LIGHT_PT_settings,
     CYCLES_LIGHT_PT_nodes,
     CYCLES_LIGHT_PT_beam_shape,
+    CYCLES_LIGHT_PT_map_range,
+    CYCLES_LIGHT_PT_light_falloff,
     CYCLES_WORLD_PT_preview,
     CYCLES_WORLD_PT_surface,
     CYCLES_WORLD_PT_volume,
@@ -2683,7 +2743,9 @@ classes = (
     node_panel(CYCLES_WORLD_PT_settings_volume),
     node_panel(CYCLES_LIGHT_PT_light),
     node_panel(CYCLES_LIGHT_PT_settings),
-    node_panel(CYCLES_LIGHT_PT_beam_shape)
+    node_panel(CYCLES_LIGHT_PT_beam_shape),
+    node_panel(CYCLES_LIGHT_PT_map_range),
+    node_panel(CYCLES_LIGHT_PT_light_falloff),
 )
 
 

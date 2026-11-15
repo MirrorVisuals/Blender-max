@@ -107,6 +107,17 @@ NODE_ABSTRACT_DEFINE(Light)
 
   SOCKET_BOOLEAN(normalize, "Normalize", true);
 
+  SOCKET_INT(map_range_type, "Map Range Type", LIGHT_MAP_RANGE_NONE);
+  SOCKET_BOOLEAN(map_range_clamp, "Map Range Clamp", true);
+  SOCKET_FLOAT(map_range_from_min, "Map Range From Min", 0.0f);
+  SOCKET_FLOAT(map_range_from_max, "Map Range From Max", 1.0f);
+  SOCKET_FLOAT(map_range_to_min, "Map Range To Min", 0.0f);
+  SOCKET_FLOAT(map_range_to_max, "Map Range To Max", 1.0f);
+  SOCKET_FLOAT(map_range_steps, "Map Range Steps", 4.0f);
+  SOCKET_INT(falloff_type, "Falloff Type", LIGHT_FALLOFF_NONE);
+  SOCKET_FLOAT(falloff_strength, "Falloff Strength", 1.0f);
+  SOCKET_FLOAT(falloff_smooth, "Falloff Smooth", 0.0f);
+
   return type;
 }
 
@@ -483,6 +494,22 @@ void Light::copy_to_kernel(KernelLight *klight,
   klight->max_bounces = max_bounces;
   copy_v3_v3(klight->strength, strength);
   klight->use_caustics = use_caustics;
+
+  /* Attenuation by the ray length: not for distant lights. */
+  const bool local = light_type == LIGHT_POINT || light_type == LIGHT_SPOT ||
+                     light_type == LIGHT_AREA;
+  KernelLightAttenuation &att = klight->attenuation;
+  att = KernelLightAttenuation{};
+  att.map_range_type = local ? map_range_type : LIGHT_MAP_RANGE_NONE;
+  att.map_range_clamp = map_range_clamp ? 1 : 0;
+  att.from_min = map_range_from_min;
+  att.from_max = map_range_from_max;
+  att.to_min = map_range_to_min;
+  att.to_max = map_range_to_max;
+  att.steps = map_range_steps;
+  att.falloff_type = local ? falloff_type : LIGHT_FALLOFF_NONE;
+  att.falloff_strength = falloff_strength;
+  att.falloff_smooth = falloff_smooth;
 }
 
 /* Light Manager */

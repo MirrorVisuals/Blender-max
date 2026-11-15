@@ -139,6 +139,15 @@ The point the camera aims at stays in the middle of the frame. The camera's rota
 own Shift are not changed. It works in the camera view, Cycles, EEVEE and Workbench, and the
 camera can still be tilted with Fly/Walk navigation or Lock Camera to View.
 
+### Cycles: Map Range and Light Falloff on lights
+
+- **The Light Path > Map Range / Light Falloff node setup as light settings.** Point, spot and
+  area lights get two Cycles panels, Map Range and Light Falloff, with the settings of those nodes
+  (Interpolation Type, From / To Min / Max, Steps, Clamp; Output, Strength, Smooth). The value is
+  the ray length (the distance to the light), and the light is multiplied by both. Off by default.
+- **Full Visible Surface** keeps the surface of an area light as seen unchanged by them.
+- Beyond the distance where the light reaches zero, no shadow ray is traced.
+
 ### Cycles: Full Visible Surface for area lights
 
 When an area light is seen directly by the camera (or in sharp mirrors and clear glass), this

@@ -1512,6 +1512,39 @@ struct KernelSunLight {
   float pad[3];
 };
 
+/* Attenuation of point, spot and area lights by the distance from the shaded point to the point on
+ * the light (the ray length), as a Map Range and a Light Falloff node multiplied with the light
+ * would do. See #light_attenuation_factor. */
+enum LightMapRangeType {
+  LIGHT_MAP_RANGE_NONE = 0,
+  LIGHT_MAP_RANGE_LINEAR = 1,
+  LIGHT_MAP_RANGE_STEPPED = 2,
+  LIGHT_MAP_RANGE_SMOOTHSTEP = 3,
+  LIGHT_MAP_RANGE_SMOOTHERSTEP = 4,
+};
+
+enum LightFalloffType {
+  LIGHT_FALLOFF_NONE = 0,
+  LIGHT_FALLOFF_QUADRATIC = 1,
+  LIGHT_FALLOFF_LINEAR = 2,
+  LIGHT_FALLOFF_CONSTANT = 3,
+};
+
+struct KernelLightAttenuation {
+  int map_range_type;
+  int map_range_clamp;
+  float from_min;
+  float from_max;
+  float to_min;
+  float to_max;
+  float steps;
+  int falloff_type;
+  float falloff_strength;
+  float falloff_smooth;
+  int pad[2];
+};
+static_assert_align(KernelLightAttenuation, 16);
+
 struct KernelLight {
   int type;
   packed_float3 co;
@@ -1521,6 +1554,7 @@ struct KernelLight {
   float strength[3];
   int use_caustics;
   int pad;
+  KernelLightAttenuation attenuation;
   union {
     KernelSpotLight spot;
     KernelAreaLight area;

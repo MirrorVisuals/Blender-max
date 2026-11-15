@@ -681,6 +681,11 @@ if(WITH_CYCLES)
     cycles_camera_tilt_correction
     --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_camera_tilt_correction.py
   )
+
+  add_blender_test(
+    cycles_light_attenuation
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_light_attenuation.py
+  )
 endif()
 
 add_blender_test(

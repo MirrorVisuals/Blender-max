@@ -38,6 +38,72 @@ struct LightEval {
 
 /* Utilities */
 
+/* Attenuation of point, spot and area lights by `t`, the distance from the shaded point to the
+ * point on the light: a Map Range of the ray length times a Light Falloff, computed as the Map
+ * Range and Light Falloff shader nodes do. 1 when neither is used. */
+ccl_device_inline float light_attenuation_factor(const ccl_global KernelLight *klight,
+                                                 const float t)
+{
+  const ccl_global KernelLightAttenuation *att = &klight->attenuation;
+  float factor = 1.0f;
+
+  if (att->map_range_type != LIGHT_MAP_RANGE_NONE) {
+    const float from_min = att->from_min;
+    const float from_max = att->from_max;
+    float result = 0.0f;
+    if (from_max != from_min) {
+      float f;
+      switch (att->map_range_type) {
+        case LIGHT_MAP_RANGE_STEPPED:
+          f = (t - from_min) / (from_max - from_min);
+          f = (att->steps > 0.0f) ? floorf(f * (att->steps + 1.0f)) / att->steps : 0.0f;
+          break;
+        case LIGHT_MAP_RANGE_SMOOTHSTEP:
+          f = (from_min > from_max) ? 1.0f - smoothstep(from_max, from_min, t) :
+                                      smoothstep(from_min, from_max, t);
+          break;
+        case LIGHT_MAP_RANGE_SMOOTHERSTEP: {
+          const bool flip = from_min > from_max;
+          const float lo = flip ? from_max : from_min;
+          const float hi = flip ? from_min : from_max;
+          const float x = clamp((t - lo) / (hi - lo), 0.0f, 1.0f);
+          f = x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f);
+          if (flip) {
+            f = 1.0f - f;
+          }
+          break;
+        }
+        default:
+          f = (t - from_min) / (from_max - from_min);
+          break;
+      }
+      result = att->to_min + f * (att->to_max - att->to_min);
+    }
+    if (att->map_range_clamp) {
+      result = (att->to_min > att->to_max) ? clamp(result, att->to_max, att->to_min) :
+                                             clamp(result, att->to_min, att->to_max);
+    }
+    factor *= result;
+  }
+
+  if (att->falloff_type != LIGHT_FALLOFF_NONE && t != FLT_MAX) {
+    float strength = att->falloff_strength;
+    if (att->falloff_type == LIGHT_FALLOFF_LINEAR) {
+      strength *= t;
+    }
+    else if (att->falloff_type == LIGHT_FALLOFF_CONSTANT) {
+      strength *= t * t;
+    }
+    if (att->falloff_smooth > 0.0f) {
+      const float squared = t * t;
+      strength *= squared / (att->falloff_smooth + squared);
+    }
+    factor *= strength;
+  }
+
+  return factor;
+}
+
 ccl_device_inline float3 ellipse_sample(const float3 ru, const float3 rv, const float2 rand)
 {
   const float2 uv = sample_uniform_disk(rand);

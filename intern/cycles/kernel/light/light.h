@@ -148,6 +148,14 @@ ccl_device_inline bool light_sample(KernelGlobals kg,
     }
   }
 
+  if (!in_volume_segment && (type == LIGHT_POINT || type == LIGHT_SPOT || type == LIGHT_AREA)) {
+    ls->eval_fac *= light_attenuation_factor(klight, ls->t);
+    if (ls->eval_fac == 0.0f) {
+      /* E.g. beyond the distance where the Map Range reaches zero: no shadow ray. */
+      return false;
+    }
+  }
+
   return in_volume_segment || (ls->pdf > 0.0f);
 }
 
@@ -444,18 +452,28 @@ light_eval_from_intersection(KernelGlobals kg,
   const ccl_global KernelLight *klight = &kernel_data_fetch(lights, isect->prim);
   const LightType type = (LightType)klight->type;
 
+  LightEval eval;
   if (type == LIGHT_SPOT) {
-    return spot_light_eval_from_intersection(kg, klight, ray_P, ray_D, isect->t, N, path_flag);
+    eval = spot_light_eval_from_intersection(kg, klight, ray_P, ray_D, isect->t, N, path_flag);
   }
-  if (type == LIGHT_POINT) {
-    return point_light_eval_from_intersection(klight, ray_P, ray_D, isect->t, N, path_flag);
+  else if (type == LIGHT_POINT) {
+    eval = point_light_eval_from_intersection(klight, ray_P, ray_D, isect->t, N, path_flag);
   }
-  if (type == LIGHT_AREA) {
-    return area_light_eval_from_intersection(klight, ray_P, ray_D, isect->t, path_flag);
+  else if (type == LIGHT_AREA) {
+    eval = area_light_eval_from_intersection(klight, ray_P, ray_D, isect->t, path_flag);
   }
-
-  kernel_assert(!"Invalid lamp type in light_eval_from_intersection");
-  return LightEval{};
+  else {
+    kernel_assert(!"Invalid lamp type in light_eval_from_intersection");
+    return LightEval{};
+  }
+  /* With Full Visible Surface, the surface of the light as seen (by rays that are not weighted
+   * against light sampling, see #area_light_eval_from_intersection) is not attenuated. */
+  const bool seen_surface = type == LIGHT_AREA && klight->area.full_visible_surface &&
+                            (path_flag & PATH_RAY_MIS_SKIP);
+  if (!seen_surface) {
+    eval.eval_fac *= light_attenuation_factor(klight, isect->t);
+  }
+  return eval;
 }
 
 /* Get light coordinates from position on light. */

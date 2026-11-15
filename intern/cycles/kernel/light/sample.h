@@ -453,6 +453,9 @@ ccl_device_forceinline void light_sample_update(KernelGlobals kg,
   else {
     /* Keep previous values. */
   }
+  if (ls->type == LIGHT_POINT || ls->type == LIGHT_SPOT || ls->type == LIGHT_AREA) {
+    ls->eval_fac *= light_attenuation_factor(klight, ls->t);
+  }
 
   /* Re-apply already computed selection pdf. */
   ls->pdf *= ls->pdf_selection;
