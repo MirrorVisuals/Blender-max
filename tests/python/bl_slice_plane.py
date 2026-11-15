@@ -160,9 +160,14 @@ def test_selection_only():
     for f in bm.faces:
         if f.normal.x > 0.5:
             f.select = True
+            # As a click in the viewport: the face goes into the selection history.
+            bm.select_history.add(f)
     bmesh.update_edit_mesh(cube.data)
     bpy.ops.mesh.slice_plane(mode='SLICE')
     check(counts(cube) == (10, 15, 7), "only the selected face is cut: %r" % (counts(cube),))
+    bm = bmesh.from_edit_mesh(cube.data)
+    check(all(ele.select for ele in bm.select_history),
+          "the selection history only holds selected elements")
 
 
 def test_planes():

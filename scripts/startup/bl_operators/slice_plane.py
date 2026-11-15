@@ -131,6 +131,9 @@ def slice_bmesh(bm, matrix_world, planes, *, mode='SLICE', use_fill=False, thres
         result = bmesh.ops.split_edges(bm, edges=cut_edges)
         cut_edges = [e for e in result["edges"] if e.is_valid]
 
+    # The selection history must only hold selected elements (Edit Mode asserts on this), and the
+    # elements clicked before the cut are no longer selected.
+    bm.select_history.clear()
     for seq in (bm.verts, bm.edges, bm.faces):
         for ele in seq:
             ele.select = False
