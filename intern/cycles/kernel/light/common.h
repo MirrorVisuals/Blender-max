@@ -38,9 +38,34 @@ struct LightEval {
 
 /* Utilities */
 
+/* Factor (0 at `from`, 1 at `to`) of a Map Range interpolation type, as the Map Range node. */
+ccl_device_inline float light_map_range_factor(
+    const int type, const float from, const float to, const float steps, const float t)
+{
+  switch (type) {
+    case LIGHT_MAP_RANGE_STEPPED: {
+      const float f = (t - from) / (to - from);
+      return (steps > 0.0f) ? floorf(f * (steps + 1.0f)) / steps : 0.0f;
+    }
+    case LIGHT_MAP_RANGE_SMOOTHSTEP:
+      return (from > to) ? 1.0f - smoothstep(to, from, t) : smoothstep(from, to, t);
+    case LIGHT_MAP_RANGE_SMOOTHERSTEP: {
+      const bool flip = from > to;
+      const float lo = flip ? to : from;
+      const float hi = flip ? from : to;
+      const float x = clamp((t - lo) / (hi - lo), 0.0f, 1.0f);
+      const float f = x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f);
+      return flip ? 1.0f - f : f;
+    }
+    default:
+      return (t - from) / (to - from);
+  }
+}
+
 /* Attenuation of point, spot and area lights by `t`, the distance from the shaded point to the
  * point on the light: a Map Range of the ray length times a Light Falloff, computed as the Map
- * Range and Light Falloff shader nodes do. 1 when neither is used. */
+ * Range and Light Falloff shader nodes do. With Fade In, the Map Range also rises from zero at the
+ * light to To Min at From Min (as the near attenuation of 3ds Max). 1 when neither is used. */
 ccl_device_inline float light_attenuation_factor(const ccl_global KernelLight *klight,
                                                  const float t)
 {
@@ -50,44 +75,29 @@ ccl_device_inline float light_attenuation_factor(const ccl_global KernelLight *k
   if (att->map_range_type != LIGHT_MAP_RANGE_NONE) {
     const float from_min = att->from_min;
     const float from_max = att->from_max;
-    float result = 0.0f;
-    if (from_max != from_min) {
-      float f;
-      switch (att->map_range_type) {
-        case LIGHT_MAP_RANGE_STEPPED:
-          f = (t - from_min) / (from_max - from_min);
-          f = (att->steps > 0.0f) ? floorf(f * (att->steps + 1.0f)) / att->steps : 0.0f;
-          break;
-        case LIGHT_MAP_RANGE_SMOOTHSTEP:
-          f = (from_min > from_max) ? 1.0f - smoothstep(from_max, from_min, t) :
-                                      smoothstep(from_min, from_max, t);
-          break;
-        case LIGHT_MAP_RANGE_SMOOTHERSTEP: {
-          const bool flip = from_min > from_max;
-          const float lo = flip ? from_max : from_min;
-          const float hi = flip ? from_min : from_max;
-          const float x = clamp((t - lo) / (hi - lo), 0.0f, 1.0f);
-          f = x * x * x * (x * (x * 6.0f - 15.0f) + 10.0f);
-          if (flip) {
-            f = 1.0f - f;
-          }
-          break;
-        }
-        default:
-          f = (t - from_min) / (from_max - from_min);
-          break;
-      }
-      result = att->to_min + f * (att->to_max - att->to_min);
+    float result;
+    if (att->map_range_fade_in && from_min > 0.0f && from_min < from_max && t < from_min) {
+      /* Fade in: zero at the light, To Min at From Min. */
+      const float f = light_map_range_factor(att->map_range_type, 0.0f, from_min, att->steps, t);
+      result = att->to_min * clamp(f, 0.0f, 1.0f);
     }
-    if (att->map_range_clamp) {
-      result = (att->to_min > att->to_max) ? clamp(result, att->to_max, att->to_min) :
-                                             clamp(result, att->to_min, att->to_max);
+    else {
+      result = 0.0f;
+      if (from_max != from_min) {
+        const float f = light_map_range_factor(
+            att->map_range_type, from_min, from_max, att->steps, t);
+        result = att->to_min + f * (att->to_max - att->to_min);
+      }
+      if (att->map_range_clamp) {
+        result = (att->to_min > att->to_max) ? clamp(result, att->to_max, att->to_min) :
+                                               clamp(result, att->to_min, att->to_max);
+      }
     }
     factor *= result;
   }
 
   if (att->falloff_type != LIGHT_FALLOFF_NONE && t != FLT_MAX) {
-    float strength = att->falloff_strength;
+    float strength = 1.0f;
     if (att->falloff_type == LIGHT_FALLOFF_LINEAR) {
       strength *= t;
     }

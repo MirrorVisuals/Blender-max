@@ -114,8 +114,8 @@ NODE_ABSTRACT_DEFINE(Light)
   SOCKET_FLOAT(map_range_to_min, "Map Range To Min", 0.0f);
   SOCKET_FLOAT(map_range_to_max, "Map Range To Max", 1.0f);
   SOCKET_FLOAT(map_range_steps, "Map Range Steps", 4.0f);
+  SOCKET_BOOLEAN(map_range_fade_in, "Map Range Fade In", false);
   SOCKET_INT(falloff_type, "Falloff Type", LIGHT_FALLOFF_NONE);
-  SOCKET_FLOAT(falloff_strength, "Falloff Strength", 1.0f);
   SOCKET_FLOAT(falloff_smooth, "Falloff Smooth", 0.0f);
 
   return type;
@@ -507,8 +507,8 @@ void Light::copy_to_kernel(KernelLight *klight,
   att.to_min = map_range_to_min;
   att.to_max = map_range_to_max;
   att.steps = map_range_steps;
+  att.map_range_fade_in = map_range_fade_in ? 1 : 0;
   att.falloff_type = local ? falloff_type : LIGHT_FALLOFF_NONE;
-  att.falloff_strength = falloff_strength;
   att.falloff_smooth = falloff_smooth;
 }
 

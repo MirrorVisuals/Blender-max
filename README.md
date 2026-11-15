@@ -143,8 +143,10 @@ camera can still be tilted with Fly/Walk navigation or Lock Camera to View.
 
 - **The Light Path > Map Range / Light Falloff node setup as light settings.** Point, spot and
   area lights get two Cycles panels, Map Range and Light Falloff, with the settings of those nodes
-  (Interpolation Type, From / To Min / Max, Steps, Clamp; Output, Strength, Smooth). The value is
+  (Interpolation Type, From / To Min / Max, Steps, Clamp; Output, Smooth). The value is
   the ray length (the distance to the light), and the light is multiplied by both. Off by default.
+- **Fade In** (on by default): the light also rises from zero at the light to full at From Min,
+  as the near attenuation of 3ds Max.
 - **Full Visible Surface** keeps the surface of an area light as seen unchanged by them.
 - Beyond the distance where the light reaches zero, no shadow ray is traced.
 

@@ -83,9 +83,9 @@ void BlenderSync::sync_light(BObjectInfo &b_ob_info, Light *light)
   light->set_map_range_to_min(get_float(clight, "map_range_to_min"));
   light->set_map_range_to_max(get_float(clight, "map_range_to_max"));
   light->set_map_range_steps(get_float(clight, "map_range_steps"));
+  light->set_map_range_fade_in(get_boolean(clight, "map_range_fade_in"));
   light->set_falloff_type(
       get_boolean(clight, "use_light_falloff") ? get_enum(clight, "light_falloff_output") + 1 : 0);
-  light->set_falloff_strength(get_float(clight, "light_falloff_strength"));
   light->set_falloff_smooth(get_float(clight, "light_falloff_smooth"));
 
   if (AreaLight *area_light = dynamic_cast<AreaLight *>(light)) {

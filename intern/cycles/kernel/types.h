@@ -1538,8 +1538,9 @@ struct KernelLightAttenuation {
   float to_min;
   float to_max;
   float steps;
+  /* The light also fades in from zero at the light to To Min at From Min. */
+  int map_range_fade_in;
   int falloff_type;
-  float falloff_strength;
   float falloff_smooth;
   int pad[2];
 };

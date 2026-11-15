@@ -54,8 +54,8 @@ class Light : public Geometry {
   NODE_SOCKET_API(float, map_range_to_min)
   NODE_SOCKET_API(float, map_range_to_max)
   NODE_SOCKET_API(float, map_range_steps)
+  NODE_SOCKET_API(bool, map_range_fade_in)
   NODE_SOCKET_API(int, falloff_type)
-  NODE_SOCKET_API(float, falloff_strength)
   NODE_SOCKET_API(float, falloff_smooth)
 
   void tag_update(Scene *scene);

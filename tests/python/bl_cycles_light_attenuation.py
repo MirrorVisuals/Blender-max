@@ -97,9 +97,9 @@ def map_range(d, kind, from_min, from_max, to_min, to_max, clamp=True):
     return result
 
 
-def light_falloff(d, output, strength, smooth):
-    """The Light Falloff node, as Cycles computes it."""
-    s = strength * {'QUADRATIC': 1.0, 'LINEAR': d, 'CONSTANT': d * d}[output]
+def light_falloff(d, output, smooth):
+    """The Light Falloff node (Strength 1), as Cycles computes it."""
+    s = {'QUADRATIC': 1.0, 'LINEAR': d, 'CONSTANT': d * d}[output]
     if smooth > 0.0:
         s *= d * d / (smooth + d * d)
     return s
@@ -122,8 +122,9 @@ same = render("attenuation_not_enabled")
 check(same == off, "the values do nothing until Map Range / Light Falloff are enabled")
 
 # Pixels cover a range of distances: steep parts of a curve get a larger tolerance.
-print("Map Range")
+print("Map Range (Fade In off: exactly the node)")
 clight.use_map_range = True
+clight.map_range_fade_in = False
 clight.map_range_interpolation_type = 'SMOOTHSTEP'
 clight.map_range_from_min = 0.0
 clight.map_range_from_max = 6.0
@@ -154,18 +155,35 @@ on = render("map_range_linear_unclamped")
 compare("Linear without Clamp", on, off,
         lambda d: map_range(d, 'LINEAR', 2.0, 8.0, 1.5, 1.0, clamp=False), 0.03)
 clight.map_range_clamp = True
+
+print("Fade In: zero at the light, full at From Min, zero again at From Max")
+clight.map_range_fade_in = True
+clight.map_range_interpolation_type = 'SMOOTHSTEP'
+clight.map_range_from_min = 3.0
+clight.map_range_from_max = 6.0
+clight.map_range_to_min = 1.0
+clight.map_range_to_max = 0.0
+
+
+def fade_in(d):
+    return smoothstep(0.0, 3.0, d) if d < 3.0 else map_range(d, 'SMOOTHSTEP', 3.0, 6.0, 1.0, 0.0)
+
+
+on = render("map_range_fade_in")
+compare("Smooth Step fade in 0..3, fade out 3..6", on, off, fade_in, 0.06)
+near = [i for i in range(len(on)) if distance(i) < 1.5 and off[i] > 1e-4]
+# The floor is 1 m below the light: there the Smooth Step fade in is at 26% to 50%.
+check(near and all(on[i] < 0.6 * off[i] for i in near), "close to the light the light is faded in (dim)")
 clight.use_map_range = False
 
 print("Light Falloff")
 clight.use_light_falloff = True
-for output, strength, smooth in (('QUADRATIC', 2.0, 0.0), ('LINEAR', 1.0, 0.0),
-                                 ('CONSTANT', 1.0, 0.0), ('QUADRATIC', 1.0, 4.0)):
+check(not hasattr(clight, "light_falloff_strength"), "Light Falloff has no Strength (it would change the brightness)")
+for output, smooth in (('QUADRATIC', 0.0), ('LINEAR', 0.0), ('CONSTANT', 0.0), ('QUADRATIC', 4.0)):
     clight.light_falloff_output = output
-    clight.light_falloff_strength = strength
     clight.light_falloff_smooth = smooth
     on = render("falloff_" + output.lower())
-    compare(f"{output.title()}, Strength {strength}, Smooth {smooth}", on, off,
-            lambda d: light_falloff(d, output, strength, smooth), 0.06)
+    compare(f"{output.title()}, Smooth {smooth}", on, off, lambda d: light_falloff(d, output, smooth), 0.06)
 
 print("Both: Map Range x Light Falloff")
 clight.use_map_range = True
@@ -174,12 +192,11 @@ clight.map_range_from_min = 0.0
 clight.map_range_from_max = 3.8
 clight.map_range_to_min = 1.0
 clight.map_range_to_max = 0.0
-clight.light_falloff_output = 'QUADRATIC'
-clight.light_falloff_strength = 4.0
+clight.light_falloff_output = 'LINEAR'
 clight.light_falloff_smooth = 0.0
 on = render("both")
-compare("Smooth Step 0..3.8 x Quadratic 4 (the node setup)", on, off,
-        lambda d: map_range(d, 'SMOOTHSTEP', 0.0, 3.8, 1.0, 0.0) * 4.0, 0.06)
+compare("Smooth Step 0..3.8 x Linear", on, off,
+        lambda d: map_range(d, 'SMOOTHSTEP', 0.0, 3.8, 1.0, 0.0) * d, 0.06)
 
 print("Area light seen by the camera, Full Visible Surface")
 light_data.type = 'AREA'

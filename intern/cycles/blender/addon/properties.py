@@ -1292,6 +1292,12 @@ class CyclesLightSettings(bpy.types.PropertyGroup):
         min=0.0,
         default=4.0,
     )
+    map_range_fade_in: BoolProperty(
+        name="Fade In",
+        description="Also fade the light in, from zero at the light to To Min at From Min "
+        "(as the near attenuation of 3ds Max). Off: as the Map Range node, To Min up to From Min",
+        default=True,
+    )
     map_range_clamp: BoolProperty(
         name="Clamp",
         description="Clamp the result to the target range [To Min, To Max]",
@@ -1311,12 +1317,6 @@ class CyclesLightSettings(bpy.types.PropertyGroup):
             ('CONSTANT', "Constant", "Constant light falloff, independent of the distance"),
         ),
         default='QUADRATIC',
-    )
-    light_falloff_strength: FloatProperty(
-        name="Strength",
-        description="Multiplier of the light",
-        min=0.0, soft_max=100.0,
-        default=1.0,
     )
     light_falloff_smooth: FloatProperty(
         name="Smooth",

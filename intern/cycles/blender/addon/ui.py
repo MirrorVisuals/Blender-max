@@ -1763,6 +1763,7 @@ class CYCLES_LIGHT_PT_map_range(CyclesLightAttenuationPanel, Panel):
         sub = col.column(align=True)
         sub.prop(clight, "map_range_from_min")
         sub.prop(clight, "map_range_from_max")
+        col.prop(clight, "map_range_fade_in")
         sub = col.column(align=True)
         sub.prop(clight, "map_range_to_min")
         sub.prop(clight, "map_range_to_max")
@@ -1786,7 +1787,6 @@ class CYCLES_LIGHT_PT_light_falloff(CyclesLightAttenuationPanel, Panel):
 
         col = layout.column()
         col.prop(clight, "light_falloff_output")
-        col.prop(clight, "light_falloff_strength")
         col.prop(clight, "light_falloff_smooth")
 
 
