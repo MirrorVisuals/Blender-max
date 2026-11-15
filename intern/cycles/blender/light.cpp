@@ -80,6 +80,8 @@ void BlenderSync::sync_light(BObjectInfo &b_ob_info, Light *light)
                                 0);
   light->set_min_distance(get_float(clight, "map_range_min_distance"));
   light->set_max_distance(get_float(clight, "map_range_max_distance"));
+  light->set_map_range_to_min(get_float(clight, "map_range_to_min"));
+  light->set_map_range_to_max(get_float(clight, "map_range_to_max"));
   light->set_map_range_steps(get_float(clight, "map_range_steps"));
   light->set_falloff_type(
       get_boolean(clight, "use_light_falloff") ? get_enum(clight, "light_falloff_output") + 1 : 0);

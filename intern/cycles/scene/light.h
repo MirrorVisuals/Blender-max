@@ -50,6 +50,8 @@ class Light : public Geometry {
   NODE_SOCKET_API(int, map_range_type)
   NODE_SOCKET_API(float, min_distance)
   NODE_SOCKET_API(float, max_distance)
+  NODE_SOCKET_API(float, map_range_to_min)
+  NODE_SOCKET_API(float, map_range_to_max)
   NODE_SOCKET_API(float, map_range_steps)
   NODE_SOCKET_API(int, falloff_type)
   NODE_SOCKET_API(float, falloff_smooth)

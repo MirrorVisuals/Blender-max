@@ -1273,10 +1273,23 @@ class CyclesLightSettings(bpy.types.PropertyGroup):
     )
     map_range_max_distance: FloatProperty(
         name="Max Distance",
-        description="Distance from the light where it reaches zero, fading from full at Min Distance",
+        description="Distance from the light where it reaches To Max, from To Min at Min Distance",
         min=0.0, soft_max=100.0,
         default=10.0,
         subtype='DISTANCE',
+    )
+    map_range_to_min: FloatProperty(
+        name="To Min",
+        description="Level of the light up to Min Distance (1: full)",
+        min=0.0, soft_max=1.0,
+        default=1.0,
+    )
+    map_range_to_max: FloatProperty(
+        name="To Max",
+        description="Level of the light from Max Distance (0: no light there). "
+        "Swap with To Min to reverse the fade",
+        min=0.0, soft_max=1.0,
+        default=0.0,
     )
     map_range_steps: FloatProperty(
         name="Steps",

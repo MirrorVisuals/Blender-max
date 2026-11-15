@@ -100,17 +100,20 @@ def light_falloff(d, output, smooth):
     return s
 
 
-def attenuation(d, kind, min_distance, max_distance, output=None, smooth=0.0):
+def attenuation(d, kind, min_distance, max_distance, output=None, smooth=0.0, to_min=1.0, to_max=0.0):
     """Expected factor: inside Min Distance the light is as bright as at Min Distance (the usual
-    1 / d^2 undone), with the Light Falloff evaluated there."""
+    1 / d^2 undone) times To Min, with the Light Falloff evaluated there; To Max from Max Distance."""
     factor = 1.0
     e = d
     if kind is not None:
-        if d < min_distance:
-            factor = (d / min_distance) ** 2
+        if d >= max_distance:
+            factor = to_max
+        elif d < min_distance:
+            factor = to_min * (d / min_distance) ** 2
             e = min_distance
         else:
-            factor = fade(d, kind, min_distance, max_distance)
+            f = 1.0 - fade(d, kind, min_distance, max_distance)
+            factor = to_min + f * (to_max - to_min)
     if output is not None:
         factor *= light_falloff(e, output, smooth)
     return factor
@@ -125,8 +128,8 @@ def compare(label, on, off, fn, tolerance):
 
 clight = light_data.cycles
 check(not clight.use_map_range and not clight.use_light_falloff, "off by default")
-check(not hasattr(clight, "map_range_fade_in") and not hasattr(clight, "map_range_to_min"),
-      "no Fade In, To Min or To Max")
+check(not hasattr(clight, "map_range_fade_in"), "no Fade In")
+check(clight.map_range_to_min == 1.0 and clight.map_range_to_max == 0.0, "To Min 1, To Max 0 by default")
 off = render("attenuation_off")
 
 clight.map_range_max_distance = 6.0
@@ -154,6 +157,27 @@ clight.map_range_min_distance = 2.0
 clight.map_range_max_distance = 8.0
 on = render("linear")
 compare("Linear, Min 2, Max 8", on, off, lambda d: attenuation(d, 'LINEAR', 2.0, 8.0), 0.06)
+
+print("Map Range: reversed fade (To Min 0, To Max 1)")
+clight.map_range_interpolation_type = 'SMOOTHSTEP'
+clight.map_range_min_distance = 2.0
+clight.map_range_max_distance = 6.0
+clight.map_range_to_min = 0.0
+clight.map_range_to_max = 1.0
+on = render("reversed")
+compare("dark up to 2 m, rising to the usual light at 6 m and beyond", on, off,
+        lambda d: attenuation(d, 'SMOOTHSTEP', 2.0, 6.0, to_min=0.0, to_max=1.0), 0.06)
+far = [i for i in range(len(on)) if distance(i) > 6.0 + SIZE / RES and off[i] > 1e-4]
+check(far and all(abs(on[i] / off[i] - 1.0) < 1e-3 for i in far), "beyond Max Distance the light is as usual")
+
+print("Map Range: To Min 0.5, To Max 0.25")
+clight.map_range_to_min = 0.5
+clight.map_range_to_max = 0.25
+on = render("half")
+compare("half up to 2 m, a quarter from 6 m", on, off,
+        lambda d: attenuation(d, 'SMOOTHSTEP', 2.0, 6.0, to_min=0.5, to_max=0.25), 0.06)
+clight.map_range_to_min = 1.0
+clight.map_range_to_max = 0.0
 clight.use_map_range = False
 
 print("Light Falloff")

@@ -1536,10 +1536,13 @@ struct KernelLightAttenuation {
    * and the Map Range fades the light to zero at `max_distance`. */
   float min_distance;
   float max_distance;
+  /* Level of the light up to Min Distance and from Max Distance; it goes from one to the other in
+   * between (1 and 0: full light fading out; swapped: the fade is reversed). */
+  float to_min;
+  float to_max;
   float steps;
   int falloff_type;
   float falloff_smooth;
-  int pad[2];
 };
 static_assert_align(KernelLightAttenuation, 16);
 

@@ -66,9 +66,9 @@ ccl_device_inline float light_map_range_factor(
  * point on the light. 1 when neither part is used.
  *
  * Map Range: up to Min Distance there is no falloff, the light is as bright as at Min Distance
- * (as Decay Start in 3ds Max). The light falls off as usual (including the Light Falloff) from
- * there, and fades from full to zero between Min and Max Distance with the interpolation type of
- * the Map Range node.
+ * (as Decay Start in 3ds Max), times To Min. The light falls off as usual (including the Light
+ * Falloff) from there, and goes from To Min to To Max between Min and Max Distance with the
+ * interpolation type of the Map Range node; from Max Distance it is times To Max.
  *
  * Light Falloff: as the Light Falloff shader node with Strength 1. */
 ccl_device_inline float light_attenuation_factor(const ccl_global KernelLight *klight,
@@ -85,18 +85,23 @@ ccl_device_inline float light_attenuation_factor(const ccl_global KernelLight *k
     const float min_distance = att->min_distance;
     const float max_distance = att->max_distance;
     if (t >= max_distance) {
-      return 0.0f;
+      if (att->to_max == 0.0f) {
+        return 0.0f;
+      }
+      factor = att->to_max;
     }
-    if (t < min_distance) {
+    else if (t < min_distance) {
       /* The usual falloff is 1 / t^2: undo it relative to Min Distance, and evaluate the rest at
        * Min Distance, so that the light is constant inside it. */
-      factor = sqr(t / min_distance);
+      factor = att->to_min * sqr(t / min_distance);
       te = min_distance;
     }
-    else if (max_distance > min_distance) {
-      const float f = light_map_range_factor(
-          att->map_range_type, min_distance, max_distance, att->steps, t);
-      factor = 1.0f - clamp(f, 0.0f, 1.0f);
+    else {
+      const float f = clamp(
+          light_map_range_factor(att->map_range_type, min_distance, max_distance, att->steps, t),
+          0.0f,
+          1.0f);
+      factor = att->to_min + f * (att->to_max - att->to_min);
     }
   }
 

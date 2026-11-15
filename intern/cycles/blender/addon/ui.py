@@ -1762,6 +1762,9 @@ class CYCLES_LIGHT_PT_map_range(CyclesLightAttenuationPanel, Panel):
         sub = col.column(align=True)
         sub.prop(clight, "map_range_min_distance")
         sub.prop(clight, "map_range_max_distance")
+        sub = col.column(align=True)
+        sub.prop(clight, "map_range_to_min")
+        sub.prop(clight, "map_range_to_max")
         if clight.map_range_interpolation_type == 'STEPPED':
             col.prop(clight, "map_range_steps")
 
