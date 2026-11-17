@@ -65,12 +65,9 @@ bool PathTraceTile::get_pass_pixels(const string_view pass_name,
   PassAccessor::PassAccessInfo pass_access_info(*pass);
   pass_access_info.use_approximate_shadow_catcher = buffer_params.use_approximate_shadow_catcher;
 
-  /* The combined pass in the render result has the Light Mix, as on display. Its light group
-   * passes are written as rendered, so that the mix can still be changed afterwards. */
-  const LightMix light_mix = path_trace_.get_light_mix();
-  if (!light_mix.empty()) {
-    pass_access_info.light_mix = &light_mix;
-  }
+  /* No Light Mix here: the render result gets the Combined pass as rendered, Blender mixes it
+   * with the light group passes (and again whenever the mix changes, without rendering). Only
+   * the display of the render in progress is mixed by Cycles. */
   pass_access_info.use_approximate_shadow_catcher_background =
       pass_access_info.use_approximate_shadow_catcher && !buffer_params.use_transparent_background;
 

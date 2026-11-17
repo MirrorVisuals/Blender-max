@@ -1075,7 +1075,7 @@ LightMix BlenderSync::get_light_mix(blender::Scene &b_scene_orig, const char *vi
   }
   for (blender::ViewLayerLightgroup &b_lightgroup : b_view_layer->lightgroups) {
     float weight[3];
-    blender::BKE_view_layer_lightgroup_mix_weight(&b_lightgroup, weight);
+    blender::BKE_view_layer_lightgroup_mix_weight(b_view_layer, &b_lightgroup, weight);
     if (weight[0] == 1.0f && weight[1] == 1.0f && weight[2] == 1.0f) {
       continue;
     }

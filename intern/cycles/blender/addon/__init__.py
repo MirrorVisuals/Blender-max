@@ -24,6 +24,8 @@ if "bpy" in locals():
         importlib.reload(version_update)
     if "ui" in locals():
         importlib.reload(ui)
+    if "light_mix" in locals():
+        importlib.reload(light_mix)
     if "operators" in locals():
         importlib.reload(operators)
     if "properties" in locals():
@@ -138,6 +140,7 @@ cli_commands = []
 def register():
     from bpy.utils import register_class
     from . import ui
+    from . import light_mix
     from . import operators
     from . import properties
     from . import presets
@@ -152,6 +155,7 @@ def register():
 
     properties.register()
     ui.register()
+    light_mix.register()
     operators.register()
     presets.register()
 
@@ -166,6 +170,7 @@ def register():
 def unregister():
     from bpy.utils import unregister_class
     from . import ui
+    from . import light_mix
     from . import operators
     from . import properties
     from . import presets
@@ -176,6 +181,7 @@ def unregister():
         bpy.utils.unregister_cli_command(cmd)
     cli_commands.clear()
 
+    light_mix.unregister()
     ui.unregister()
     operators.unregister()
     properties.unregister()

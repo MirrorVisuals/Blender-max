@@ -15,11 +15,15 @@
 
 #include "BLI_hash_md5.hh"
 #include "BLI_listbase.h"
+#include "BLI_math_vector.h"
 #include "BLI_path_utils.hh"
 #include "BLI_rect.h"
+#include "BLI_string.h"
 #include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
+#include "BLI_task.hh"
 #include "BLI_utildefines.h"
+#include "BLI_vector.hh"
 
 #include "DNA_layer_types.h"
 #include "DNA_userdef_types.h"
@@ -28,6 +32,7 @@
 #include "BKE_image.hh"
 #include "BKE_image_format.hh"
 #include "BKE_image_save.hh"
+#include "BKE_layer.hh"
 #include "BKE_main.hh"
 #include "BKE_report.hh"
 #include "BKE_scene.hh"
@@ -84,6 +89,7 @@ void render_result_free(RenderResult *rr)
       RenderPass *rpass = static_cast<RenderPass *>(rl->passes.first);
 
       IMB_freeImBuf(rpass->ibuf);
+      MEM_SAFE_DELETE(rpass->light_mix_base);
 
       BLI_freelinkN(&rl->passes, rpass);
     }
@@ -798,6 +804,15 @@ void render_result_views_new(RenderResult *rr, const RenderData *rd)
 /** \name Merge
  * \{ */
 
+/** A copy of the pixels of a pass, as Combined pass as rendered of the Light Mix. */
+static float *render_pass_light_mix_base_copy(const RenderPass &rpass)
+{
+  const size_t size = size_t(rpass.rectx) * size_t(rpass.recty) * size_t(rpass.channels);
+  float *base = MEM_new_array_uninitialized<float>(size, "Light Mix base");
+  memcpy(base, rpass.ibuf->float_data(), sizeof(float) * size);
+  return base;
+}
+
 static void do_merge_tile(
     RenderResult *rr, RenderResult *rrpart, float *target, float *tile, int pixsize)
 {
@@ -850,6 +865,21 @@ void render_result_merge(RenderResult *rr, RenderResult *rrpart)
                       rpass->ibuf->float_data_for_write(),
                       rpassp->ibuf->float_data_for_write(),
                       rpass->channels);
+
+        /* Light Mix: keep the Combined pass as rendered up to date. Where neither has it, the
+         * Combined pass itself is as rendered. */
+        if (rpass->light_mix_base || rpassp->light_mix_base) {
+          if (rpass->light_mix_base == nullptr) {
+            /* The rest of the pass has no mix (it had no Combined pass as rendered). */
+            rpass->light_mix_base = render_pass_light_mix_base_copy(*rpass);
+          }
+          do_merge_tile(rr,
+                        rrpart,
+                        rpass->light_mix_base,
+                        rpassp->light_mix_base ? rpassp->light_mix_base :
+                                                 rpassp->ibuf->float_data_for_write(),
+                        rpass->channels);
+        }
 
         /* manually get next render pass */
         rpassp = rpassp->next;
@@ -1297,6 +1327,9 @@ static RenderPass *duplicate_render_pass(RenderPass *rpass)
   new_rpass->next = new_rpass->prev = nullptr;
 
   new_rpass->ibuf = IMB_dupImBuf(rpass->ibuf);
+  if (rpass->light_mix_base) {
+    new_rpass->light_mix_base = MEM_dupalloc(rpass->light_mix_base);
+  }
 
   return new_rpass;
 }
@@ -1371,6 +1404,89 @@ ImBuf *RE_RenderViewEnsureImBuf(const RenderResult *render_result, RenderView *r
 bool RE_RenderPassIsColor(const RenderPass *render_pass)
 {
   return STR_ELEM(render_pass->chan_id, "RGB", "RGBA", "R", "G", "B", "A");
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Light Mix
+ * \{ */
+
+bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene)
+{
+  if (rr == nullptr || scene == nullptr) {
+    return false;
+  }
+
+  struct Group {
+    const float *pixels;
+    int channels;
+    float weight[3];
+  };
+
+  bool changed = false;
+  for (RenderLayer &rl : rr->layers) {
+    const ViewLayer *view_layer = BKE_view_layer_find(scene, rl.name);
+    const bool use_light_mix = view_layer && (view_layer->flag & VIEW_LAYER_USE_LIGHT_MIX);
+
+    for (RenderPass &rpass : rl.passes) {
+      if (!STREQ(rpass.name, RE_PASSNAME_COMBINED) || rpass.channels != 4 ||
+          rpass.ibuf == nullptr || rpass.ibuf->float_data() == nullptr)
+      {
+        continue;
+      }
+
+      Vector<Group> groups;
+      if (use_light_mix) {
+        for (const ViewLayerLightgroup &lightgroup : view_layer->lightgroups) {
+          Group group;
+          BKE_view_layer_lightgroup_mix_weight(view_layer, &lightgroup, group.weight);
+          if (group.weight[0] == 1.0f && group.weight[1] == 1.0f && group.weight[2] == 1.0f) {
+            continue;
+          }
+          char name[sizeof(RenderPass::name)];
+          SNPRINTF(name, "%s_%s", RE_PASSNAME_COMBINED, lightgroup.name);
+          const RenderPass *group_pass = RE_pass_find_by_name(&rl, name, rpass.view);
+          if (group_pass == nullptr || group_pass->ibuf == nullptr ||
+              group_pass->ibuf->float_data() == nullptr || group_pass->channels < 3 ||
+              group_pass->rectx != rpass.rectx || group_pass->recty != rpass.recty)
+          {
+            continue;
+          }
+          group.pixels = group_pass->ibuf->float_data();
+          group.channels = group_pass->channels;
+          groups.append(group);
+        }
+      }
+
+      if (groups.is_empty() && rpass.light_mix_base == nullptr) {
+        /* No mix, and none applied before: the pass is as rendered already. */
+        continue;
+      }
+      if (rpass.light_mix_base == nullptr) {
+        rpass.light_mix_base = render_pass_light_mix_base_copy(rpass);
+      }
+
+      const float *base = rpass.light_mix_base;
+      float *pixels = rpass.ibuf->float_data_for_write();
+      const int64_t num_pixels = int64_t(rpass.rectx) * int64_t(rpass.recty);
+      threading::parallel_for(IndexRange(num_pixels), 4096, [&](const IndexRange range) {
+        for (const int64_t i : range) {
+          float *out = pixels + i * 4;
+          copy_v4_v4(out, base + i * 4);
+          for (const Group &group : groups) {
+            const float *in = group.pixels + i * group.channels;
+            out[0] += (group.weight[0] - 1.0f) * in[0];
+            out[1] += (group.weight[1] - 1.0f) * in[1];
+            out[2] += (group.weight[2] - 1.0f) * in[2];
+          }
+        }
+      });
+      rpass.ibuf->userflags |= IB_DISPLAY_BUFFER_INVALID;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /** \} */

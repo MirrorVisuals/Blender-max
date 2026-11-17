@@ -79,6 +79,13 @@ struct RenderPass {
   int view_id;
 
   char _pad0[4];
+
+  /**
+   * Light Mix: the Combined pass as rendered, while the pass itself has the Light Mix applied
+   * (see #RE_render_result_light_mix). Only allocated once a mix is applied. A Combined pass
+   * without it is as rendered.
+   */
+  float *light_mix_base;
 };
 
 /**
@@ -465,6 +472,21 @@ bool RE_passes_have_name(struct RenderLayer *rl);
 struct RenderPass *RE_pass_find_by_name(struct RenderLayer *rl,
                                         const char *name,
                                         const char *viewname);
+
+/**
+ * Light Mix of a finished render: set the Combined pass of every layer of `rr` to the Combined
+ * pass as rendered plus `(weight - 1) x light group pass` for every light group, with the Light
+ * Mix settings of the view layers of `scene` (an original scene). Keeps the Combined pass as
+ * rendered aside the first time, so the mix can be changed again and again without rendering.
+ * \return true when a Combined pass changed.
+ */
+bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene);
+/**
+ * Apply the Light Mix settings of `scene` to its render result after they changed, see
+ * #RE_render_result_light_mix. Main thread only.
+ * \return true when the render result changed.
+ */
+bool RE_light_mix_update(Scene *scene);
 
 /**
  * Set the buffer data of the render pass.

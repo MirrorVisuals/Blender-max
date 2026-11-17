@@ -1055,6 +1055,11 @@ static void engine_render_result_copy_previous(RenderResult *rr, const RenderRes
           memcpy(rp.ibuf->float_data_for_write(),
                  rp_prev.ibuf->float_data(),
                  sizeof(float) * size_t(rp.rectx) * size_t(rp.recty) * size_t(rp.channels));
+          /* With the Light Mix, the pass as rendered too. */
+          MEM_SAFE_DELETE(rp.light_mix_base);
+          if (rp_prev.light_mix_base) {
+            rp.light_mix_base = MEM_dupalloc(rp_prev.light_mix_base);
+          }
         }
         break;
       }
@@ -1217,6 +1222,14 @@ bool RE_engine_render(Render *re, bool do_all)
       }
     }
     FOREACH_VIEW_LAYER_TO_RENDER_END;
+  }
+
+  /* Light Mix: the engine writes the Combined pass as rendered, mix it before compositing.
+   * Afterwards the mix is applied again whenever its settings change, without rendering. */
+  if ((re->r.scemode & R_BUTS_PREVIEW) == 0 && re->result && re->result->passes_allocated) {
+    BLI_rw_mutex_lock(&re->resultmutex, THREAD_LOCK_WRITE);
+    RE_render_result_light_mix(re->result, re->scene);
+    BLI_rw_mutex_unlock(&re->resultmutex);
   }
 
   /* Clear tile data */

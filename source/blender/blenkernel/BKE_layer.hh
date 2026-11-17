@@ -725,11 +725,19 @@ void BKE_view_layer_rename_lightgroup(Scene *scene,
 
 /**
  * Light Mix weight of a light group: the factor its light is multiplied by in the combined image.
+ * Includes the solo state of the other light groups and the master of `view_layer` (which may be
+ * null, to leave both out).
  */
-void BKE_view_layer_lightgroup_mix_weight(const ViewLayerLightgroup *lightgroup,
+void BKE_view_layer_lightgroup_mix_weight(const ViewLayer *view_layer,
+                                          const ViewLayerLightgroup *lightgroup,
                                           float r_weight[3]);
 /** Set the default Light Mix settings on light groups from files that have none. */
 void BKE_view_layer_lightgroup_mix_ensure(ViewLayerLightgroup *lightgroup);
+/** Set the default Light Mix master on view layers from files that have none. */
+void BKE_view_layer_light_mix_ensure(ViewLayer *view_layer);
+/** The view layer of `scene` that owns `lightgroup`, or null. */
+ViewLayer *BKE_view_layer_find_with_lightgroup(Scene *scene,
+                                               const ViewLayerLightgroup *lightgroup);
 
 int BKE_lightgroup_membership_get(const LightgroupMembership *lgm, char *name);
 int BKE_lightgroup_membership_length(const LightgroupMembership *lgm);

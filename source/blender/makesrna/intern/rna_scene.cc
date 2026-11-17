@@ -2965,9 +2965,106 @@ static void rna_Lightgroup_mix_exposure_set(PointerRNA *ptr, float value)
   lightgroup->mix_exposure = value;
 }
 
+static bool rna_Lightgroup_use_mix_solo_get(PointerRNA *ptr)
+{
+  const ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  return (lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) &&
+         (lightgroup->mix_flag & LIGHTGROUP_MIX_SOLO);
+}
+
+static void rna_Lightgroup_use_mix_solo_set(PointerRNA *ptr, bool value)
+{
+  ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  BKE_view_layer_lightgroup_mix_ensure(lightgroup);
+  SET_FLAG_FROM_TEST(lightgroup->mix_flag, value, LIGHTGROUP_MIX_SOLO);
+}
+
 static void rna_Lightgroup_mix_weight_get(PointerRNA *ptr, float *values)
 {
-  BKE_view_layer_lightgroup_mix_weight(static_cast<ViewLayerLightgroup *>(ptr->data), values);
+  const ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  const ViewLayer *view_layer = nullptr;
+  if (ptr->owner_id && GS(ptr->owner_id->name) == ID_SCE) {
+    view_layer = BKE_view_layer_find_with_lightgroup(reinterpret_cast<Scene *>(ptr->owner_id),
+                                                     lightgroup);
+  }
+  BKE_view_layer_lightgroup_mix_weight(view_layer, lightgroup, values);
+}
+
+/* Light Mix of a finished render: mix its Combined pass again, and composite it again. */
+void rna_LightMix_update(Main *bmain, Scene * /*active_scene*/, PointerRNA *ptr)
+{
+  if (ptr->owner_id == nullptr || GS(ptr->owner_id->name) != ID_SCE) {
+    return;
+  }
+  Scene *scene = reinterpret_cast<Scene *>(ptr->owner_id);
+  if (!RE_light_mix_update(scene)) {
+    return;
+  }
+  for (Image &image : bmain->images) {
+    if (image.type == IMA_TYPE_R_RESULT) {
+      BKE_image_partial_update_mark_full_update(&image);
+      WM_main_add_notifier(NC_IMAGE | NA_EDITED, &image);
+    }
+  }
+  if ((scene->r.scemode & R_DOCOMP) && scene->compositing_node_group) {
+    DEG_id_tag_update(&scene->compositing_node_group->id, ID_RECALC_NTREE_OUTPUT);
+  }
+}
+
+void rna_ViewLayer_use_light_mix_update(Main *bmain, Scene *active_scene, PointerRNA *ptr)
+{
+  rna_ViewLayer_pass_update(bmain, active_scene, ptr);
+  rna_LightMix_update(bmain, active_scene, ptr);
+}
+
+/* Light Mix master of a view layer, read as neutral on view layers from older files. */
+
+void rna_ViewLayer_light_mix_color_get(PointerRNA *ptr, float *values)
+{
+  const ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
+  if (view_layer->light_mix_flag & VIEW_LAYER_LIGHT_MIX_INITIALIZED) {
+    copy_v3_v3(values, view_layer->light_mix_color);
+  }
+  else {
+    copy_v3_fl(values, 1.0f);
+  }
+}
+
+void rna_ViewLayer_light_mix_color_set(PointerRNA *ptr, const float *values)
+{
+  ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
+  BKE_view_layer_light_mix_ensure(view_layer);
+  copy_v3_v3(view_layer->light_mix_color, values);
+}
+
+float rna_ViewLayer_light_mix_value_get(PointerRNA *ptr)
+{
+  const ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
+  return (view_layer->light_mix_flag & VIEW_LAYER_LIGHT_MIX_INITIALIZED) ?
+             view_layer->light_mix_value :
+             1.0f;
+}
+
+void rna_ViewLayer_light_mix_value_set(PointerRNA *ptr, float value)
+{
+  ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
+  BKE_view_layer_light_mix_ensure(view_layer);
+  view_layer->light_mix_value = value;
+}
+
+float rna_ViewLayer_light_mix_exposure_get(PointerRNA *ptr)
+{
+  const ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
+  return (view_layer->light_mix_flag & VIEW_LAYER_LIGHT_MIX_INITIALIZED) ?
+             view_layer->light_mix_exposure :
+             0.0f;
+}
+
+void rna_ViewLayer_light_mix_exposure_set(PointerRNA *ptr, float value)
+{
+  ViewLayer *view_layer = static_cast<ViewLayer *>(ptr->data);
+  BKE_view_layer_light_mix_ensure(view_layer);
+  view_layer->light_mix_exposure = value;
 }
 
 /* Fake value, used internally (not saved to DNA). */
@@ -5084,7 +5181,7 @@ static void rna_def_view_layer_lightgroup(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Enabled", "Include the light group in the Light Mix");
   RNA_def_property_ui_icon(prop, ICON_HIDE_ON, 1);
   RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
-  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+  RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
 
   prop = RNA_def_property(srna, "mix_color", PROP_FLOAT, PROP_COLOR);
   RNA_def_property_array(prop, 3);
@@ -5094,7 +5191,7 @@ static void rna_def_view_layer_lightgroup(BlenderRNA *brna)
   RNA_def_property_ui_range(prop, 0.0f, 1.0f, 1, 3);
   RNA_def_property_ui_text(prop, "Color", "Tint of the light group in the Light Mix");
   RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
-  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+  RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
 
   prop = RNA_def_property(srna, "mix_value", PROP_FLOAT, PROP_FACTOR);
   RNA_def_property_float_funcs(
@@ -5104,7 +5201,7 @@ static void rna_def_view_layer_lightgroup(BlenderRNA *brna)
   RNA_def_property_ui_text(
       prop, "Value", "Multiplier for the light group in the Light Mix (1 leaves it unchanged)");
   RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
-  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+  RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
 
   prop = RNA_def_property(srna, "mix_exposure", PROP_FLOAT, PROP_NONE);
   RNA_def_property_float_funcs(
@@ -5114,7 +5211,18 @@ static void rna_def_view_layer_lightgroup(BlenderRNA *brna)
   RNA_def_property_ui_text(
       prop, "Exposure", "Exposure of the light group in the Light Mix, in stops");
   RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
-  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+  RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
+
+  prop = RNA_def_property(srna, "use_mix_solo", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_funcs(
+      prop, "rna_Lightgroup_use_mix_solo_get", "rna_Lightgroup_use_mix_solo_set");
+  RNA_def_property_ui_text(
+      prop,
+      "Solo",
+      "Mix only the soloed light groups, while any light group of the view layer is soloed");
+  RNA_def_property_ui_icon(prop, ICON_SOLO_OFF, 1);
+  RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+  RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
 
   prop = RNA_def_property(srna, "mix_weight", PROP_FLOAT, PROP_COLOR);
   RNA_def_property_array(prop, 3);
@@ -5123,7 +5231,8 @@ static void rna_def_view_layer_lightgroup(BlenderRNA *brna)
   RNA_def_property_ui_text(prop,
                            "Mix Weight",
                            "Factor the light group is multiplied by in the Light Mix: Color x "
-                           "Value x 2^Exposure, zero when disabled");
+                           "Value x 2^Exposure times the master, zero when disabled or when "
+                           "other light groups are soloed");
 }
 
 void rna_def_view_layer_common(BlenderRNA *brna, StructRNA *srna, const bool scene)
@@ -5215,7 +5324,42 @@ void rna_def_view_layer_common(BlenderRNA *brna, StructRNA *srna, const bool sce
                              "Light Mix",
                              "Mix the light groups with their Color, Value and Exposure in the "
                              "combined image, without rendering again (Cycles)");
-    RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, "rna_ViewLayer_pass_update");
+    RNA_def_property_update(
+        prop, NC_SCENE | ND_RENDER_OPTIONS, "rna_ViewLayer_use_light_mix_update");
+
+    /* Light Mix master, like the light group settings it only redraws. */
+    prop = RNA_def_property(srna, "light_mix_color", PROP_FLOAT, PROP_COLOR);
+    RNA_def_property_array(prop, 3);
+    RNA_def_property_float_funcs(
+        prop, "rna_ViewLayer_light_mix_color_get", "rna_ViewLayer_light_mix_color_set", nullptr);
+    RNA_def_property_range(prop, 0.0f, FLT_MAX);
+    RNA_def_property_ui_range(prop, 0.0f, 1.0f, 1, 3);
+    RNA_def_property_ui_text(
+        prop, "Master Tint", "Tint multiplied into every light group of the Light Mix");
+    RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+    RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
+
+    prop = RNA_def_property(srna, "light_mix_value", PROP_FLOAT, PROP_FACTOR);
+    RNA_def_property_float_funcs(
+        prop, "rna_ViewLayer_light_mix_value_get", "rna_ViewLayer_light_mix_value_set", nullptr);
+    RNA_def_property_range(prop, 0.0f, FLT_MAX);
+    RNA_def_property_ui_range(prop, 0.0f, 10.0f, 1, 3);
+    RNA_def_property_ui_text(
+        prop, "Master Value", "Multiplier for every light group of the Light Mix");
+    RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+    RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
+
+    prop = RNA_def_property(srna, "light_mix_exposure", PROP_FLOAT, PROP_NONE);
+    RNA_def_property_float_funcs(prop,
+                                 "rna_ViewLayer_light_mix_exposure_get",
+                                 "rna_ViewLayer_light_mix_exposure_set",
+                                 nullptr);
+    RNA_def_property_range(prop, -32.0f, 32.0f);
+    RNA_def_property_ui_range(prop, -10.0f, 10.0f, 1, 3);
+    RNA_def_property_ui_text(
+        prop, "Master Exposure", "Exposure added to every light group of the Light Mix, in stops");
+    RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+    RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
 
     prop = RNA_def_property(srna, "active_lightgroup", PROP_POINTER, PROP_NONE);
     RNA_def_property_struct_type(prop, "Lightgroup");

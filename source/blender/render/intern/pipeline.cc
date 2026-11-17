@@ -2795,6 +2795,26 @@ bool RE_passes_have_name(RenderLayer *rl)
   return false;
 }
 
+bool RE_light_mix_update(Scene *scene)
+{
+  BLI_assert(BLI_thread_is_main());
+  Render *re = RE_GetSceneRender(scene);
+  if (re == nullptr) {
+    return false;
+  }
+  bool changed = false;
+  BLI_rw_mutex_lock(&re->resultmutex, THREAD_LOCK_WRITE);
+  if (re->result && re->result->passes_allocated) {
+    changed = RE_render_result_light_mix(re->result, scene);
+    if (changed) {
+      /* The compositor reads the passes from the GPU. */
+      render_result_free_gpu_texture_caches(re->result);
+    }
+  }
+  BLI_rw_mutex_unlock(&re->resultmutex);
+  return changed;
+}
+
 RenderPass *RE_pass_find_by_name(RenderLayer *rl, const char *name, const char *viewname)
 {
   for (RenderPass &rp : rl->passes.items_reversed()) {
@@ -2828,6 +2848,7 @@ RenderPass *RE_create_gp_pass(RenderResult *rr, const char *layername, const cha
   RenderPass *rp = RE_pass_find_by_name(rl, RE_PASSNAME_COMBINED, viewname);
   if (rp) {
     IMB_freeImBuf(rp->ibuf);
+    MEM_SAFE_DELETE(rp->light_mix_base);
     BLI_freelinkN(&rl->passes, rp);
   }
   /* create a totally new pass */

@@ -390,6 +390,14 @@ void rna_Scene_freestyle_update(Main *bmain, Scene *scene, PointerRNA *ptr);
 void rna_ViewLayer_name_set(PointerRNA *ptr, const char *value);
 void rna_ViewLayer_override_update(Main *bmain, Scene *activescene, PointerRNA *ptr);
 void rna_ViewLayer_pass_update(Main *bmain, Scene *activescene, PointerRNA *ptr);
+void rna_LightMix_update(Main *bmain, Scene *active_scene, PointerRNA *ptr);
+void rna_ViewLayer_use_light_mix_update(Main *bmain, Scene *active_scene, PointerRNA *ptr);
+void rna_ViewLayer_light_mix_color_get(PointerRNA *ptr, float *values);
+void rna_ViewLayer_light_mix_color_set(PointerRNA *ptr, const float *values);
+float rna_ViewLayer_light_mix_value_get(PointerRNA *ptr);
+void rna_ViewLayer_light_mix_value_set(PointerRNA *ptr, float value);
+float rna_ViewLayer_light_mix_exposure_get(PointerRNA *ptr);
+void rna_ViewLayer_light_mix_exposure_set(PointerRNA *ptr, float value);
 void rna_ViewLayer_active_aov_index_range(
     PointerRNA *ptr, int *min, int *max, int *softmin, int *softmax);
 int rna_ViewLayer_active_aov_index_get(PointerRNA *ptr);

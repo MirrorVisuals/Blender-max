@@ -2763,18 +2763,58 @@ void BKE_view_layer_lightgroup_mix_ensure(ViewLayerLightgroup *lightgroup)
   lightgroup->mix_flag = LIGHTGROUP_MIX_INITIALIZED;
 }
 
-void BKE_view_layer_lightgroup_mix_weight(const ViewLayerLightgroup *lightgroup, float r_weight[3])
+void BKE_view_layer_light_mix_ensure(ViewLayer *view_layer)
 {
-  if ((lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) == 0) {
-    copy_v3_fl(r_weight, 1.0f);
+  if (view_layer->light_mix_flag & VIEW_LAYER_LIGHT_MIX_INITIALIZED) {
     return;
   }
-  if (lightgroup->mix_flag & LIGHTGROUP_MIX_MUTE) {
-    zero_v3(r_weight);
+  copy_v3_fl(view_layer->light_mix_color, 1.0f);
+  view_layer->light_mix_value = 1.0f;
+  view_layer->light_mix_exposure = 0.0f;
+  view_layer->light_mix_flag = VIEW_LAYER_LIGHT_MIX_INITIALIZED;
+}
+
+ViewLayer *BKE_view_layer_find_with_lightgroup(Scene *scene, const ViewLayerLightgroup *lightgroup)
+{
+  for (ViewLayer &view_layer : scene->view_layers) {
+    if (BLI_findindex(&view_layer.lightgroups, lightgroup) != -1) {
+      return &view_layer;
+    }
+  }
+  return nullptr;
+}
+
+void BKE_view_layer_lightgroup_mix_weight(const ViewLayer *view_layer,
+                                          const ViewLayerLightgroup *lightgroup,
+                                          float r_weight[3])
+{
+  copy_v3_fl(r_weight, 1.0f);
+  if (lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) {
+    if (lightgroup->mix_flag & LIGHTGROUP_MIX_MUTE) {
+      zero_v3(r_weight);
+      return;
+    }
+    const float gain = lightgroup->mix_value * exp2f(lightgroup->mix_exposure);
+    mul_v3_v3fl(r_weight, lightgroup->mix_color, gain);
+  }
+  if (view_layer == nullptr) {
     return;
   }
-  const float gain = lightgroup->mix_value * exp2f(lightgroup->mix_exposure);
-  mul_v3_v3fl(r_weight, lightgroup->mix_color, gain);
+  if ((lightgroup->mix_flag & LIGHTGROUP_MIX_SOLO) == 0) {
+    for (const ViewLayerLightgroup &other : view_layer->lightgroups) {
+      if ((other.mix_flag & LIGHTGROUP_MIX_INITIALIZED) && (other.mix_flag & LIGHTGROUP_MIX_SOLO))
+      {
+        zero_v3(r_weight);
+        return;
+      }
+    }
+  }
+  if (view_layer->light_mix_flag & VIEW_LAYER_LIGHT_MIX_INITIALIZED) {
+    const float gain = view_layer->light_mix_value * exp2f(view_layer->light_mix_exposure);
+    float master[3];
+    mul_v3_v3fl(master, view_layer->light_mix_color, gain);
+    mul_v3_v3(r_weight, master);
+  }
 }
 
 void BKE_view_layer_remove_lightgroup(ViewLayer *view_layer, ViewLayerLightgroup *lightgroup)

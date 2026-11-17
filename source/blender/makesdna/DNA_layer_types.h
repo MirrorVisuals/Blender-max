@@ -234,6 +234,14 @@ enum eViewLayerLightgroup_MixFlag {
   LIGHTGROUP_MIX_INITIALIZED = (1 << 0),
   /** The light group is left out of the mix. */
   LIGHTGROUP_MIX_MUTE = (1 << 1),
+  /** Solo: while any light group of the view layer is soloed, only soloed ones are mixed. */
+  LIGHTGROUP_MIX_SOLO = (1 << 2),
+};
+
+/** #ViewLayer.light_mix_flag */
+enum eViewLayer_LightMixFlag {
+  /** The master settings are set. View layers from older files have none: they read as neutral. */
+  VIEW_LAYER_LIGHT_MIX_INITIALIZED = (1 << 0),
 };
 
 struct ViewLayerLightgroup {
@@ -298,6 +306,13 @@ struct ViewLayer {
 
   ListBaseT<ViewLayerLightgroup> lightgroups = {nullptr, nullptr};
   ViewLayerLightgroup *active_lightgroup = nullptr;
+
+  /** Light Mix master: multiplies the weight of every light group,
+   * `light_mix_color * light_mix_value * 2^light_mix_exposure`. */
+  float light_mix_color[3] = {1.0f, 1.0f, 1.0f};
+  float light_mix_value = 1.0f;
+  float light_mix_exposure = 0.0f;
+  int light_mix_flag = VIEW_LAYER_LIGHT_MIX_INITIALIZED;
 
   ViewLayerRuntime *runtime = nullptr;
 

@@ -32,8 +32,6 @@ class _State:
     dirty = False
     # The render in progress was asked to stop, to start the next one.
     stop_requested = False
-    # Light Mix settings, see `_light_mix_signature`.
-    light_mix = None
     # Settings of the scene that have no dependency graph update, to see them change.
     signature = None
     # Options to put back when stopped.
@@ -47,14 +45,6 @@ def is_active():
 
 def _scene():
     return bpy.data.scenes.get(_State.scene_name)
-
-
-def _light_mix_signature(scene):
-    """The Light Mix of every view layer, which changes without a scene update."""
-    return tuple(
-        (view_layer.use_light_mix, tuple(tuple(lightgroup.mix_weight) for lightgroup in view_layer.lightgroups))
-        for view_layer in scene.view_layers
-    )
 
 
 def _signature(scene):
@@ -82,8 +72,11 @@ def _on_depsgraph_update(scene, depsgraph):
     if depsgraph.mode != 'VIEWPORT':
         return
     for update in depsgraph.updates:
-        # Selecting, or the Render Result itself, change nothing in the render.
+        # Selecting, the Render Result itself or the compositor (which the Light Mix runs again)
+        # change nothing in the render.
         if isinstance(update.id, bpy.types.Image):
+            continue
+        if isinstance(update.id, bpy.types.NodeTree) and update.id.bl_idname == 'CompositorNodeTree':
             continue
         if update.is_updated_transform or update.is_updated_geometry or update.is_updated_shading:
             _State.dirty = True
@@ -116,14 +109,6 @@ def _tick():
     if signature != _State.signature:
         _State.signature = signature
         _State.dirty = True
-
-    # The render in progress follows the Light Mix by itself. A finished render does not: render
-    # again for it.
-    light_mix = _light_mix_signature(scene)
-    if light_mix != _State.light_mix:
-        _State.light_mix = light_mix
-        if not bpy.app.is_job_running('RENDER'):
-            _State.dirty = True
 
     # While paused, changes wait for the render to be resumed.
     if _State.dirty and not scene.render.render_pause:
@@ -160,7 +145,6 @@ def _start(scene):
 
     _State.scene_name = scene.name
     _State.signature = _signature(scene)
-    _State.light_mix = _light_mix_signature(scene)
     _State.dirty = True
     _State.stop_requested = False
 
