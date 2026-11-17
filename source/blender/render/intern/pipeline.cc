@@ -2805,7 +2805,10 @@ bool RE_light_mix_update(Scene *scene)
   bool changed = false;
   BLI_rw_mutex_lock(&re->resultmutex, THREAD_LOCK_WRITE);
   if (re->result && re->result->passes_allocated) {
-    changed = RE_render_result_light_mix(re->result, scene);
+    /* Not while rendering: the light group passes are not complete yet, and denoising them would
+     * hold the interface. */
+    const bool is_rendering = re->engine && (re->engine->flag & RE_ENGINE_RENDERING);
+    changed = RE_render_result_light_mix(re->result, scene, !is_rendering);
     if (changed) {
       /* The compositor reads the passes from the GPU. */
       render_result_free_gpu_texture_caches(re->result);

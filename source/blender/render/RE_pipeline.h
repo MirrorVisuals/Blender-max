@@ -78,7 +78,9 @@ struct RenderPass {
   /** Quick lookup. */
   int view_id;
 
-  char _pad0[4];
+  /** Light Mix: the pass (a light group pass) was denoised since the engine last wrote it. */
+  bool light_mix_denoised;
+  char _pad0[3];
 
   /**
    * Light Mix: the Combined pass as rendered, while the pass itself has the Light Mix applied
@@ -478,9 +480,11 @@ struct RenderPass *RE_pass_find_by_name(struct RenderLayer *rl,
  * pass as rendered plus `(weight - 1) x light group pass` for every light group, with the Light
  * Mix settings of the view layers of `scene` (an original scene). Keeps the Combined pass as
  * rendered aside the first time, so the mix can be changed again and again without rendering.
+ * With Denoise Light Groups, the light group passes are denoised first (once after the engine
+ * wrote them, and only when `allow_denoise`).
  * \return true when a Combined pass changed.
  */
-bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene);
+bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene, bool allow_denoise);
 /**
  * Apply the Light Mix settings of `scene` to its render result after they changed, see
  * #RE_render_result_light_mix. Main thread only.

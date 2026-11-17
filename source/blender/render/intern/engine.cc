@@ -1056,6 +1056,7 @@ static void engine_render_result_copy_previous(RenderResult *rr, const RenderRes
                  rp_prev.ibuf->float_data(),
                  sizeof(float) * size_t(rp.rectx) * size_t(rp.recty) * size_t(rp.channels));
           /* With the Light Mix, the pass as rendered too. */
+          rp.light_mix_denoised = rp_prev.light_mix_denoised;
           MEM_SAFE_DELETE(rp.light_mix_base);
           if (rp_prev.light_mix_base) {
             rp.light_mix_base = MEM_dupalloc(rp_prev.light_mix_base);
@@ -1228,7 +1229,8 @@ bool RE_engine_render(Render *re, bool do_all)
    * Afterwards the mix is applied again whenever its settings change, without rendering. */
   if ((re->r.scemode & R_BUTS_PREVIEW) == 0 && re->result && re->result->passes_allocated) {
     BLI_rw_mutex_lock(&re->resultmutex, THREAD_LOCK_WRITE);
-    RE_render_result_light_mix(re->result, re->scene);
+    /* Denoising takes a while: not for a render that was stopped (to start the next one). */
+    RE_render_result_light_mix(re->result, re->scene, !RE_engine_test_break(engine));
     BLI_rw_mutex_unlock(&re->resultmutex);
   }
 

@@ -44,6 +44,12 @@
 
 #include "GPU_texture.hh"
 
+#include "CLG_log.h"
+
+#ifdef WITH_OPENIMAGEDENOISE
+#  include <OpenImageDenoise/oidn.hpp>
+#endif
+
 #include "render_result.h"
 #include "render_types.h"
 
@@ -865,6 +871,8 @@ void render_result_merge(RenderResult *rr, RenderResult *rrpart)
                       rpass->ibuf->float_data_for_write(),
                       rpassp->ibuf->float_data_for_write(),
                       rpass->channels);
+        /* New pixels as rendered: denoise them again for the Light Mix. */
+        rpass->light_mix_denoised = false;
 
         /* Light Mix: keep the Combined pass as rendered up to date. Where neither has it, the
          * Combined pass itself is as rendered. */
@@ -1412,7 +1420,72 @@ bool RE_RenderPassIsColor(const RenderPass *render_pass)
 /** \name Light Mix
  * \{ */
 
-bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene)
+static CLG_LogRef LOG = {"render.light_mix"};
+
+#ifdef WITH_OPENIMAGEDENOISE
+/** Denoise a light group pass in place, guided by the albedo and normal passes when given. */
+static bool light_mix_denoise_pass(RenderPass &pass,
+                                   const RenderPass *albedo,
+                                   const RenderPass *normal)
+{
+  oidn::DeviceRef device = oidn::newDevice(oidn::DeviceType::CPU);
+  device.commit();
+
+  float *pixels = pass.ibuf->float_data_for_write();
+  const size_t width = size_t(pass.rectx);
+  const size_t height = size_t(pass.recty);
+  oidn::FilterRef filter = device.newFilter("RT");
+  filter.setImage(
+      "color", pixels, oidn::Format::Float3, width, height, 0, sizeof(float) * pass.channels);
+  filter.setImage(
+      "output", pixels, oidn::Format::Float3, width, height, 0, sizeof(float) * pass.channels);
+  if (albedo) {
+    filter.setImage("albedo",
+                    const_cast<float *>(albedo->ibuf->float_data()),
+                    oidn::Format::Float3,
+                    width,
+                    height,
+                    0,
+                    sizeof(float) * albedo->channels);
+    /* OIDN does not support the normal guide without the albedo one. */
+    if (normal) {
+      filter.setImage("normal",
+                      const_cast<float *>(normal->ibuf->float_data()),
+                      oidn::Format::Float3,
+                      width,
+                      height,
+                      0,
+                      sizeof(float) * normal->channels);
+    }
+  }
+  filter.set("hdr", true);
+  filter.commit();
+  filter.execute();
+
+  const char *message = nullptr;
+  if (device.getError(message) != oidn::Error::None) {
+    CLOG_WARN(&LOG, "Light Mix: could not denoise %s: %s", pass.fullname, message);
+    return false;
+  }
+  return true;
+}
+#endif
+
+/** A pass of the layer usable as denoising guide of `pass`, or null. */
+static const RenderPass *light_mix_guide_pass(RenderLayer &rl,
+                                              const RenderPass &pass,
+                                              const char *name)
+{
+  const RenderPass *guide = RE_pass_find_by_name(&rl, name, pass.view);
+  if (guide == nullptr || guide->ibuf == nullptr || guide->ibuf->float_data() == nullptr ||
+      guide->channels < 3 || guide->rectx != pass.rectx || guide->recty != pass.recty)
+  {
+    return nullptr;
+  }
+  return guide;
+}
+
+bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene, const bool allow_denoise)
 {
   if (rr == nullptr || scene == nullptr) {
     return false;
@@ -1438,19 +1511,34 @@ bool RE_render_result_light_mix(RenderResult *rr, const Scene *scene)
 
       Vector<Group> groups;
       if (use_light_mix) {
+        const bool use_denoise = allow_denoise &&
+                                 (view_layer->light_mix_flag & VIEW_LAYER_LIGHT_MIX_DENOISE);
         for (const ViewLayerLightgroup &lightgroup : view_layer->lightgroups) {
-          Group group;
-          BKE_view_layer_lightgroup_mix_weight(view_layer, &lightgroup, group.weight);
-          if (group.weight[0] == 1.0f && group.weight[1] == 1.0f && group.weight[2] == 1.0f) {
-            continue;
-          }
           char name[sizeof(RenderPass::name)];
           SNPRINTF(name, "%s_%s", RE_PASSNAME_COMBINED, lightgroup.name);
-          const RenderPass *group_pass = RE_pass_find_by_name(&rl, name, rpass.view);
+          RenderPass *group_pass = RE_pass_find_by_name(&rl, name, rpass.view);
           if (group_pass == nullptr || group_pass->ibuf == nullptr ||
               group_pass->ibuf->float_data() == nullptr || group_pass->channels < 3 ||
               group_pass->rectx != rpass.rectx || group_pass->recty != rpass.recty)
           {
+            continue;
+          }
+#ifdef WITH_OPENIMAGEDENOISE
+          if (use_denoise && !group_pass->light_mix_denoised) {
+            const RenderPass *albedo = light_mix_guide_pass(rl, *group_pass, "Denoising Albedo");
+            const RenderPass *normal = light_mix_guide_pass(rl, *group_pass, "Denoising Normal");
+            light_mix_denoise_pass(*group_pass, albedo, normal);
+            group_pass->light_mix_denoised = true;
+            group_pass->ibuf->userflags |= IB_DISPLAY_BUFFER_INVALID;
+          }
+#else
+          UNUSED_VARS(use_denoise);
+#endif
+          /* Every light group is denoised (above), so that changing the mix later is quick, but
+           * only the ones that change the image are mixed. */
+          Group group;
+          BKE_view_layer_lightgroup_mix_weight(view_layer, &lightgroup, group.weight);
+          if (group.weight[0] == 1.0f && group.weight[1] == 1.0f && group.weight[2] == 1.0f) {
             continue;
           }
           group.pixels = group_pass->ibuf->float_data();

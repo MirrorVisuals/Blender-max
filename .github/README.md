@@ -9,8 +9,9 @@ Blender-max
 
 An experimental fork of **Blender 5.2.3 LTS** that brings a 3ds Max style modifier workflow to
 Blender: editable modeling levels in the modifier stack, UVW Map and Unwrap modifiers, a solid
-Extrude Manifold, camera tilt correction, and a few rendering extras. Branch: `edit-poly-stack`. Experimental and unofficial: not affiliated
-with the Blender Foundation.
+Extrude Manifold, a Slice Plane, camera tilt correction, a V-Ray style frame buffer with
+interactive render and Light Mix, and a few more rendering extras. Branch: `edit-poly-stack`.
+Experimental and unofficial: not affiliated with the Blender Foundation.
 
 What is different from Blender 5.2.3
 ------------------------------------
@@ -170,6 +171,51 @@ When an area light is seen directly by the camera (or in sharp mirrors and clear
 option shows its whole surface at the brightness it has without Spread. The light it casts
 still uses Spread. It is in the light's Beam Shape panel and under Object > Visibility > Ray
 Visibility.
+
+### Frame buffer: interactive render (IPR)
+
+The Image Editor header (also the render window) gets the controls of the V-Ray frame buffer:
+
+- **Interactive Render:** renders the Render Result again whenever something in the render
+  changes (objects, materials, lights, the camera, the frame, the resolution or the region),
+  with the final render settings, so the result can be saved like any render. Persistent Data
+  is on meanwhile and Lock Interface off; both are put back when it stops.
+- **Pause** holds the render in progress, changes made meanwhile render on resume. **Stop**
+  ends it.
+- **Resolution %** menu, **Region** render (draw the region on the image: only it renders, the
+  rest keeps the previous render) and a **Render** button.
+- No black frame between one render and the next, and the display refreshes as in the viewport.
+
+### Cycles: Light Mix, as V-Ray LightMix
+
+Re-balances the light groups of a view layer without rendering again. It is in View Layer
+Properties > Light Mix, in a Light Mix tab of the Image Editor, 3D Viewport and Compositor
+sidebars, and in a Light Mix button of the Image Editor header.
+
+- **Scan Lights** builds the light groups and assigns them: linked duplicates and collection
+  instances share a group, real copies get their own. Options: grouping by object data, name
+  prefix or regex, a group prefix, the World, lights inside collection instances, emissive
+  objects (per material, per object or one group), and removing unused groups.
+- **Per light group:** On/Off, Solo, Value, Exposure and Tint, and Select Objects. A
+  **Master** Value, Exposure and Tint applies to all of them.
+- **Live everywhere:** in the rendered viewport, in the frame buffer while rendering, and on a
+  finished render: changing the mix afterwards mixes the Render Result again in milliseconds
+  (from the Combined pass as rendered, which is kept), and runs the compositor again.
+- **Denoise Light Groups** (off by default) denoises every light group pass of a finished
+  render once, guided by albedo and normal, so even large changes stay clean.
+- **Setups:** save the mix under a name in the scene, load it (light groups are matched by
+  name), update or remove it, and export or import it as a `.json` file.
+- **Bake Mix into Scene** writes the mix into the lights, World and emissive materials.
+  **Reset Mix**, **Clear All Light Groups** and **Quick Render** (low samples and resolution,
+  just to have something to mix) are there too.
+- **From the Light Mix add-on:** Import Light Mix Add-on Mix takes over its settings and
+  removes its compositor nodes. Disable the add-on afterwards.
+
+### Preferences: Scene Selector Position
+
+Interface > Editors > **Scene Selector Position** puts the Scene and View Layer selectors at
+the left of the Top Bar, before the menus, for layouts with the Outliner on the left. Right
+is the default, as in Blender.
 
 ### Build
 

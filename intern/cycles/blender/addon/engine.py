@@ -251,6 +251,10 @@ def list_render_passes(scene, srl):
         yield (n_("Denoising Normal"), "XYZ", 'VECTOR')
         yield (n_("Denoising Roughness"), "X", 'VALUE')
         yield (n_("Denoising Depth"), "Z", 'VALUE')
+    elif srl.use_light_mix and srl.use_light_mix_denoise and srl.lightgroups:
+        # Guides for denoising the light groups of the Light Mix.
+        yield (n_("Denoising Albedo"), "RGB", 'COLOR')
+        yield (n_("Denoising Normal"), "XYZ", 'VECTOR')
 
     # Custom AOV passes.
     for aov in srl.aovs:

@@ -5361,6 +5361,16 @@ void rna_def_view_layer_common(BlenderRNA *brna, StructRNA *srna, const bool sce
     RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
     RNA_def_property_update(prop, NC_WINDOW, "rna_LightMix_update");
 
+    prop = RNA_def_property(srna, "use_light_mix_denoise", PROP_BOOLEAN, PROP_NONE);
+    RNA_def_property_boolean_sdna(prop, nullptr, "light_mix_flag", VIEW_LAYER_LIGHT_MIX_DENOISE);
+    RNA_def_property_ui_text(prop,
+                             "Denoise Light Groups",
+                             "Denoise every light group pass of a finished render before mixing "
+                             "it, so that the mix stays clean when light groups are changed a lot "
+                             "(Cycles also writes the albedo and normal passes to guide it)");
+    RNA_def_property_update(
+        prop, NC_SCENE | ND_RENDER_OPTIONS, "rna_ViewLayer_use_light_mix_update");
+
     prop = RNA_def_property(srna, "active_lightgroup", PROP_POINTER, PROP_NONE);
     RNA_def_property_struct_type(prop, "Lightgroup");
     RNA_def_property_clear_flag(prop, PROP_EDITABLE);

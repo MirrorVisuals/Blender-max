@@ -242,6 +242,8 @@ enum eViewLayerLightgroup_MixFlag {
 enum eViewLayer_LightMixFlag {
   /** The master settings are set. View layers from older files have none: they read as neutral. */
   VIEW_LAYER_LIGHT_MIX_INITIALIZED = (1 << 0),
+  /** Denoise the light group passes of finished renders before mixing them. */
+  VIEW_LAYER_LIGHT_MIX_DENOISE = (1 << 1),
 };
 
 struct ViewLayerLightgroup {

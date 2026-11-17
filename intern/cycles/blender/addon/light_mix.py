@@ -19,18 +19,21 @@ workflow around it:
 
 from __future__ import annotations
 
+import json
 import re
 
 import bpy
 from bpy.app.translations import pgettext_tip as tip_
 from bpy.props import (
     BoolProperty,
+    CollectionProperty,
     EnumProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
 )
 from bpy.types import Operator, Panel, PropertyGroup, UIList
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 
 from .ui import CyclesButtonsPanel
 
@@ -39,8 +42,16 @@ from .ui import CyclesButtonsPanel
 # Settings
 # ---------------------------------------------------------------------------
 
+class CyclesLightMixSetup(PropertyGroup):
+    """A saved Light Mix: the settings of every light group and the master, see #setup_from_view_layer."""
+
+    name: StringProperty(name="Name", default="Setup")
+    data: StringProperty(name="Data", description="The mix, as JSON")
+
+
 class CyclesLightMixSettings(PropertyGroup):
-    """Scan and workflow options. The mix values live on the view layer and its light groups."""
+    """Scan and workflow options, and the saved setups. The mix itself lives on the view layer and its light
+    groups."""
 
     naming_mode: EnumProperty(
         name="Grouping",
@@ -126,6 +137,8 @@ class CyclesLightMixSettings(PropertyGroup):
         description="Show a Light Mix popover in the Image Editor header, which is also the header of the render "
         "window",
     )
+    setups: CollectionProperty(type=CyclesLightMixSetup)
+    active_setup_index: IntProperty(name="Active Setup")
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +832,280 @@ class CYCLES_OT_light_mix_quick_render(Operator):
 
 
 # ---------------------------------------------------------------------------
+# Setups: saved mixes
+# ---------------------------------------------------------------------------
+
+SETUP_FORMAT = "blender_light_mix"
+SETUP_VERSION = 1
+
+
+def setup_from_view_layer(view_layer):
+    """The Light Mix of a view layer as a plain dictionary (what a setup stores)."""
+    return {
+        "format": SETUP_FORMAT,
+        "version": SETUP_VERSION,
+        "master": {
+            "value": view_layer.light_mix_value,
+            "exposure": view_layer.light_mix_exposure,
+            "color": list(view_layer.light_mix_color),
+        },
+        "groups": {
+            lightgroup.name: {
+                "enabled": lightgroup.use_mix,
+                "solo": lightgroup.use_mix_solo,
+                "value": lightgroup.mix_value,
+                "exposure": lightgroup.mix_exposure,
+                "color": list(lightgroup.mix_color),
+            }
+            for lightgroup in view_layer.lightgroups
+        },
+    }
+
+
+def setup_parse(text):
+    """A setup dictionary from JSON, or raise ValueError."""
+    data = json.loads(text)
+    if not isinstance(data, dict) or data.get("format") != SETUP_FORMAT:
+        raise ValueError("not a Light Mix setup")
+    if not isinstance(data.get("groups", {}), dict):
+        raise ValueError("invalid light groups")
+    return data
+
+
+def _color(value, default=(1.0, 1.0, 1.0)):
+    try:
+        color = tuple(float(c) for c in value)
+    except (TypeError, ValueError):
+        return default
+    return color[:3] if len(color) >= 3 else default
+
+
+def setup_apply(view_layer, data, reset_missing=True):
+    """Apply a setup to a view layer, matching light groups by name.
+
+    Returns ``(matched, missing)``: the number of light groups that got settings from the setup, and the names
+    in the setup that the view layer has no light group for.
+    """
+    groups = data.get("groups", {})
+    lightgroups = view_layer.lightgroups
+    current = setup_from_view_layer(view_layer)["groups"]
+    neutral = {"enabled": True, "solo": False, "value": 1.0, "exposure": 0.0, "color": (1.0, 1.0, 1.0)}
+
+    settings = []
+    matched = 0
+    for lightgroup in lightgroups:
+        entry = groups.get(lightgroup.name)
+        if entry is not None:
+            matched += 1
+        else:
+            entry = neutral if reset_missing else current[lightgroup.name]
+        settings.append(entry)
+
+    # Set every light group at once: one property at a time would mix the render result again for each.
+    if settings:
+        lightgroups.foreach_set("use_mix", [bool(e.get("enabled", True)) for e in settings])
+        lightgroups.foreach_set("use_mix_solo", [bool(e.get("solo", False)) for e in settings])
+        lightgroups.foreach_set("mix_value", [max(0.0, float(e.get("value", 1.0))) for e in settings])
+        lightgroups.foreach_set("mix_exposure", [float(e.get("exposure", 0.0)) for e in settings])
+        lightgroups.foreach_set("mix_color", [c for e in settings for c in _color(e.get("color"))])
+
+    # Setting the master last mixes the render result (again) with all of it.
+    master = data.get("master", {})
+    view_layer.light_mix_color = _color(master.get("color"))
+    view_layer.light_mix_exposure = float(master.get("exposure", 0.0))
+    view_layer.light_mix_value = max(0.0, float(master.get("value", 1.0)))
+    if not view_layer.use_light_mix:
+        view_layer.use_light_mix = True
+
+    names = {lightgroup.name for lightgroup in lightgroups}
+    missing = [name for name in groups if name not in names]
+    return matched, missing
+
+
+def _report_apply(operator, name, matched, missing):
+    message = tip_("Loaded \"{:s}\": {:d} light group(s)").format(name, matched)
+    if missing:
+        message += tip_(", not in this view layer: {:s}").format(", ".join(sorted(missing)))
+        operator.report({'WARNING'}, message)
+    else:
+        operator.report({'INFO'}, message)
+
+
+def _unique_setup_name(settings, name):
+    names = {setup.name for setup in settings.setups}
+    if name not in names:
+        return name
+    index = 1
+    while "{:s}.{:03d}".format(name, index) in names:
+        index += 1
+    return "{:s}.{:03d}".format(name, index)
+
+
+def _active_setup(context):
+    settings = context.scene.cycles_light_mix
+    if 0 <= settings.active_setup_index < len(settings.setups):
+        return settings.setups[settings.active_setup_index]
+    return None
+
+
+class CYCLES_OT_light_mix_setup_save(CyclesLightMixOperator, Operator):
+    """Save the current Light Mix as a setup of the scene"""
+    bl_idname = "cycles.light_mix_setup_save"
+    bl_label = "Save Setup"
+
+    name: StringProperty(name="Name", default="Setup")
+
+    def invoke(self, context, _event):
+        self.name = _unique_setup_name(context.scene.cycles_light_mix, "Setup")
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        settings = context.scene.cycles_light_mix
+        setup = next((setup for setup in settings.setups if setup.name == self.name), None)
+        if setup is None:
+            setup = settings.setups.add()
+            setup.name = self.name or "Setup"
+        setup.data = json.dumps(setup_from_view_layer(context.view_layer))
+        settings.active_setup_index = list(settings.setups).index(setup)
+        self.report({'INFO'}, tip_("Saved setup \"{:s}\"").format(setup.name))
+        return {'FINISHED'}
+
+
+class CYCLES_OT_light_mix_setup_update(CyclesLightMixOperator, Operator):
+    """Store the current Light Mix in the active setup"""
+    bl_idname = "cycles.light_mix_setup_update"
+    bl_label = "Update Setup"
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and _active_setup(context) is not None
+
+    def execute(self, context):
+        setup = _active_setup(context)
+        setup.data = json.dumps(setup_from_view_layer(context.view_layer))
+        self.report({'INFO'}, tip_("Updated setup \"{:s}\"").format(setup.name))
+        return {'FINISHED'}
+
+
+class CYCLES_OT_light_mix_setup_load(CyclesLightMixOperator, Operator):
+    """Apply the active setup to the Light Mix (light groups are matched by name)"""
+    bl_idname = "cycles.light_mix_setup_load"
+    bl_label = "Load Setup"
+
+    reset_missing: BoolProperty(
+        name="Reset Other Groups",
+        default=True,
+        description="Return light groups that are not in the setup to neutral, instead of keeping their settings",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and _active_setup(context) is not None
+
+    def execute(self, context):
+        setup = _active_setup(context)
+        try:
+            data = setup_parse(setup.data)
+        except ValueError as ex:
+            self.report({'ERROR'}, tip_("Setup \"{:s}\" is invalid: {:s}").format(setup.name, str(ex)))
+            return {'CANCELLED'}
+        matched, missing = setup_apply(context.view_layer, data, self.reset_missing)
+        _report_apply(self, setup.name, matched, missing)
+        return {'FINISHED'}
+
+
+class CYCLES_OT_light_mix_setup_remove(CyclesLightMixOperator, Operator):
+    """Remove the active setup"""
+    bl_idname = "cycles.light_mix_setup_remove"
+    bl_label = "Remove Setup"
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and _active_setup(context) is not None
+
+    def execute(self, context):
+        settings = context.scene.cycles_light_mix
+        settings.setups.remove(settings.active_setup_index)
+        settings.active_setup_index = min(settings.active_setup_index, len(settings.setups) - 1)
+        return {'FINISHED'}
+
+
+class CYCLES_OT_light_mix_setup_move(CyclesLightMixOperator, Operator):
+    """Move the active setup up or down in the list"""
+    bl_idname = "cycles.light_mix_setup_move"
+    bl_label = "Move Setup"
+
+    direction: EnumProperty(items=(('UP', "Up", ""), ('DOWN', "Down", "")))
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and _active_setup(context) is not None
+
+    def execute(self, context):
+        settings = context.scene.cycles_light_mix
+        index = settings.active_setup_index
+        target = index - 1 if self.direction == 'UP' else index + 1
+        if not 0 <= target < len(settings.setups):
+            return {'CANCELLED'}
+        settings.setups.move(index, target)
+        settings.active_setup_index = target
+        return {'FINISHED'}
+
+
+class CYCLES_OT_light_mix_setup_export(CyclesLightMixOperator, Operator, ExportHelper):
+    """Save the current Light Mix to a file, to load it in other scenes and files"""
+    bl_idname = "cycles.light_mix_setup_export"
+    bl_label = "Export Setup"
+    bl_options = {'REGISTER'}
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+
+    def execute(self, context):
+        try:
+            with open(self.filepath, "w", encoding="utf-8") as fh:
+                json.dump(setup_from_view_layer(context.view_layer), fh, indent=2)
+        except OSError as ex:
+            self.report({'ERROR'}, tip_("Could not write the setup: {:s}").format(str(ex)))
+            return {'CANCELLED'}
+        self.report({'INFO'}, tip_("Exported the Light Mix to {:s}").format(self.filepath))
+        return {'FINISHED'}
+
+
+class CYCLES_OT_light_mix_setup_import(CyclesLightMixOperator, Operator, ImportHelper):
+    """Load a Light Mix from a file: it is applied, and added to the setups of the scene"""
+    bl_idname = "cycles.light_mix_setup_import"
+    bl_label = "Import Setup"
+
+    filename_ext = ".json"
+    filter_glob: StringProperty(default="*.json", options={'HIDDEN'})
+    reset_missing: BoolProperty(
+        name="Reset Other Groups",
+        default=True,
+        description="Return light groups that are not in the setup to neutral, instead of keeping their settings",
+    )
+
+    def execute(self, context):
+        import os
+        try:
+            with open(self.filepath, "r", encoding="utf-8") as fh:
+                data = setup_parse(fh.read())
+        except (OSError, ValueError) as ex:
+            self.report({'ERROR'}, tip_("Could not read the setup: {:s}").format(str(ex)))
+            return {'CANCELLED'}
+
+        settings = context.scene.cycles_light_mix
+        setup = settings.setups.add()
+        setup.name = _unique_setup_name(settings, os.path.splitext(os.path.basename(self.filepath))[0] or "Setup")
+        setup.data = json.dumps(data)
+        settings.active_setup_index = len(settings.setups) - 1
+
+        matched, missing = setup_apply(context.view_layer, data, self.reset_missing)
+        _report_apply(self, setup.name, matched, missing)
+        return {'FINISHED'}
+
+
+# ---------------------------------------------------------------------------
 # Interface
 # ---------------------------------------------------------------------------
 
@@ -884,6 +1171,8 @@ def draw_light_mix(layout, context):
         sub.prop(lightgroup, "mix_exposure", text="Exposure")
         sub.prop(lightgroup, "mix_color", text="Tint")
 
+    mix.prop(view_layer, "use_light_mix_denoise")
+
     box = mix.box()
     box.label(text="Master")
     sub = box.column(align=True)
@@ -898,6 +1187,33 @@ def draw_light_mix(layout, context):
     row = col.row(align=True)
     row.operator("cycles.light_mix_reset", icon='LOOP_BACK')
     row.operator("cycles.light_mix_clear_all", icon='TRASH')
+
+
+class CYCLES_UL_light_mix_setups(UIList):
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_prop, _index):
+        layout.prop(item, "name", text="", emboss=False, icon='PRESET')
+
+
+def draw_light_mix_setups(layout, context):
+    settings = context.scene.cycles_light_mix
+    row = layout.row()
+    row.template_list(
+        "CYCLES_UL_light_mix_setups", "light_mix_setups", settings,
+        "setups", settings, "active_setup_index", rows=3,
+    )
+    col = row.column(align=True)
+    col.operator("cycles.light_mix_setup_save", icon='ADD', text="")
+    col.operator("cycles.light_mix_setup_remove", icon='REMOVE', text="")
+    col.separator()
+    col.operator("cycles.light_mix_setup_move", icon='TRIA_UP', text="").direction = 'UP'
+    col.operator("cycles.light_mix_setup_move", icon='TRIA_DOWN', text="").direction = 'DOWN'
+
+    row = layout.row(align=True)
+    row.operator("cycles.light_mix_setup_load", icon='CHECKMARK', text="Load")
+    row.operator("cycles.light_mix_setup_update", icon='FILE_REFRESH', text="Update")
+    row = layout.row(align=True)
+    row.operator("cycles.light_mix_setup_import", icon='IMPORT', text="Import")
+    row.operator("cycles.light_mix_setup_export", icon='EXPORT', text="Export")
 
 
 def draw_light_mix_options(layout, context):
@@ -949,6 +1265,13 @@ class CyclesLightMixPanel:
         draw_light_mix(self.layout, context)
 
 
+class CyclesLightMixSetupsPanel:
+    bl_label = "Setups"
+
+    def draw(self, context):
+        draw_light_mix_setups(self.layout, context)
+
+
 class CyclesLightMixOptionsPanel:
     bl_label = "Options"
     bl_options = {'DEFAULT_CLOSED'}
@@ -965,6 +1288,11 @@ class CYCLES_VIEW_LAYER_PT_light_mix(CyclesLightMixPanel, CyclesButtonsPanel, Pa
     )
 
 
+class CYCLES_VIEW_LAYER_PT_light_mix_setups(CyclesLightMixSetupsPanel, CyclesButtonsPanel, Panel):
+    bl_context = "view_layer"
+    bl_parent_id = "CYCLES_VIEW_LAYER_PT_light_mix"
+
+
 class CYCLES_VIEW_LAYER_PT_light_mix_options(CyclesLightMixOptionsPanel, CyclesButtonsPanel, Panel):
     bl_context = "view_layer"
     bl_parent_id = "CYCLES_VIEW_LAYER_PT_light_mix"
@@ -974,6 +1302,13 @@ class CYCLES_IMAGE_PT_light_mix(CyclesLightMixPanel, Panel):
     bl_space_type = 'IMAGE_EDITOR'
     bl_region_type = 'UI'
     bl_category = "Light Mix"
+
+
+class CYCLES_IMAGE_PT_light_mix_setups(CyclesLightMixSetupsPanel, Panel):
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Light Mix"
+    bl_parent_id = "CYCLES_IMAGE_PT_light_mix"
 
 
 class CYCLES_IMAGE_PT_light_mix_options(CyclesLightMixOptionsPanel, Panel):
@@ -998,12 +1333,22 @@ class CYCLES_IMAGE_PT_light_mix_popover(Panel):
         layout = self.layout
         layout.prop(context.view_layer, "use_light_mix")
         draw_light_mix(layout, context)
+        layout.separator()
+        layout.label(text="Setups")
+        draw_light_mix_setups(layout, context)
 
 
 class CYCLES_VIEW3D_PT_light_mix(CyclesLightMixPanel, Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "Light Mix"
+
+
+class CYCLES_VIEW3D_PT_light_mix_setups(CyclesLightMixSetupsPanel, Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Light Mix"
+    bl_parent_id = "CYCLES_VIEW3D_PT_light_mix"
 
 
 class CYCLES_VIEW3D_PT_light_mix_options(CyclesLightMixOptionsPanel, Panel):
@@ -1034,6 +1379,7 @@ def draw_image_header_button(self, context):
 
 
 classes = (
+    CyclesLightMixSetup,
     CyclesLightMixSettings,
     CYCLES_OT_light_mix_scan,
     CYCLES_OT_light_mix_select,
@@ -1042,13 +1388,24 @@ classes = (
     CYCLES_OT_light_mix_clear_all,
     CYCLES_OT_light_mix_import_addon,
     CYCLES_OT_light_mix_quick_render,
+    CYCLES_OT_light_mix_setup_save,
+    CYCLES_OT_light_mix_setup_update,
+    CYCLES_OT_light_mix_setup_load,
+    CYCLES_OT_light_mix_setup_remove,
+    CYCLES_OT_light_mix_setup_move,
+    CYCLES_OT_light_mix_setup_export,
+    CYCLES_OT_light_mix_setup_import,
     CYCLES_UL_light_mix,
+    CYCLES_UL_light_mix_setups,
     CYCLES_VIEW_LAYER_PT_light_mix,
+    CYCLES_VIEW_LAYER_PT_light_mix_setups,
     CYCLES_VIEW_LAYER_PT_light_mix_options,
     CYCLES_IMAGE_PT_light_mix,
+    CYCLES_IMAGE_PT_light_mix_setups,
     CYCLES_IMAGE_PT_light_mix_options,
     CYCLES_IMAGE_PT_light_mix_popover,
     CYCLES_VIEW3D_PT_light_mix,
+    CYCLES_VIEW3D_PT_light_mix_setups,
     CYCLES_VIEW3D_PT_light_mix_options,
     CYCLES_NODE_PT_light_mix,
 )

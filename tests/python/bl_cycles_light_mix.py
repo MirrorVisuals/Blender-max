@@ -7,6 +7,7 @@
 # The renders use the same seed, so they only differ by the mix: removing a group and doubling it
 # are exact sums of the same samples.
 # ./blender.bin --background --factory-startup --python tests/python/bl_cycles_light_mix.py
+import json
 import sys
 import os
 import bpy
@@ -208,6 +209,61 @@ group_a.use_mix = False
 ok, worst = close(result_pixels("off"), base)
 check(ok, "turning Light Mix off after the render gives the render as rendered (worst %.2e)" % worst)
 
+print("Denoise Light Groups")
+check(not view_layer.use_light_mix_denoise, "Denoise Light Groups is off by default")
+
+
+def roughness(px, width):
+    """Mean difference of neighboring pixels: the noise of an image."""
+    total = 0.0
+    count = 0
+    for i in range(0, len(px) - 4, 4):
+        if (i // 4) % width == width - 1:
+            continue
+        total += abs(px[i] - px[i + 4]) + abs(px[i + 1] - px[i + 5]) + abs(px[i + 2] - px[i + 6])
+        count += 1
+    return total / count
+
+
+if getattr(bpy.app.build_options, "openimagedenoise", True):
+    size = 64
+    scene.render.resolution_x = size
+    scene.render.resolution_y = size
+    scene.cycles.samples = 4
+    scene.cycles.use_denoising = True
+    scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+    for name in ("A", "B"):
+        bpy.data.lights[name].shadow_soft_size = 1.5
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.0, 0.0, 0.6))
+    occluder = bpy.context.object
+
+    reset()
+    view_layer.use_light_mix_denoise = False
+    bpy.ops.render.render()
+    group_a.use_mix = False
+    noisy = roughness(result_pixels("denoise_off"), size)
+
+    view_layer.use_light_mix_denoise = True
+    after = roughness(result_pixels("denoise_after"), size)
+    check(after < noisy * 0.8, "turning it on denoises the finished render (%.4f < %.4f)" % (after, noisy))
+
+    reset()
+    bpy.ops.render.render()
+    group_a.use_mix = False
+    clean = roughness(result_pixels("denoise_on"), size)
+    check(clean < noisy * 0.8, "a render with it on mixes clean light groups (%.4f < %.4f)" % (clean, noisy))
+
+    view_layer.use_light_mix_denoise = False
+    bpy.data.objects.remove(occluder)
+    for name in ("A", "B"):
+        bpy.data.lights[name].shadow_soft_size = 0.25
+    scene.cycles.use_denoising = False
+    scene.cycles.samples = 8
+    scene.render.resolution_x = RES
+    scene.render.resolution_y = RES
+else:
+    print("  skip  built without OpenImageDenoise")
+
 print("Bake")
 reset()
 group_a.mix_value = 0.5
@@ -244,6 +300,70 @@ check(viewer.inputs[0].is_linked and viewer.inputs[0].links[0].from_node == rend
       "what they fed gets the render again")
 del scene["lightmix"]
 scene.compositing_node_group = None
+
+print("Setups")
+reset()
+settings = scene.cycles_light_mix
+group_a.mix_value = 2.0
+group_a.mix_color = (1.0, 0.5, 0.25)
+group_b.use_mix = False
+group_b.mix_exposure = -1.5
+view_layer.light_mix_exposure = 0.5
+bpy.ops.cycles.light_mix_setup_save(name="Warm")
+check(len(settings.setups) == 1 and settings.setups[0].name == "Warm", "a setup is saved under its name")
+
+reset()
+group_b.use_mix_solo = True
+bpy.ops.cycles.light_mix_setup_save(name="Solo B")
+check(len(settings.setups) == 2, "a second setup")
+
+settings.active_setup_index = 0
+bpy.ops.cycles.light_mix_setup_load()
+check(abs(group_a.mix_value - 2.0) < 1e-6 and tuple(group_a.mix_color) == (1.0, 0.5, 0.25),
+      "loading restores the value and tint of A")
+check(not group_b.use_mix and abs(group_b.mix_exposure + 1.5) < 1e-6, "and B off with its exposure")
+check(not group_b.use_mix_solo, "and no solo")
+check(abs(view_layer.light_mix_exposure - 0.5) < 1e-6, "and the master")
+check(abs(group_a.mix_weight[0] - 2.0 * 2 ** 0.5) < 1e-4, "the weight follows the loaded setup")
+
+settings.active_setup_index = 1
+bpy.ops.cycles.light_mix_setup_load()
+check(group_b.use_mix_solo and abs(group_a.mix_value - 1.0) < 1e-6, "loading the other setup")
+
+group_a.mix_value = 3.0
+bpy.ops.cycles.light_mix_setup_update()
+group_a.mix_value = 1.0
+bpy.ops.cycles.light_mix_setup_load()
+check(abs(group_a.mix_value - 3.0) < 1e-6, "Update stores the current mix in the active setup")
+
+path = os.path.join(bpy.app.tempdir, "light_mix_setup.json")
+settings.active_setup_index = 0
+bpy.ops.cycles.light_mix_setup_load()
+bpy.ops.cycles.light_mix_setup_export(filepath=path)
+reset()
+bpy.ops.cycles.light_mix_setup_import(filepath=path)
+check(len(settings.setups) == 3 and settings.setups[2].name ==
+      "light_mix_setup", "import adds a setup named after the file")
+check(abs(group_a.mix_value - 2.0) < 1e-6 and not group_b.use_mix, "import applies the mix")
+
+group_a.mix_value = 5.0
+group_b.mix_value = 5.0
+settings.active_setup_index = 1
+bpy.ops.cycles.light_mix_setup_load(reset_missing=False)
+check(abs(group_a.mix_value - 3.0) < 1e-6, "groups in the setup are loaded")
+data = json.loads(settings.setups[1].data)
+del data["groups"]["B"]
+data["groups"]["Missing"] = {"value": 2.0}
+settings.setups[1].data = json.dumps(data)
+group_b.mix_value = 5.0
+bpy.ops.cycles.light_mix_setup_load(reset_missing=False)
+check(abs(group_b.mix_value - 5.0) < 1e-6, "without Reset Other Groups, a group not in the setup is kept")
+bpy.ops.cycles.light_mix_setup_load(reset_missing=True)
+check(abs(group_b.mix_value - 1.0) < 1e-6, "with it, it returns to neutral")
+
+bpy.ops.cycles.light_mix_setup_remove()
+check(len(settings.setups) == 2, "Remove deletes the active setup")
+reset()
 
 print("Scan")
 for lightgroup in list(view_layer.lightgroups):
