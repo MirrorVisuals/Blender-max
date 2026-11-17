@@ -526,6 +526,12 @@ void BlenderDisplayDriver::update_end()
   gpu_context_disable();
 
   has_update_cond_.notify_all();
+
+  if (background_) {
+    /* The display has pixels of this render: an interactive render shows the previous result
+     * until now. */
+    RE_engine_tag_display_ready(&b_engine_);
+  }
 }
 
 /* --------------------------------------------------------------------

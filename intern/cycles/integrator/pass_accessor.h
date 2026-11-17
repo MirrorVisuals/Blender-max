@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "integrator/light_mix.h"
 #include "scene/pass.h"
 #include "util/half.h"
 
@@ -41,6 +42,10 @@ class PassAccessor {
     bool use_approximate_shadow_catcher_background = false;
 
     bool show_active_pixels = false;
+
+    /* Light Mix applied to the combined pass, or null. Has to stay valid while the accessor is
+     * used. */
+    const LightMix *light_mix = nullptr;
   };
 
   class Destination {

@@ -736,10 +736,51 @@ void PathTrace::flush_display()
   display_->flush();
 }
 
+bool PathTrace::set_light_mix(const LightMix &light_mix)
+{
+  const thread_scoped_lock lock(light_mix_mutex_);
+  if (light_mix_ == light_mix) {
+    return false;
+  }
+  light_mix_ = light_mix;
+  return true;
+}
+
+LightMix PathTrace::get_light_mix() const
+{
+  const thread_scoped_lock lock(light_mix_mutex_);
+  return light_mix_;
+}
+
+void PathTrace::refresh_display()
+{
+  if (get_num_samples_in_buffer() == 0) {
+    /* Nothing rendered yet. */
+    return;
+  }
+
+  RenderWork render_work;
+  render_work.display.update = true;
+  render_work.display.use_denoised_result = render_state_.has_denoised_result;
+  update_display(render_work);
+}
+
 void PathTrace::update_display(const RenderWork &render_work)
 {
   if (!render_work.display.update) {
     return;
+  }
+
+  /* The Light Mix can change from another thread: use a copy for this update. */
+  {
+    const thread_scoped_lock lock(light_mix_mutex_);
+    light_mix_display_ = light_mix_;
+  }
+  for (auto &&path_trace_work : path_trace_works_) {
+    path_trace_work->set_light_mix(&light_mix_display_);
+  }
+  if (big_tile_denoise_work_) {
+    big_tile_denoise_work_->set_light_mix(&light_mix_display_);
   }
 
   if (!display_ && !output_driver_) {

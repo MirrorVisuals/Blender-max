@@ -463,6 +463,19 @@ bool Session::run_wait_for_work(const RenderWork &render_work)
       break;
     }
 
+    if (display_refresh_requested_) {
+      /* Light Mix changed: show it on what is rendered so far. */
+      display_refresh_requested_ = false;
+      pause_lock.unlock();
+      {
+        const thread_scoped_lock buffers_lock(buffers_mutex_);
+        path_trace_->refresh_display();
+      }
+      progress.set_update();
+      pause_lock.lock();
+      continue;
+    }
+
     const std::chrono::milliseconds wait_time = eviction_manager_.wait_time(!render_work);
     if (wait_time == std::chrono::milliseconds::zero()) {
       /* Break out of the loop for cache eviction. */
@@ -629,6 +642,20 @@ void Session::set_time_limit(const double time_limit)
     new_work_added_ = true;
   }
 
+  pause_cond_.notify_all();
+}
+
+void Session::set_light_mix(const LightMix &light_mix)
+{
+  if (!path_trace_->set_light_mix(light_mix)) {
+    return;
+  }
+  /* While rendering, the next display update uses the new mix. When waiting (finished or paused)
+   * there is no next update: wake up the render thread to update the display. */
+  {
+    const thread_scoped_lock pause_lock(pause_mutex_);
+    display_refresh_requested_ = true;
+  }
   pause_cond_.notify_all();
 }
 

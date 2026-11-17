@@ -392,7 +392,23 @@ ccl_device_inline void film_get_pass_pixel_combined(
 
   const ccl_global float *in = buffer + kfilm_convert->pass_offset;
 
-  const float3 color = make_float3(in[0], in[1], in[2]) * scale_exposure;
+  float3 color = make_float3(in[0], in[1], in[2]);
+
+  /* Light Mix: the combined pass has every light group once, add each again with its weight minus
+   * one. Light group passes are filtered and scaled as the combined pass. */
+  for (int i = 0; i < kfilm_convert->light_mix_num; i++) {
+    const int offset = kfilm_convert->light_mix_offset[i];
+    if (offset == PASS_UNUSED) {
+      continue;
+    }
+    const ccl_global float *in_group = buffer + offset;
+    const float3 weight = make_float3(kfilm_convert->light_mix_weight[i * 3 + 0],
+                                      kfilm_convert->light_mix_weight[i * 3 + 1],
+                                      kfilm_convert->light_mix_weight[i * 3 + 2]);
+    color += (weight - one_float3()) * make_float3(in_group[0], in_group[1], in_group[2]);
+  }
+  color *= scale_exposure;
+
   const float alpha = in[3] * scale;
 
   pixel[0] = color.x;

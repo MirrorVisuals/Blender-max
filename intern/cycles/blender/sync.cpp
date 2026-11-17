@@ -4,12 +4,14 @@
 
 #include "BKE_appdir.hh"
 #include "BKE_geometry_set.hh"
+#include "BKE_layer.hh"
 #include "BKE_object_types.hh"
 #include "BKE_scene.hh"
 #include "DEG_depsgraph_query.hh"
 #include "DNA_scene_types.h"
 #include "DNA_userdef_types.h"
 #include "DNA_world_types.h"
+#include "RE_pipeline.h"
 #include "RNA_prototypes.hh"
 #include "RNA_types.hh"
 
@@ -620,6 +622,7 @@ void BlenderSync::sync_film(blender::ViewLayer &b_view_layer,
     const BlenderViewportParameters new_viewport_parameters(b_screen, b_v3d, use_developer_ui);
     film->set_display_pass(new_viewport_parameters.display_pass);
     film->set_show_active_pixels(new_viewport_parameters.show_active_pixels);
+    sync_viewport_light_mix_passes(b_view_layer);
   }
 
   film->set_exposure(get_float(cscene, "film_exposure"));
@@ -821,6 +824,42 @@ static Pass *pass_add(Scene *scene,
   pass->set_mode(mode);
 
   return pass;
+}
+
+void BlenderSync::sync_viewport_light_mix_passes(blender::ViewLayer &b_view_layer)
+{
+  /* Light group passes are only needed in the viewport for the Light Mix. Only change the passes
+   * when the light groups change, as that renders again. */
+  vector<ustring> wanted;
+  if ((b_view_layer.flag & blender::VIEW_LAYER_USE_LIGHT_MIX) != 0) {
+    for (blender::ViewLayerLightgroup &b_lightgroup : b_view_layer.lightgroups) {
+      wanted.push_back(ustring(b_lightgroup.name));
+    }
+  }
+
+  vector<ustring> existing;
+  set<Pass *> existing_passes;
+  const vector<Pass *> &scene_passes = scene->passes;
+  for (Pass *pass : scene_passes) {
+    if (!pass->get_lightgroup().empty()) {
+      existing.push_back(pass->get_lightgroup());
+      existing_passes.insert(pass);
+    }
+  }
+  if (existing == wanted) {
+    return;
+  }
+
+  if (!existing_passes.empty()) {
+    scene->delete_nodes(existing_passes);
+  }
+  for (const ustring &name : wanted) {
+    Pass *pass = scene->create_node<Pass>();
+    pass->set_type(PASS_COMBINED);
+    pass->set_name(ustring(string_printf("Combined_%s", name.c_str())));
+    pass->set_mode(PassMode::NOISY);
+    pass->set_lightgroup(name);
+  }
 }
 
 void BlenderSync::sync_render_passes(blender::RenderLayer &b_rlay,
@@ -1025,6 +1064,29 @@ SceneParams BlenderSync::get_scene_params(blender::UserDef &b_preferences,
 
 /* Session Parameters */
 
+LightMix BlenderSync::get_light_mix(blender::Scene &b_scene_orig, const char *view_layer_name)
+{
+  LightMix light_mix;
+  /* Read from the original scene: the settings are changed without a dependency graph update,
+   * and the evaluated scene of a final render is freed while rendering. */
+  blender::ViewLayer *b_view_layer = blender::BKE_view_layer_find(&b_scene_orig, view_layer_name);
+  if (b_view_layer == nullptr || (b_view_layer->flag & blender::VIEW_LAYER_USE_LIGHT_MIX) == 0) {
+    return light_mix;
+  }
+  for (blender::ViewLayerLightgroup &b_lightgroup : b_view_layer->lightgroups) {
+    float weight[3];
+    blender::BKE_view_layer_lightgroup_mix_weight(&b_lightgroup, weight);
+    if (weight[0] == 1.0f && weight[1] == 1.0f && weight[2] == 1.0f) {
+      continue;
+    }
+    LightMix::Group group;
+    group.name = ustring(b_lightgroup.name);
+    group.weight = make_float3(weight[0], weight[1], weight[2]);
+    light_mix.groups.push_back(group);
+  }
+  return light_mix;
+}
+
 bool BlenderSync::get_session_pause(blender::Scene &b_scene, bool background)
 {
   blender::PointerRNA scene_rna_ptr = RNA_id_pointer_create(&b_scene.id);
@@ -1055,6 +1117,12 @@ SessionParams BlenderSync::get_session_params(blender::RenderEngine &b_engine,
   /* Headless and background rendering. */
   params.headless = BlenderSession::headless;
   params.background = background;
+
+  /* Interactive render in the render window: the render is started again after every change, so
+   * show its progress as the viewport does. Needs the display driver. */
+  params.background_interactive = background && !BlenderSession::headless &&
+                                  (b_engine.flag & blender::RE_ENGINE_PREVIEW) == 0 &&
+                                  blender::RE_render_keep_result_get();
 
   /* Device */
   params.threads = blender_device_threads(b_scene);

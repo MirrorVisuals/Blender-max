@@ -76,33 +76,37 @@ class Instance : public DrawEngine {
       void *lock;
       ImBuf *buffer = BKE_image_acquire_ibuf_gpu(
           this->state.image, space_->get_image_user(), &lock);
-      BLI_SCOPED_DEFER([&]() { BKE_image_release_ibuf(this->state.image, buffer, lock); });
 
       /* The image buffer already has a GPU texture, so use image space drawing. */
       if (buffer && buffer->gpu.texture) {
-        return std::make_unique<ImageSpaceDrawingMode>(*this, buffer->gpu.texture);
+        gpu::Texture *texture = buffer->gpu.texture;
+        BKE_image_release_ibuf(this->state.image, buffer, lock);
+        return std::make_unique<ImageSpaceDrawingMode>(*this, texture);
       }
 
-      /* Buffer does not exist or image will not fit in a GPU texture, use screen space drawing. */
-      if (!buffer || (!buffer->float_data() && !buffer->byte_data()) ||
-          !GPU_is_safe_texture_size(buffer->x, buffer->y))
-      {
-        return std::make_unique<ScreenSpaceDrawingMode>(*this);
-      }
-
-      /* GPU drawing will limit image resolution due to the GPU back-end having a lower maximum
+      /* Buffer does not exist or image will not fit in a GPU texture, use screen space drawing.
+       *
+       * GPU drawing will limit image resolution due to the GPU back-end having a lower maximum
        * texture size or a resolution limit in the preferences, so use screen space drawing to get
        * the full resolution. */
-      if (GPU_texture_size_with_limit(buffer->x) != buffer->x ||
-          GPU_texture_size_with_limit(buffer->y) != buffer->y)
-      {
+      const bool use_screen_space = !buffer || (!buffer->float_data() && !buffer->byte_data()) ||
+                                    !GPU_is_safe_texture_size(buffer->x, buffer->y) ||
+                                    GPU_texture_size_with_limit(buffer->x) != buffer->x ||
+                                    GPU_texture_size_with_limit(buffer->y) != buffer->y;
+
+      /* Release the buffer before getting the GPU texture: for a render result the buffer holds
+       * the viewer lock, and the partial update of the texture acquires the buffer again, which
+       * would wait for that lock forever (a render in progress keeps sending partial updates). */
+      BKE_image_release_ibuf(this->state.image, buffer, lock);
+
+      if (use_screen_space) {
         return std::make_unique<ScreenSpaceDrawingMode>(*this);
       }
 
       /* Image can fit in a GPU texture, use image space drawing. */
       BKE_image_ensure_gpu_texture(this->state.image, space_->get_image_user());
-      gpu::Texture *texture = BKE_image_get_gpu_viewer_texture(
-          this->state.image, space_->get_image_user(), buffer);
+      gpu::Texture *texture = BKE_image_get_gpu_viewer_texture(this->state.image,
+                                                               space_->get_image_user());
       return std::make_unique<ImageSpaceDrawingMode>(*this, texture);
     }
 

@@ -15,6 +15,7 @@
 #include "CLG_log.h"
 
 #include "BLI_listbase.h"
+#include "BLI_math_vector.h"
 #include "BLI_mempool.h"
 #include "BLI_string.h"
 #include "BLI_string_utf8.h"
@@ -2749,6 +2750,31 @@ ViewLayerLightgroup *BKE_view_layer_add_lightgroup(ViewLayer *view_layer, const 
   viewlayer_lightgroup_active_set(view_layer, lightgroup);
   viewlayer_lightgroup_make_name_unique(view_layer, lightgroup);
   return lightgroup;
+}
+
+void BKE_view_layer_lightgroup_mix_ensure(ViewLayerLightgroup *lightgroup)
+{
+  if (lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) {
+    return;
+  }
+  copy_v3_fl(lightgroup->mix_color, 1.0f);
+  lightgroup->mix_value = 1.0f;
+  lightgroup->mix_exposure = 0.0f;
+  lightgroup->mix_flag = LIGHTGROUP_MIX_INITIALIZED;
+}
+
+void BKE_view_layer_lightgroup_mix_weight(const ViewLayerLightgroup *lightgroup, float r_weight[3])
+{
+  if ((lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) == 0) {
+    copy_v3_fl(r_weight, 1.0f);
+    return;
+  }
+  if (lightgroup->mix_flag & LIGHTGROUP_MIX_MUTE) {
+    zero_v3(r_weight);
+    return;
+  }
+  const float gain = lightgroup->mix_value * exp2f(lightgroup->mix_exposure);
+  mul_v3_v3fl(r_weight, lightgroup->mix_color, gain);
 }
 
 void BKE_view_layer_remove_lightgroup(ViewLayer *view_layer, ViewLayerLightgroup *lightgroup)

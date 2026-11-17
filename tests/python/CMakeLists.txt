@@ -691,6 +691,11 @@ if(WITH_CYCLES)
     cycles_light_attenuation
     --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_light_attenuation.py
   )
+
+  add_blender_test(
+    cycles_light_mix
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_light_mix.py
+  )
 endif()
 
 add_blender_test(

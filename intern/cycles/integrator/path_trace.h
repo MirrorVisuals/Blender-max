@@ -115,6 +115,15 @@ class PathTrace {
   /* Flush outstanding display commands before ending the render loop. */
   void flush_display();
 
+  /* Set the Light Mix applied to the combined pass, on display and in the render result.
+   * Can be called from any thread. Returns true when it changed. */
+  bool set_light_mix(const LightMix &light_mix);
+  LightMix get_light_mix() const;
+
+  /* Update the display from the render buffers as they are, without rendering, for example after
+   * the Light Mix changed. To be called from the thread that renders, between renders. */
+  void refresh_display();
+
   /* Cancel rendering process as soon as possible, without waiting for full tile to be sampled.
    * Used in cases like reset of render session.
    *
@@ -292,6 +301,12 @@ class PathTrace {
 
   /* Denoiser device descriptor which holds the denoised big tile for multi-device workloads. */
   unique_ptr<PathTraceWork> big_tile_denoise_work_;
+
+  /* Light Mix as last set, guarded by the mutex, and the copy the display update uses (only
+   * accessed by the thread that renders). */
+  mutable thread_mutex light_mix_mutex_;
+  LightMix light_mix_;
+  LightMix light_mix_display_;
 
 #if defined(WITH_PATH_GUIDING)
   /* Guiding related attributes */

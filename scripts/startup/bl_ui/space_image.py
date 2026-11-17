@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: GPL-2.0-or-later
 
+import bpy
 from bpy.types import (
     AssetShelf,
     Header,
@@ -802,6 +803,18 @@ class _draw_tool_settings_context_mode:
         brush_basic_texpaint_settings(layout, context, brush, compact=True)
 
 
+class IMAGE_MT_render_resolution_percentage(Menu):
+    bl_label = "Render Resolution"
+    bl_description = "Resolution of the next render, as a percentage of the scene's resolution"
+
+    def draw(self, _context):
+        layout = self.layout
+        for percentage in (10, 25, 50, 75, 100, 110, 125, 150, 200):
+            props = layout.operator("wm.context_set_int", text="{:d}%".format(percentage))
+            props.data_path = "scene.render.resolution_percentage"
+            props.value = percentage
+
+
 class IMAGE_HT_header(Header):
     bl_space_type = 'IMAGE_EDITOR'
 
@@ -923,6 +936,42 @@ class IMAGE_HT_header(Header):
 
         if not show_render:
             layout.prop(sima, "use_image_pin", text="", emboss=False)
+        else:
+            # Render controls, as in a frame buffer: resolution, region and render.
+            render = context.scene.render
+            row = layout.row(align=True)
+            row.menu(
+                "IMAGE_MT_render_resolution_percentage",
+                text="{:d}%".format(render.resolution_percentage),
+            )
+            # The region is drawn in the image, not in the header.
+            row.operator_context = 'INVOKE_REGION_WIN'
+            row.operator("image.render_border", text="", icon='BORDERMOVE')
+            if render.use_border:
+                row.operator("image.clear_render_border", text="", icon='X')
+            row.operator_context = 'INVOKE_DEFAULT'
+            row.operator("render.render", text="", icon='RENDER_STILL')
+
+            # Interactive render, pause and stop.
+            from bl_operators.render_interactive import is_active as is_interactive_render
+            is_interactive = is_interactive_render()
+            is_rendering = bpy.app.is_job_running('RENDER')
+            row = layout.row(align=True)
+            row.operator(
+                "render.interactive",
+                text="",
+                icon='SHADING_RENDERED',
+                depress=is_interactive,
+            )
+            sub = row.row(align=True)
+            sub.active = is_interactive or is_rendering
+            sub.prop(
+                render,
+                "render_pause",
+                text="",
+                icon='PLAY' if render.render_pause else 'PAUSE',
+            )
+            row.operator("render.render_stop", text="", icon='CANCEL')
 
         layout.separator_spacer()
 
@@ -1840,6 +1889,7 @@ class IMAGE_AST_brush_paint(ImageAssetShelf, AssetShelf):
 classes = (
     IMAGE_MT_view,
     IMAGE_MT_view_zoom,
+    IMAGE_MT_render_resolution_percentage,
     IMAGE_MT_select,
     IMAGE_MT_select_all_by_trait,
     IMAGE_MT_select_linked,

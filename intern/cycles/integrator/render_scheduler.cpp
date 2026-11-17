@@ -21,6 +21,7 @@ CCL_NAMESPACE_BEGIN
 RenderScheduler::RenderScheduler(TileManager &tile_manager, const SessionParams &params)
     : headless_(params.headless),
       background_(params.background),
+      background_interactive_(params.background && params.background_interactive),
       pixel_size_(params.pixel_size),
       tile_manager_(tile_manager),
       default_start_resolution_divider_(params.use_resolution_divider ? pixel_size_ * 8 : 0)
@@ -788,7 +789,7 @@ double RenderScheduler::guess_display_update_interval_in_seconds_for_num_samples
     return 30.0;
   }
 
-  if (background_) {
+  if (background_ && !background_interactive_) {
     if (num_rendered_samples < 32) {
       return 1.0;
     }
@@ -913,7 +914,7 @@ int RenderScheduler::get_num_samples_to_path_trace() const
       /* In the headless (command-line) render "over-scheduling" is not as bad, as it ensures the
        * best possible render time. */
     }
-    else if (background_) {
+    else if (background_ && !background_interactive_) {
       /* For the first few seconds prefer quicker updates, giving it a better chance for artists
        * to cancel render early on when they notice something is wrong. After that increase the
        * update times a lot, giving the best possible performance on a complicated scenes like
@@ -1035,7 +1036,7 @@ bool RenderScheduler::work_need_denoise(bool &delayed, bool &ready_to_display)
     return true;
   }
 
-  if (background_) {
+  if (background_ && !background_interactive_) {
     /* Background render, only denoise when rendering the last sample. */
     /* TODO(sergey): Follow similar logic to viewport, giving an overview of how final denoised
      * image looks like even for the background rendering. */

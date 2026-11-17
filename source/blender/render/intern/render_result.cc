@@ -363,6 +363,22 @@ RenderResult *render_result_new(Render *re,
   return rr;
 }
 
+bool render_result_is_kept_uncropped(const Render *re)
+{
+  if (!RE_render_keep_result_get() || re->result == nullptr) {
+    return false;
+  }
+  if ((re->r.mode & R_BORDER) == 0 || (re->r.mode & R_CROP) != 0) {
+    return false;
+  }
+  if (re->rectx == re->winx && re->recty == re->winy) {
+    /* The region is the whole frame. */
+    return false;
+  }
+  return re->result->rectx == re->winx && re->result->recty == re->winy &&
+         re->result->layers.first != nullptr;
+}
+
 void render_result_passes_allocated_ensure(RenderResult *rr)
 {
   if (rr == nullptr) {

@@ -167,6 +167,16 @@ class PathTraceWork {
 
   PassAccessor::PassAccessInfo get_display_pass_access_info(PassMode pass_mode) const;
 
+  /* Light Mix applied to the combined pass on display, or null. Owned by the path trace. */
+  const LightMix *light_mix_ = nullptr;
+
+ public:
+  void set_light_mix(const LightMix *light_mix)
+  {
+    light_mix_ = light_mix;
+  }
+
+ protected:
   /* Get destination which offset and stride are configured so that writing to it will write to a
    * proper location of GPU display texture, taking current tile and device slice into account. */
   PassAccessor::Destination get_display_destination_template(const PathTraceDisplay *display,

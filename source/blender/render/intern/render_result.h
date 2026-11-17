@@ -44,6 +44,13 @@ struct RenderResult *render_result_new(struct Render *re,
 void render_result_passes_allocated_ensure(struct RenderResult *rr);
 
 /**
+ * True when the result has the size of the frame while a region of it is rendered: the result
+ * kept from the previous render by an interactive render (#RE_render_keep_result_get), so that
+ * the region is rendered into the previous image.
+ */
+bool render_result_is_kept_uncropped(const struct Render *re);
+
+/**
  * From `imbuf`, if a handle was returned and
  * it's not a single-layer multi-view we convert this to render result.
  */

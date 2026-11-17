@@ -168,6 +168,8 @@ enum eViewLayer_Flag : short {
   VIEW_LAYER_FREESTYLE = (1 << 2),
   VIEW_LAYER_OUT_OF_SYNC = (1 << 3),
   VIEW_LAYER_HAS_EXPORT_COLLECTIONS = (1 << 4),
+  /** Mix the light groups with their Light Mix settings in the combined image. */
+  VIEW_LAYER_USE_LIGHT_MIX = (1 << 5),
 };
 ENUM_OPERATORS(eViewLayer_Flag)
 
@@ -226,11 +228,26 @@ struct ViewLayerAOV {
 };
 
 /** Light-group Render-pass definition. */
+/** #ViewLayerLightgroup.mix_flag */
+enum eViewLayerLightgroup_MixFlag {
+  /** The mix settings are set. Light groups from older files have none: they mix unchanged. */
+  LIGHTGROUP_MIX_INITIALIZED = (1 << 0),
+  /** The light group is left out of the mix. */
+  LIGHTGROUP_MIX_MUTE = (1 << 1),
+};
+
 struct ViewLayerLightgroup {
   struct ViewLayerLightgroup *next = nullptr, *prev = nullptr;
 
   /* Name of the Light-group. */
   char name[64] = "";
+
+  /* Light Mix: the light group is multiplied by
+   * `mix_color * mix_value * 2^mix_exposure` in the combined image (zero when muted). */
+  float mix_color[3] = {1.0f, 1.0f, 1.0f};
+  float mix_value = 1.0f;
+  float mix_exposure = 0.0f;
+  int mix_flag = LIGHTGROUP_MIX_INITIALIZED;
 };
 
 /* Light-group membership information. */

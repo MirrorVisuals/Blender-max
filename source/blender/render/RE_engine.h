@@ -254,6 +254,19 @@ struct RenderEngine *RE_view_engine_get(const struct ViewRender *view_render);
  * callback.
  */
 bool RE_engine_draw_acquire(struct Render *re);
+/**
+ * For engines that draw their own display of a final render: tell that the display has pixels of
+ * this render. Until then an interactive render (#RE_render_keep_result_get) keeps showing the
+ * previous result, instead of an empty display at the start of every render.
+ */
+void RE_engine_tag_display_ready(RenderEngine *engine);
+/**
+ * True for an interactive render (#RE_render_keep_result_get) of a render region that is not
+ * cropped: the result keeps the size of the frame with the previous render around the region, and
+ * is what is on display. Engines with their own display have to write their progress to the
+ * result (#RE_engine_begin_result, #RE_engine_end_result) for it to show.
+ */
+bool RE_engine_use_result_display(const RenderEngine *engine);
 void RE_engine_draw_release(struct Render *re);
 
 /**

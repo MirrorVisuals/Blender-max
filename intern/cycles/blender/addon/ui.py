@@ -1166,6 +1166,85 @@ class CYCLES_RENDER_PT_passes_lightgroups(CyclesButtonsPanel, ViewLayerLightgrou
     bl_parent_id = "CYCLES_RENDER_PT_passes"
 
 
+class CYCLES_UL_light_mix(bpy.types.UIList):
+    def draw_item(self, _context, layout, _data, item, _icon, _active_data, _active_prop, _index):
+        row = layout.row(align=True)
+        row.prop(item, "use_mix", text="", emboss=False, icon='HIDE_OFF' if item.use_mix else 'HIDE_ON')
+        sub = row.row(align=True)
+        sub.active = item.use_mix
+        sub.label(text=item.name)
+        sub.prop(item, "mix_value", text="")
+        sub = sub.row(align=True)
+        sub.ui_units_x = 1.5
+        sub.prop(item, "mix_color", text="")
+
+
+def draw_light_mix(layout, context):
+    """Light Mix of the view layer: on/off, value, exposure and color per light group."""
+    view_layer = context.view_layer
+    if not view_layer.lightgroups:
+        layout.label(text="No light groups in this view layer", icon='INFO')
+        layout.label(text="Add them in View Layer > Passes > Light Groups")
+        return
+
+    col = layout.column()
+    col.active = view_layer.use_light_mix
+    col.template_list(
+        "CYCLES_UL_light_mix", "light_mix", view_layer,
+        "lightgroups", view_layer, "active_lightgroup_index", rows=4,
+    )
+
+    lightgroup = view_layer.active_lightgroup
+    if lightgroup is None:
+        return
+    col.use_property_split = True
+    col.use_property_decorate = False
+    sub = col.column(align=True)
+    sub.active = lightgroup.use_mix
+    sub.prop(lightgroup, "mix_value", text="Value")
+    sub.prop(lightgroup, "mix_exposure", text="Exposure")
+    sub.prop(lightgroup, "mix_color", text="Color")
+
+
+class CyclesLightMixPanel:
+    bl_label = "Light Mix"
+
+    @classmethod
+    def poll(cls, context):
+        return context.engine == 'CYCLES' and context.view_layer is not None
+
+    def draw_header(self, context):
+        self.layout.prop(context.view_layer, "use_light_mix", text="")
+
+    def draw(self, context):
+        draw_light_mix(self.layout, context)
+
+
+class CYCLES_VIEW_LAYER_PT_light_mix(CyclesLightMixPanel, CyclesButtonsPanel, Panel):
+    bl_context = "view_layer"
+    bl_description = (
+        "Mix the light groups without rendering again. Changes show at once in the viewport, the "
+        "render window and the render result"
+    )
+
+
+class CYCLES_IMAGE_PT_light_mix(CyclesLightMixPanel, Panel):
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Light Mix"
+
+    @classmethod
+    def poll(cls, context):
+        sima = context.space_data
+        return super().poll(context) and sima.image is not None and sima.image.type == 'RENDER_RESULT'
+
+
+class CYCLES_VIEW3D_PT_light_mix(CyclesLightMixPanel, Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Light Mix"
+
+
 class CYCLES_PT_post_processing(CyclesButtonsPanel, Panel):
     bl_label = "Post Processing"
     bl_options = {'DEFAULT_CLOSED'}
@@ -2688,6 +2767,10 @@ classes = (
     CYCLES_RENDER_PT_passes_crypto,
     CYCLES_RENDER_PT_passes_aov,
     CYCLES_RENDER_PT_passes_lightgroups,
+    CYCLES_UL_light_mix,
+    CYCLES_VIEW_LAYER_PT_light_mix,
+    CYCLES_IMAGE_PT_light_mix,
+    CYCLES_VIEW3D_PT_light_mix,
     CYCLES_RENDER_PT_filter,
     CYCLES_PT_post_processing,
     CYCLES_CAMERA_PT_dof,

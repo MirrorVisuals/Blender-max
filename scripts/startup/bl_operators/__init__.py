@@ -36,6 +36,7 @@ _modules = [
     "object_randomize_transform",
     "presets",
     "render",
+    "render_interactive",
     "rigidbody",
     "screen_play_rendered_anim",
     "sequencer",

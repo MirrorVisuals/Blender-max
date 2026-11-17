@@ -871,6 +871,14 @@ void RE_InitState(Render *re,
       }
     }
   }
+  else if (RE_render_keep_result_get() && re->result && re->result->layers.first &&
+           !had_freestyle && !(re->r.mode & R_EDGE_FRS) &&
+           ((re->result->rectx == re->rectx && re->result->recty == re->recty) ||
+            render_result_is_kept_uncropped(re)))
+  {
+    /* Keep the previous result of the same size on display until the engine replaces it,
+     * see #RE_render_keep_result_set. */
+  }
   else {
 
     /* make empty render result, so display callbacks can initialize */
@@ -1010,6 +1018,11 @@ static void render_result_uncrop(Render *re)
 {
   /* when using border render with crop disabled, insert render result into
    * full size with black pixels outside */
+  if (render_result_is_kept_uncropped(re)) {
+    /* The region was rendered into the result of the previous render, which has the size of the
+     * frame already. */
+    return;
+  }
   if (re->result && (re->r.mode & R_BORDER)) {
     if ((re->r.mode & R_CROP) == 0) {
       RenderResult *rres;

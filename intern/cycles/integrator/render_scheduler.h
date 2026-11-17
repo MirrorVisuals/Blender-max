@@ -466,6 +466,11 @@ class RenderScheduler {
   /* Background (offline) rendering. */
   bool background_;
 
+  /* Background rendering that is started again after every change, see
+   * #SessionParams::background_interactive. Display updates, denoising and the amount of work
+   * scheduled at once follow the viewport. */
+  bool background_interactive_;
+
   /* Pixel size is used to force lower resolution render for final pass. Useful for retina or other
    * types of hi-dpi displays. */
   int pixel_size_ = 1;

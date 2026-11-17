@@ -428,6 +428,22 @@ void RE_stats_draw_cb(struct Render *re, void *handle, void (*f)(void *handle, R
 void RE_progress_cb(struct Render *re, void *handle, void (*f)(void *handle, float));
 void RE_draw_lock_cb(struct Render *re, void *handle, void (*f)(void *handle, bool lock));
 void RE_test_break_cb(struct Render *re, void *handle, bool (*f)(void *handle));
+
+/**
+ * Pause final renders: while set, #RE_engine_test_break waits (in the render thread), so engines
+ * stop between samples until it is cleared or the render is canceled. Starting a render from the
+ * interface clears it. Viewport and preview renders are not affected.
+ */
+void RE_render_pause_set(bool pause);
+bool RE_render_pause_get();
+
+/**
+ * Keep showing the previous result when a final render of the same size starts, until the engine
+ * writes new pixels over it, instead of clearing it. For re-rendering after every change
+ * (interactive render), where an empty image between renders would flicker.
+ */
+void RE_render_keep_result_set(bool keep);
+bool RE_render_keep_result_get();
 void RE_prepare_viewlayer_cb(struct Render *re,
                              void *handle,
                              bool (*f)(void *handle, ViewLayer *vl, struct Depsgraph *depsgraph));

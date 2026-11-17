@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "device/device.h"
+#include "integrator/light_mix.h"
 #include "integrator/render_scheduler.h"
 #include "scene/shader.h"
 #include "scene/stats.h"
@@ -62,6 +63,9 @@ class SessionParams {
   int tile_size;
 
   bool use_resolution_divider;
+  /* Background render that is started again after every change (interactive render in the
+   * render window): show progress and denoise as often as the viewport does. */
+  bool background_interactive;
 
   ShadingSystem shadingsystem;
 
@@ -87,6 +91,7 @@ class SessionParams {
     tile_size = 2048;
 
     use_resolution_divider = true;
+    background_interactive = false;
 
     shadingsystem = SHADINGSYSTEM_SVM;
   }
@@ -100,6 +105,7 @@ class SessionParams {
              threads == params.threads && use_profiling == params.use_profiling &&
              use_auto_tile == params.use_auto_tile && tile_size == params.tile_size &&
              use_resolution_divider == params.use_resolution_divider &&
+             background_interactive == params.background_interactive &&
              shadingsystem == params.shadingsystem);
   }
 };
@@ -141,6 +147,10 @@ class Session {
   void reset(const SessionParams &session_params, const BufferParams &buffer_params);
 
   void set_pause(bool pause);
+
+  /* Set the Light Mix of the combined pass. The display is updated with it without rendering
+   * again, also when rendering has finished or is paused. */
+  void set_light_mix(const LightMix &light_mix);
   void set_navigating(bool navigating);
 
   void set_samples(const int samples);
@@ -234,6 +244,9 @@ class Session {
 
   bool pause_ = false;
   bool new_work_added_ = false;
+
+  /* The display is to be updated from the render buffers, without rendering (Light Mix). */
+  bool display_refresh_requested_ = false;
 
   thread_condition_variable pause_cond_;
   thread_mutex pause_mutex_;

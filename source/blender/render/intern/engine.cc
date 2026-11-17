@@ -6,6 +6,7 @@
  * \ingroup render
  */
 
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +16,7 @@
 #include "BLI_listbase.h"
 #include "BLI_math_bits.h"
 #include "BLI_string.h"
+#include "BLI_time.h"
 #include "BLI_utildefines.h"
 
 #include "DNA_layer_types.h"
@@ -369,6 +371,14 @@ RenderResult *RE_engine_begin_result(
     result->tilerect.xmax += re->disprect.xmin;
     result->tilerect.ymin += re->disprect.ymin;
     result->tilerect.ymax += re->disprect.ymin;
+
+    if (render_result_is_kept_uncropped(re)) {
+      /* The result has the size of the frame, not of the region that is rendered. */
+      result->tilerect.xmin += re->disprect.xmin;
+      result->tilerect.xmax += re->disprect.xmin;
+      result->tilerect.ymin += re->disprect.ymin;
+      result->tilerect.ymax += re->disprect.ymin;
+    }
   }
 
   return result;
@@ -475,11 +485,44 @@ RenderResult *RE_engine_get_result(RenderEngine *engine)
 
 /* Cancel */
 
+static std::atomic<bool> g_render_pause = false;
+/* The engine's own display has pixels of the final render in progress. */
+static std::atomic<bool> g_engine_display_ready = false;
+
+void RE_render_pause_set(const bool pause)
+{
+  g_render_pause = pause;
+}
+
+bool RE_render_pause_get()
+{
+  return g_render_pause;
+}
+
+static std::atomic<bool> g_render_keep_result = false;
+
+void RE_render_keep_result_set(const bool keep)
+{
+  g_render_keep_result = keep;
+}
+
+bool RE_render_keep_result_get()
+{
+  return g_render_keep_result;
+}
+
 bool RE_engine_test_break(RenderEngine *engine)
 {
   Render *re = engine->re;
 
   if (re) {
+    if ((engine->flag & RE_ENGINE_PREVIEW) == 0) {
+      /* Paused final render: engines test for a break between samples, so waiting here keeps
+       * them idle with everything they have rendered so far. Canceling ends the wait. */
+      while (g_render_pause && !re->display->test_break()) {
+        BLI_time_sleep_ms(50);
+      }
+    }
     return re->display->test_break();
   }
 
@@ -935,6 +978,9 @@ static void engine_render_view_layer(Render *re,
     }
 
     BLI_mutex_lock(&engine->re->engine_draw_mutex);
+    if ((engine->flag & RE_ENGINE_PREVIEW) == 0) {
+      g_engine_display_ready = false;
+    }
     re->engine->flag |= RE_ENGINE_CAN_DRAW;
     BLI_mutex_unlock(&engine->re->engine_draw_mutex);
 
@@ -977,6 +1023,43 @@ static void engine_render_add_result_pass_cb(void *user_data,
 {
   RenderResult *rr = static_cast<RenderResult *>(user_data);
   RE_create_render_pass(rr, name, channels, chanid, view_layer->name, RR_ALL_VIEWS, false);
+}
+
+/**
+ * Copy the pixels of the previous result into a new one with the same size, so it keeps showing
+ * the previous render until the engine writes new pixels (see #RE_render_keep_result_set).
+ */
+static void engine_render_result_copy_previous(RenderResult *rr, const RenderResult *rr_prev)
+{
+  if (rr->rectx != rr_prev->rectx || rr->recty != rr_prev->recty) {
+    return;
+  }
+  render_result_passes_allocated_ensure(rr);
+
+  for (RenderLayer &rl : rr->layers) {
+    const RenderLayer *rl_prev = RE_GetRenderLayer(const_cast<RenderResult *>(rr_prev), rl.name);
+    if (rl_prev == nullptr) {
+      continue;
+    }
+    for (RenderPass &rp : rl.passes) {
+      if (rp.ibuf == nullptr || rp.ibuf->float_data() == nullptr) {
+        continue;
+      }
+      for (const RenderPass &rp_prev : rl_prev->passes) {
+        if (!STREQ(rp.fullname, rp_prev.fullname)) {
+          continue;
+        }
+        if (rp_prev.ibuf && rp_prev.ibuf->float_data() && rp.channels == rp_prev.channels &&
+            rp.rectx == rp_prev.rectx && rp.recty == rp_prev.recty)
+        {
+          memcpy(rp.ibuf->float_data_for_write(),
+                 rp_prev.ibuf->float_data(),
+                 sizeof(float) * size_t(rp.rectx) * size_t(rp.recty) * size_t(rp.channels));
+        }
+        break;
+      }
+    }
+  }
 }
 
 static RenderResult *engine_render_create_result(Render *re)
@@ -1040,12 +1123,16 @@ bool RE_engine_render(Render *re, bool do_all)
   /* Create render result. Do this before acquiring lock, to avoid lock
    * inversion as this calls python to get the render passes, while python UI
    * code can also hold a lock on the render result. */
-  const bool create_new_result = (re->result == nullptr || !(re->r.scemode & R_BUTS_PREVIEW));
+  const bool create_new_result = (re->result == nullptr || !(re->r.scemode & R_BUTS_PREVIEW)) &&
+                                 !render_result_is_kept_uncropped(re);
   RenderResult *new_result = (create_new_result) ? engine_render_create_result(re) : nullptr;
 
   BLI_rw_mutex_lock(&re->resultmutex, THREAD_LOCK_WRITE);
   if (create_new_result) {
     if (re->result) {
+      if (new_result && RE_render_keep_result_get()) {
+        engine_render_result_copy_previous(new_result, re->result);
+      }
       render_result_free(re->result);
     }
 
@@ -1225,6 +1312,22 @@ RenderEngine *RE_view_engine_get(const ViewRender *view_render)
   return view_render->engine;
 }
 
+bool RE_engine_use_result_display(const RenderEngine *engine)
+{
+  const Render *re = engine->re;
+  if (re == nullptr || (engine->flag & RE_ENGINE_PREVIEW) != 0) {
+    return false;
+  }
+  return RE_render_keep_result_get() && (re->r.mode & R_BORDER) != 0 && (re->r.mode & R_CROP) == 0;
+}
+
+void RE_engine_tag_display_ready(RenderEngine *engine)
+{
+  if ((engine->flag & RE_ENGINE_PREVIEW) == 0 && engine->re) {
+    g_engine_display_ready = true;
+  }
+}
+
 bool RE_engine_draw_acquire(Render *re)
 {
   RenderEngine *engine = re->engine;
@@ -1248,6 +1351,19 @@ bool RE_engine_draw_acquire(Render *re)
      * In the former case there will nothing to be drawn, so can simply use RenderResult drawing
      * pipeline. In the latter case the engine has destroyed its display-only resources (textures,
      * graphics interops, etc..) so need to use the #RenderResult drawing pipeline. */
+    BLI_mutex_unlock(&re->engine_draw_mutex);
+    return false;
+  }
+
+  if (RE_engine_use_result_display(engine)) {
+    /* The result is on display: it has the previous render around the region. */
+    BLI_mutex_unlock(&re->engine_draw_mutex);
+    return false;
+  }
+
+  if (RE_render_keep_result_get() && !g_engine_display_ready) {
+    /* Interactive render that has no pixels of its own yet: show the result kept from the
+     * previous render, the engine would draw an empty display. */
     BLI_mutex_unlock(&re->engine_draw_mutex);
     return false;
   }

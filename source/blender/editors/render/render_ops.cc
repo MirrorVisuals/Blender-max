@@ -84,6 +84,7 @@ void ED_operatortypes_render()
   /* `render_internal.cc` */
   WM_operatortype_append(RENDER_OT_view_show);
   WM_operatortype_append(RENDER_OT_render);
+  WM_operatortype_append(RENDER_OT_render_stop);
   WM_operatortype_append(RENDER_OT_view_cancel);
   WM_operatortype_append(RENDER_OT_shutter_curve_preset);
 

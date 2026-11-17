@@ -52,6 +52,9 @@ CCL_NAMESPACE_BEGIN
 #define PASS_UNUSED (~0)
 #define LIGHTGROUP_NONE (~0)
 
+/* Light groups that the Light Mix can weight in one image. */
+#define LIGHT_MIX_MAX_GROUPS 64
+
 #define LIGHT_LINK_SET_MAX 64
 #define LIGHT_LINK_MASK_ALL (~uint64_t(0))
 
@@ -1285,8 +1288,12 @@ struct KernelFilmConvert {
 
   int is_denoised;
 
-  /* Padding. */
-  int pad1;
+  /* Light Mix, for the combined pass: each light group pass is added again with its weight minus
+   * one, so that the light group is in the result `weight` times. Light groups that are not in
+   * the buffer have no offset. */
+  int light_mix_num;
+  int light_mix_offset[LIGHT_MIX_MAX_GROUPS];
+  float light_mix_weight[LIGHT_MIX_MAX_GROUPS * 3];
 };
 static_assert_align(KernelFilmConvert, 16);
 

@@ -107,6 +107,12 @@ class BlenderSync {
                                           bool background,
                                           float pixelsize);
   static bool get_session_pause(blender::Scene &b_scene, bool background);
+
+  /* Light Mix of a view layer, read from the original (not evaluated) scene: its settings are
+   * changed without updating the scene, so that changing them does not render again. */
+  /* Light Mix weights of a view layer, `b_scene_orig` must be an original (not evaluated) scene.
+   */
+  static LightMix get_light_mix(blender::Scene &b_scene_orig, const char *view_layer_name);
   static BufferParams get_buffer_params(blender::View3D *b_v3d,
                                         blender::RegionView3D *b_rv3d,
                                         Camera *cam,
@@ -133,6 +139,8 @@ class BlenderSync {
                                blender::RegionView3D *b_rv3d,
                                const int width,
                                const int height);
+  /* Light group passes for the Light Mix in the viewport (final renders always have them). */
+  void sync_viewport_light_mix_passes(blender::ViewLayer &b_view_layer);
   void sync_film(blender::ViewLayer &b_view_layer,
                  blender::bScreen *b_screen,
                  blender::View3D *b_v3d);

@@ -295,6 +295,32 @@ void PassAccessor::init_kernel_film_convert(KernelFilmConvert *kfilm_convert,
                                                            destination.num_components;
 
   kfilm_convert->is_denoised = (mode == PassMode::DENOISED);
+
+  /* Light Mix, for the combined pass only (not for its light group passes). */
+  kfilm_convert->light_mix_num = 0;
+  const LightMix *light_mix = pass_access_info_.light_mix;
+  if (light_mix && type == PASS_COMBINED && !pass_access_info_.is_lightgroup) {
+    for (const LightMix::Group &group : light_mix->groups) {
+      if (kfilm_convert->light_mix_num == LIGHT_MIX_MAX_GROUPS) {
+        break;
+      }
+      int offset = PASS_UNUSED;
+      for (const BufferPass &pass : buffer_params.passes) {
+        if (pass.type == PASS_COMBINED && pass.lightgroup == group.name) {
+          offset = pass.offset;
+          break;
+        }
+      }
+      if (offset == PASS_UNUSED) {
+        continue;
+      }
+      const int i = kfilm_convert->light_mix_num++;
+      kfilm_convert->light_mix_offset[i] = offset;
+      kfilm_convert->light_mix_weight[i * 3 + 0] = group.weight.x;
+      kfilm_convert->light_mix_weight[i * 3 + 1] = group.weight.y;
+      kfilm_convert->light_mix_weight[i * 3 + 2] = group.weight.z;
+    }
+  }
 }
 
 bool PassAccessor::set_render_tile_pixels(RenderBuffers *render_buffers, const Source &source)

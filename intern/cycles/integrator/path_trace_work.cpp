@@ -200,6 +200,10 @@ PassAccessor::PassAccessInfo PathTraceWork::get_display_pass_access_info(PassMod
 
   pass_access_info.show_active_pixels = film_->get_show_active_pixels();
 
+  if (light_mix_ && !light_mix_->empty()) {
+    pass_access_info.light_mix = light_mix_;
+  }
+
   return pass_access_info;
 }
 

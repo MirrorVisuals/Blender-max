@@ -336,6 +336,9 @@ void BlenderSession::stamp_view_layer_metadata(Scene *scene, const string &view_
 void BlenderSession::render(blender::Depsgraph &b_depsgraph_)
 {
   b_depsgraph = &b_depsgraph_;
+  /* The evaluated scene is freed during the render (see #free_blender_memory_if_possible),
+   * the original one stays valid and holds the Light Mix settings. */
+  b_scene_orig = DEG_get_input_scene(b_depsgraph);
 
   if (session->progress.get_cancel()) {
     update_status_progress();
@@ -438,6 +441,7 @@ void BlenderSession::render(blender::Depsgraph &b_depsgraph_)
 
     /* Update session itself. */
     session->reset(effective_session_params, buffer_params);
+    session->set_light_mix(BlenderSync::get_light_mix(*b_scene_orig, b_view_layer.name));
 
     /* render */
     if ((b_engine.flag & blender::RE_ENGINE_PREVIEW) == 0 && background && print_render_stats) {
@@ -970,6 +974,15 @@ void BlenderSession::view_draw(const int w, const int h)
     tag_update();
   }
 
+  /* Light Mix: its settings change without a scene update, read them on every redraw. */
+  if (b_depsgraph) {
+    blender::ViewLayer *b_view_layer = DEG_get_evaluated_view_layer(b_depsgraph);
+    if (b_view_layer) {
+      session->set_light_mix(
+          BlenderSync::get_light_mix(*DEG_get_input_scene(b_depsgraph), b_view_layer->name));
+    }
+  }
+
   /* update status and progress for 3d view draw */
   update_status_progress();
 
@@ -1077,6 +1090,12 @@ void BlenderSession::tag_redraw()
     /* update stats and progress, only for background here because
      * in 3d view we do it in draw for thread safety reasons */
     update_status_progress();
+
+    /* Light Mix: its settings change without a scene update, pick them up while rendering. */
+    if (b_scene_orig && !b_rlay_name.empty() && (b_engine.flag & blender::RE_ENGINE_PREVIEW) == 0)
+    {
+      session->set_light_mix(BlenderSync::get_light_mix(*b_scene_orig, b_rlay_name.c_str()));
+    }
 
     /* offline render, redraw if timeout passed */
     if (time_dt() - last_redraw_time > 1.0) {

@@ -1473,6 +1473,26 @@ static int rna_RenderSettings_threads_mode_get(PointerRNA *ptr)
   }
 }
 
+static bool rna_RenderSettings_render_pause_get(PointerRNA * /*ptr*/)
+{
+  return RE_render_pause_get();
+}
+
+static void rna_RenderSettings_render_pause_set(PointerRNA * /*ptr*/, bool value)
+{
+  RE_render_pause_set(value);
+}
+
+static bool rna_RenderSettings_render_keep_result_get(PointerRNA * /*ptr*/)
+{
+  return RE_render_keep_result_get();
+}
+
+static void rna_RenderSettings_render_keep_result_set(PointerRNA * /*ptr*/, bool value)
+{
+  RE_render_keep_result_set(value);
+}
+
 static bool rna_RenderSettings_is_movie_format_get(PointerRNA *ptr)
 {
   RenderData *rd = static_cast<RenderData *>(ptr->data);
@@ -2883,6 +2903,71 @@ static void rna_ViewLayerLightgroup_name_set(PointerRNA *ptr, const char *value)
   ViewLayer *view_layer = BKE_view_layer_find_with_lightgroup(scene, lightgroup);
 
   BKE_view_layer_rename_lightgroup(scene, view_layer, lightgroup, value);
+}
+
+/* Light Mix settings of a light group. Light groups from older files have none: they read as the
+ * defaults, and are given them when one is set. */
+
+static bool rna_Lightgroup_use_mix_get(PointerRNA *ptr)
+{
+  const ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  return (lightgroup->mix_flag & LIGHTGROUP_MIX_MUTE) == 0;
+}
+
+static void rna_Lightgroup_use_mix_set(PointerRNA *ptr, bool value)
+{
+  ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  BKE_view_layer_lightgroup_mix_ensure(lightgroup);
+  SET_FLAG_FROM_TEST(lightgroup->mix_flag, !value, LIGHTGROUP_MIX_MUTE);
+}
+
+static void rna_Lightgroup_mix_color_get(PointerRNA *ptr, float *values)
+{
+  const ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  if (lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) {
+    copy_v3_v3(values, lightgroup->mix_color);
+  }
+  else {
+    copy_v3_fl(values, 1.0f);
+  }
+}
+
+static void rna_Lightgroup_mix_color_set(PointerRNA *ptr, const float *values)
+{
+  ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  BKE_view_layer_lightgroup_mix_ensure(lightgroup);
+  copy_v3_v3(lightgroup->mix_color, values);
+}
+
+static float rna_Lightgroup_mix_value_get(PointerRNA *ptr)
+{
+  const ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  return (lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) ? lightgroup->mix_value : 1.0f;
+}
+
+static void rna_Lightgroup_mix_value_set(PointerRNA *ptr, float value)
+{
+  ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  BKE_view_layer_lightgroup_mix_ensure(lightgroup);
+  lightgroup->mix_value = value;
+}
+
+static float rna_Lightgroup_mix_exposure_get(PointerRNA *ptr)
+{
+  const ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  return (lightgroup->mix_flag & LIGHTGROUP_MIX_INITIALIZED) ? lightgroup->mix_exposure : 0.0f;
+}
+
+static void rna_Lightgroup_mix_exposure_set(PointerRNA *ptr, float value)
+{
+  ViewLayerLightgroup *lightgroup = static_cast<ViewLayerLightgroup *>(ptr->data);
+  BKE_view_layer_lightgroup_mix_ensure(lightgroup);
+  lightgroup->mix_exposure = value;
+}
+
+static void rna_Lightgroup_mix_weight_get(PointerRNA *ptr, float *values)
+{
+  BKE_view_layer_lightgroup_mix_weight(static_cast<ViewLayerLightgroup *>(ptr->data), values);
 }
 
 /* Fake value, used internally (not saved to DNA). */
@@ -4990,6 +5075,55 @@ static void rna_def_view_layer_lightgroup(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Name", "Name of the Lightgroup");
   RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, "rna_ViewLayer_pass_update");
   RNA_def_struct_name_property(srna, prop);
+
+  /* Light Mix. The render engine reads these while it renders and while the result is shown:
+   * changing them only redraws, without updating the scene (which would start the render again).
+   */
+  prop = RNA_def_property(srna, "use_mix", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_funcs(prop, "rna_Lightgroup_use_mix_get", "rna_Lightgroup_use_mix_set");
+  RNA_def_property_ui_text(prop, "Enabled", "Include the light group in the Light Mix");
+  RNA_def_property_ui_icon(prop, ICON_HIDE_ON, 1);
+  RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+
+  prop = RNA_def_property(srna, "mix_color", PROP_FLOAT, PROP_COLOR);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_float_funcs(
+      prop, "rna_Lightgroup_mix_color_get", "rna_Lightgroup_mix_color_set", nullptr);
+  RNA_def_property_range(prop, 0.0f, FLT_MAX);
+  RNA_def_property_ui_range(prop, 0.0f, 1.0f, 1, 3);
+  RNA_def_property_ui_text(prop, "Color", "Tint of the light group in the Light Mix");
+  RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+
+  prop = RNA_def_property(srna, "mix_value", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_float_funcs(
+      prop, "rna_Lightgroup_mix_value_get", "rna_Lightgroup_mix_value_set", nullptr);
+  RNA_def_property_range(prop, 0.0f, FLT_MAX);
+  RNA_def_property_ui_range(prop, 0.0f, 10.0f, 1, 3);
+  RNA_def_property_ui_text(
+      prop, "Value", "Multiplier for the light group in the Light Mix (1 leaves it unchanged)");
+  RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+
+  prop = RNA_def_property(srna, "mix_exposure", PROP_FLOAT, PROP_NONE);
+  RNA_def_property_float_funcs(
+      prop, "rna_Lightgroup_mix_exposure_get", "rna_Lightgroup_mix_exposure_set", nullptr);
+  RNA_def_property_range(prop, -32.0f, 32.0f);
+  RNA_def_property_ui_range(prop, -10.0f, 10.0f, 1, 3);
+  RNA_def_property_ui_text(
+      prop, "Exposure", "Exposure of the light group in the Light Mix, in stops");
+  RNA_def_property_flag(prop, PROP_NO_DEG_UPDATE);
+  RNA_def_property_update(prop, NC_WINDOW, nullptr);
+
+  prop = RNA_def_property(srna, "mix_weight", PROP_FLOAT, PROP_COLOR);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_float_funcs(prop, "rna_Lightgroup_mix_weight_get", nullptr, nullptr);
+  RNA_def_property_clear_flag(prop, PROP_EDITABLE);
+  RNA_def_property_ui_text(prop,
+                           "Mix Weight",
+                           "Factor the light group is multiplied by in the Light Mix: Color x "
+                           "Value x 2^Exposure, zero when disabled");
 }
 
 void rna_def_view_layer_common(BlenderRNA *brna, StructRNA *srna, const bool scene)
@@ -5074,6 +5208,14 @@ void rna_def_view_layer_common(BlenderRNA *brna, StructRNA *srna, const bool sce
     RNA_def_property_struct_type(prop, "Lightgroup");
     RNA_def_property_ui_text(prop, "Light Groups", "");
     rna_def_view_layer_lightgroups(brna, prop);
+
+    prop = RNA_def_property(srna, "use_light_mix", PROP_BOOLEAN, PROP_NONE);
+    RNA_def_property_boolean_sdna(prop, nullptr, "flag", VIEW_LAYER_USE_LIGHT_MIX);
+    RNA_def_property_ui_text(prop,
+                             "Light Mix",
+                             "Mix the light groups with their Color, Value and Exposure in the "
+                             "combined image, without rendering again (Cycles)");
+    RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, "rna_ViewLayer_pass_update");
 
     prop = RNA_def_property(srna, "active_lightgroup", PROP_POINTER, PROP_NONE);
     RNA_def_property_struct_type(prop, "Lightgroup");
@@ -7128,6 +7270,28 @@ static void rna_def_scene_render_data(BlenderRNA *brna)
   RNA_def_property_ui_range(prop, 1, 100, 10, 1);
   RNA_def_property_ui_text(prop, "Resolution Scale", "Percentage scale for render resolution");
   RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, "rna_SceneSequencer_update");
+
+  prop = RNA_def_property(srna, "render_pause", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_funcs(
+      prop, "rna_RenderSettings_render_pause_get", "rna_RenderSettings_render_pause_set");
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_ui_text(
+      prop,
+      "Pause Render",
+      "Pause the render in progress, keeping what is rendered so far (not saved in the file, "
+      "the same for all scenes)");
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "render_keep_result", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_funcs(prop,
+                                 "rna_RenderSettings_render_keep_result_get",
+                                 "rna_RenderSettings_render_keep_result_set");
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_ui_text(
+      prop,
+      "Keep Previous Result",
+      "When a render of the same size starts, show the previous result until new pixels are "
+      "rendered instead of an empty image (not saved in the file, the same for all scenes)");
 
   prop = RNA_def_property(srna, "preview_pixel_size", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_sdna(prop, nullptr, "preview_pixel_size");

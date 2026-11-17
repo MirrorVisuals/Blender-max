@@ -44,6 +44,7 @@ set(SRC_HEADERS
   guiding.h
   path_trace.h
   tile.h
+  light_mix.h
   pass_accessor.h
   pass_accessor_cpu.h
   pass_accessor_gpu.h

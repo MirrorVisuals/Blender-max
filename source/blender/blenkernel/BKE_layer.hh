@@ -723,6 +723,14 @@ void BKE_view_layer_rename_lightgroup(Scene *scene,
                                       ViewLayerLightgroup *lightgroup,
                                       const char *name);
 
+/**
+ * Light Mix weight of a light group: the factor its light is multiplied by in the combined image.
+ */
+void BKE_view_layer_lightgroup_mix_weight(const ViewLayerLightgroup *lightgroup,
+                                          float r_weight[3]);
+/** Set the default Light Mix settings on light groups from files that have none. */
+void BKE_view_layer_lightgroup_mix_ensure(ViewLayerLightgroup *lightgroup);
+
 int BKE_lightgroup_membership_get(const LightgroupMembership *lgm, char *name);
 int BKE_lightgroup_membership_length(const LightgroupMembership *lgm);
 void BKE_lightgroup_membership_set(LightgroupMembership **lgm, const char *name);

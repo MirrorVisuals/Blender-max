@@ -925,6 +925,9 @@ static wmOperatorStatus screen_render_invoke(bContext *C, wmOperator *op, const 
   Image *ima;
   ScrArea *area;
 
+  /* A pause left on by the previous render would keep this one from starting. */
+  RE_render_pause_set(false);
+
   const bool is_animation = RNA_boolean_get(op->ptr, "animation");
   const bool is_write_still = RNA_boolean_get(op->ptr, "write_still");
   const bool use_viewport = RNA_boolean_get(op->ptr, "use_viewport");
@@ -1083,7 +1086,9 @@ static wmOperatorStatus screen_render_invoke(bContext *C, wmOperator *op, const 
                        WM_JOB_EXCL_RENDER | WM_JOB_PRIORITY | WM_JOB_PROGRESS,
                        WM_JOB_TYPE_RENDER);
   WM_jobs_customdata_set(wm_job, rj, render_freejob);
-  WM_jobs_timer(wm_job, 0.2, NC_SCENE | ND_RENDER_RESULT, 0);
+  /* An interactive render (#RE_render_keep_result_get) is started again after every change:
+   * show its progress without delay. */
+  WM_jobs_timer(wm_job, RE_render_keep_result_get() ? 0.02 : 0.2, NC_SCENE | ND_RENDER_RESULT, 0);
   WM_jobs_callbacks(wm_job, render_startjob, nullptr, nullptr, render_endjob);
 
   if (RNA_struct_property_is_set(op->ptr, "layer")) {
@@ -1141,6 +1146,49 @@ static std::string screen_render_get_description(bContext * /*C*/,
     return TIP_("Render active sequencer scene");
   }
   return TIP_("Render active scene");
+}
+
+static bool render_stop_poll(bContext *C)
+{
+  return WM_jobs_has_running_type(CTX_wm_manager(C), WM_JOB_TYPE_RENDER);
+}
+
+static wmOperatorStatus render_stop_exec(bContext *C, wmOperator *op)
+{
+  wmWindowManager *wm = CTX_wm_manager(C);
+  if (RNA_boolean_get(op->ptr, "wait")) {
+    /* As Escape while rendering. A paused render is waiting for this too. */
+    WM_jobs_kill_type(wm, nullptr, WM_JOB_TYPE_RENDER);
+  }
+  else {
+    /* Only ask the render to stop: the job ends by itself a moment later, and the interface is
+     * not kept waiting for it. */
+    WM_jobs_stop_type(wm, nullptr, WM_JOB_TYPE_RENDER);
+  }
+  RE_render_pause_set(false);
+  WM_event_add_notifier(C, NC_SCENE | ND_RENDER_RESULT, nullptr);
+  return OPERATOR_FINISHED;
+}
+
+void RENDER_OT_render_stop(wmOperatorType *ot)
+{
+  /* identifiers */
+  ot->name = "Stop Render";
+  ot->description = "Stop the render in progress";
+  ot->idname = "RENDER_OT_render_stop";
+
+  /* API callbacks. */
+  ot->exec = render_stop_exec;
+  ot->poll = render_stop_poll;
+
+  PropertyRNA *prop = RNA_def_boolean(
+      ot->srna,
+      "wait",
+      true,
+      "Wait",
+      "Wait until the render has stopped. Otherwise it is only asked to stop, and is still "
+      "running for a moment when this returns");
+  RNA_def_property_flag(prop, PROP_SKIP_SAVE);
 }
 
 void RENDER_OT_render(wmOperatorType *ot)

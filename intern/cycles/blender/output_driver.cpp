@@ -64,6 +64,13 @@ bool BlenderOutputDriver::update_render_tile(const Tile &tile)
     return true;
   }
 
+  /* Interactive render of a region: the result is on display, with the previous render around
+   * the region. */
+  if (RE_engine_use_result_display(&b_engine_)) {
+    write_render_tile(tile);
+    return true;
+  }
+
   /* Don't highlight full-frame tile. */
   if (!(tile.size == tile.full_size)) {
     RE_engine_tile_highlight_clear_all(&b_engine_);
