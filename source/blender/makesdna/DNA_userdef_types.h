@@ -188,6 +188,8 @@ enum eUserpref_UI_Flag2 : char {
   USER_UIFLAG2_UNUSED_3 = (1 << 3), /* dirty */
   USER_UIFLAG2_UNUSED_4 = (1 << 4), /* Not cleared! */
   USER_UIFLAG2_PANEL_TABS_COMPACT = (1 << 5),
+  /** Scene and View Layer selectors at the left side of the Top Bar, before the menus. */
+  USER_UIFLAG2_TOPBAR_SCENE_LEFT = (1 << 6),
 };
 ENUM_OPERATORS(eUserpref_UI_Flag2)
 

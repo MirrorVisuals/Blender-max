@@ -28,6 +28,12 @@ class TOPBAR_HT_upper_bar(Header):
         window = context.window
         screen = context.screen
 
+        # Above the Outliner when that is on the left, as the Scene selector on the right is
+        # above the Properties editor by default.
+        if context.preferences.view.topbar_scene_position == 'LEFT':
+            TOPBAR_HT_upper_bar.draw_scene_selectors(layout, window)
+            layout.separator(type='LINE')
+
         TOPBAR_MT_editor_menus.draw_collapsible(context, layout)
 
         layout.separator(type='LINE')
@@ -42,13 +48,18 @@ class TOPBAR_HT_upper_bar(Header):
 
         window = context.window
         screen = context.screen
-        scene = window.scene
 
         # If statusbar is hidden, still show messages at the top
         if not screen.show_statusbar:
             layout.template_reports_banner()
             layout.template_running_jobs()
 
+        if context.preferences.view.topbar_scene_position == 'RIGHT':
+            TOPBAR_HT_upper_bar.draw_scene_selectors(layout, window)
+
+    @staticmethod
+    def draw_scene_selectors(layout, window):
+        scene = window.scene
         # Active workspace view-layer is retrieved through window, not through workspace.
         layout.template_ID(window, "scene", new="scene.new", unlink="scene.delete")
 

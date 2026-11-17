@@ -326,6 +326,7 @@ class USERPREF_PT_interface_editors(InterfacePanel, CenterAlignMixIn, Panel):
         col.prop(view, "border_width")
         col.prop(view, "color_picker_type")
         col.row().prop(view, "header_align")
+        col.row().prop(view, "topbar_scene_position", expand=True)
         col.prop(view, "factor_display_type")
 
 

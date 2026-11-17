@@ -5344,6 +5344,25 @@ static void rna_def_userdef_view(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Header Position", "Default header position for new space-types");
   RNA_def_property_update(prop, 0, "rna_userdef_screen_update_header_default");
 
+  static const EnumPropertyItem topbar_scene_position_items[] = {
+      {0, "RIGHT", 0, "Right", "At the right side of the Top Bar"},
+      {USER_UIFLAG2_TOPBAR_SCENE_LEFT,
+       "LEFT",
+       0,
+       "Left",
+       "At the left side of the Top Bar, before the menus"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
+  prop = RNA_def_property(srna, "topbar_scene_position", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_items(prop, topbar_scene_position_items);
+  RNA_def_property_enum_bitflag_sdna(prop, nullptr, "uiflag2");
+  /* The default of `uiflag2` has other flags, the default of this one is "Right". */
+  RNA_def_property_enum_default(prop, 0);
+  RNA_def_property_ui_text(prop,
+                           "Scene Selector Position",
+                           "Side of the Top Bar with the Scene and View Layer selectors");
+  RNA_def_property_update(prop, 0, "rna_userdef_update");
+
   prop = RNA_def_property(srna, "render_display_type", PROP_ENUM, PROP_NONE);
   RNA_def_property_enum_items(prop, render_display_types);
   RNA_def_property_ui_text(
