@@ -85,6 +85,12 @@ class Shader : public Node {
   NODE_SOCKET_API(int, volume_interpolation_method)
   NODE_SOCKET_API(float, volume_step_rate)
 
+  /* Quick Caustics: sunlight refracted onto what is below the surface. */
+  NODE_SOCKET_API(bool, use_quick_caustics)
+  NODE_SOCKET_API(float, quick_caustics_strength)
+  NODE_SOCKET_API(float, quick_caustics_depth)
+  NODE_SOCKET_API(float, quick_caustics_ior)
+
   /* displacement */
   NODE_SOCKET_API(DisplacementMethod, displacement_method)
 

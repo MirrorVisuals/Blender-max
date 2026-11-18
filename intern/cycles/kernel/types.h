@@ -280,6 +280,11 @@ enum PathRayFlag : uint32_t {
 
   /* The current shadow ray is a light linking (forward) and not next-event shadow ray. */
   PATH_RAY_SHADOW_FOR_LIGHT_LINKING = (1U << 25U),
+
+  /* Sections: the surface hit is the cap of a section (see kernel/geom/section.h). */
+  PATH_RAY_SECTION_CAP = (1U << 26U),
+  /* Sections: the ray (or shadow ray) starts on the cap of a section. */
+  PATH_RAY_SECTION_FROM_CAP = (1U << 27U),
 };
 
 // 8bit enum, just in case we need to move more variables in it
@@ -1463,8 +1468,48 @@ struct KernelObject {
   uint receiver_light_set;
   uint64_t shadow_set_membership;
   uint blocker_shadow_set;
+
+  /* Sections that cut the object, a bit per section. */
+  uint section_mask;
 };
 static_assert_align(KernelObject, 16);
+
+/* Sections (see kernel/geom/section.h). */
+
+#define KERNEL_MAX_SECTIONS 32
+
+enum KernelSectionFlag {
+  /* Keep the other side (plane), or the inside (box). */
+  SECTION_INVERT = (1 << 0),
+  /* A box instead of a plane. */
+  SECTION_BOX = (1 << 1),
+  /* The cut away part still blocks and bounces light (only what is seen is cut). */
+  SECTION_AFFECT_LIGHTING = (1 << 2),
+  /* Reflections and refractions show the whole scene, only camera rays are cut. */
+  SECTION_CAMERA_ONLY = (1 << 3),
+  /* Fill the cut of closed objects. */
+  SECTION_CAP = (1 << 4),
+};
+
+enum KernelSectionCapMode {
+  /* A flat color, not lit. */
+  SECTION_CAP_FLAT = 0,
+  /* A color lit by the scene. */
+  SECTION_CAP_LIT = 1,
+  /* The material of the object that is cut. */
+  SECTION_CAP_MATERIAL = 2,
+};
+
+struct KernelSection {
+  /* World to the local space of the section: the plane is Z = 0 with its normal along +Z, the box
+   * is -1 to 1 on every axis. */
+  Transform itfm;
+  float cap_color[3];
+  int flags;
+  int cap_mode;
+  int pad1, pad2, pad3;
+};
+static_assert_align(KernelSection, 16);
 
 struct KernelCurve {
   int shader_id;
@@ -1711,7 +1756,11 @@ struct KernelShader {
   float cryptomatte_id;
   int flags;
   int pass_id;
-  int pad2, pad3;
+  /* Quick Caustics: sunlight through the surface onto what is below it. Off when depth is 0. */
+  float quick_caustics_strength;
+  float quick_caustics_depth;
+  float quick_caustics_ior;
+  float pad1, pad2, pad3;
 };
 static_assert_align(KernelShader, 16);
 

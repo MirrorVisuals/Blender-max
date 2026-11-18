@@ -22,6 +22,7 @@
 #include "util/log.h"
 #include "util/task.h"
 
+#include "BKE_collection.hh"
 #include "BKE_duplilist.hh"
 #include "BKE_layer.hh"
 #include "BKE_material.hh"
@@ -308,6 +309,8 @@ Object *BlenderSync::sync_object(blender::ViewLayer &b_view_layer,
 
   object->set_is_bake_target(b_ob_info.real_object == b_bake_target);
 
+  object->set_section_mask(get_section_mask(b_ob, b_parent));
+
   /* sync the asset name for Cryptomatte */
   blender::Object *parent = b_ob.parent;
   ustring parent_name;
@@ -375,6 +378,123 @@ Object *BlenderSync::sync_object(blender::ViewLayer &b_view_layer,
   }
 
   return object;
+}
+
+/* Sections */
+
+static const blender::ID *section_original_id(const blender::ID *id)
+{
+  return (id && id->orig_id) ? id->orig_id : id;
+}
+
+void BlenderSync::sync_sections(blender::ViewLayer &b_view_layer)
+{
+  section_targets_.clear();
+  vector<KernelSection> sections;
+
+  for (blender::Base &b_base : b_view_layer.object_bases) {
+    blender::Object *b_ob = b_base.object;
+    if (b_ob == nullptr || b_ob->type != blender::OB_EMPTY) {
+      continue;
+    }
+    blender::PointerRNA b_ob_rna = RNA_id_pointer_create(&b_ob->id);
+    blender::PointerRNA cobject = RNA_pointer_get(&b_ob_rna, "cycles");
+    if (!get_boolean(cobject, "is_section") || !get_boolean(cobject, "section_enabled")) {
+      continue;
+    }
+    if (sections.size() == KERNEL_MAX_SECTIONS) {
+      LOG_WARNING << "Only " << KERNEL_MAX_SECTIONS << " sections are supported.";
+      break;
+    }
+
+    KernelSection ksection = {};
+    const bool is_box = get_enum(cobject, "section_shape") == 1;
+    Transform tfm = get_transform(b_ob->object_to_world());
+    if (is_box) {
+      /* The box is the cube the empty draws. */
+      const float size = max(b_ob->empty_drawsize, 1e-6f);
+      tfm = tfm * transform_scale(make_float3(size, size, size));
+    }
+    ksection.itfm = transform_inverse(tfm);
+
+    const float3 cap_color = get_float3(cobject, "section_cap_color");
+    ksection.cap_color[0] = cap_color.x;
+    ksection.cap_color[1] = cap_color.y;
+    ksection.cap_color[2] = cap_color.z;
+    ksection.cap_mode = get_enum(cobject, "section_cap_mode");
+    ksection.flags = (is_box ? SECTION_BOX : 0) |
+                     (get_boolean(cobject, "section_invert") ? SECTION_INVERT : 0) |
+                     (get_boolean(cobject, "section_affect_lighting") ? SECTION_AFFECT_LIGHTING :
+                                                                        0) |
+                     (get_boolean(cobject, "section_camera_only") ? SECTION_CAMERA_ONLY : 0) |
+                     (get_boolean(cobject, "section_cap") ? SECTION_CAP : 0);
+    sections.push_back(ksection);
+
+    /* Targets: the objects and collections listed, or else every object. */
+    SectionTargets targets;
+    blender::CollectionPropertyIterator iter;
+    for (RNA_collection_begin(&cobject, "section_targets", &iter); iter.valid;
+         RNA_property_collection_next(&iter))
+    {
+      blender::PointerRNA item = iter.ptr;
+      const blender::PointerRNA target = RNA_pointer_get(&item, "object");
+      if (target.data) {
+        targets.objects.push_back(section_original_id(static_cast<blender::ID *>(target.data)));
+      }
+    }
+    RNA_property_collection_end(&iter);
+    for (RNA_collection_begin(&cobject, "section_target_collections", &iter); iter.valid;
+         RNA_property_collection_next(&iter))
+    {
+      blender::PointerRNA item = iter.ptr;
+      const blender::PointerRNA target = RNA_pointer_get(&item, "collection");
+      if (target.data) {
+        targets.collections.push_back(
+            reinterpret_cast<blender::Collection *>(const_cast<blender::ID *>(
+                section_original_id(static_cast<blender::ID *>(target.data)))));
+      }
+    }
+    RNA_property_collection_end(&iter);
+    targets.all = targets.objects.empty() && targets.collections.empty();
+    section_targets_.push_back(std::move(targets));
+  }
+
+  scene->object_manager->set_sections(scene, sections);
+}
+
+uint BlenderSync::get_section_mask(blender::Object &b_ob, blender::Object *b_parent)
+{
+  if (section_targets_.empty()) {
+    return 0;
+  }
+  const blender::ID *ob_id = section_original_id(&b_ob.id);
+  const blender::ID *parent_id = section_original_id(b_parent ? &b_parent->id : nullptr);
+  blender::Object *ob = reinterpret_cast<blender::Object *>(const_cast<blender::ID *>(ob_id));
+  blender::Object *parent = reinterpret_cast<blender::Object *>(
+      const_cast<blender::ID *>(parent_id));
+
+  uint mask = 0;
+  for (size_t i = 0; i < section_targets_.size(); i++) {
+    const SectionTargets &targets = section_targets_[i];
+    bool cut = targets.all;
+    for (const blender::ID *id : targets.objects) {
+      if (cut) {
+        break;
+      }
+      cut = (id == ob_id) || (parent && id == parent_id);
+    }
+    for (blender::Collection *collection : targets.collections) {
+      if (cut) {
+        break;
+      }
+      cut = blender::BKE_collection_has_object_recursive(collection, ob) ||
+            (parent && blender::BKE_collection_has_object_recursive(collection, parent));
+    }
+    if (cut) {
+      mask |= (1u << i);
+    }
+  }
+  return mask;
 }
 
 static float4 lookup_instance_property(blender::Object &ob,
@@ -500,6 +620,11 @@ void BlenderSync::sync_objects(blender::Depsgraph &b_depsgraph,
   blender::ViewLayer &b_view_layer = *DEG_get_evaluated_view_layer(&b_depsgraph);
 
   BKE_view_layer_synced_ensure(*b_data, b_scene, &b_view_layer);
+
+  /* Sections first: objects refer to them. */
+  if (motion_time == 0.0f) {
+    sync_sections(b_view_layer);
+  }
 
   blender::DEGObjectIterSettings deg_iter_settings{};
   deg_iter_settings.depsgraph = &b_depsgraph;

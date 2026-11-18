@@ -26,6 +26,7 @@ DeviceScene::DeviceScene(Device *device)
       points(device, "points", MEM_GLOBAL),
       points_shader(device, "points_shader", MEM_GLOBAL),
       objects(device, "objects", MEM_GLOBAL),
+      sections(device, "sections", MEM_GLOBAL),
       object_motion_pass(device, "object_motion_pass", MEM_GLOBAL),
       object_motion(device, "object_motion", MEM_GLOBAL),
       object_flag(device, "object_flag", MEM_GLOBAL),

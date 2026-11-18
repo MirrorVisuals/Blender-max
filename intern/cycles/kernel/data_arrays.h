@@ -23,6 +23,7 @@ KERNEL_DATA_ARRAY(float2, prim_time)
 
 /* objects */
 KERNEL_DATA_ARRAY(KernelObject, objects)
+KERNEL_DATA_ARRAY(KernelSection, sections)
 KERNEL_DATA_ARRAY(Transform, object_motion_pass)
 KERNEL_DATA_ARRAY(DecomposedTransform, object_motion)
 KERNEL_DATA_ARRAY(uint, object_flag)

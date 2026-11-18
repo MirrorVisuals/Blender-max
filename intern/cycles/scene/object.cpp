@@ -106,6 +106,7 @@ NODE_DEFINE(Object)
 
   SOCKET_STRING(lightgroup, "Light Group", ustring());
   SOCKET_UINT(receiver_light_set, "Light Set Index", 0);
+  SOCKET_UINT(section_mask, "Section Mask", 0);
   SOCKET_UINT64(light_set_membership, "Light Set Membership", LIGHT_LINK_MASK_ALL);
   SOCKET_UINT(blocker_shadow_set, "Shadow Set Index", 0);
   SOCKET_UINT64(shadow_set_membership, "Shadow Set Membership", LIGHT_LINK_MASK_ALL);
@@ -719,6 +720,7 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
 
   kobject.visibility = ob->visibility_for_tracing();
   kobject.primitive_type = geom->primitive_type();
+  kobject.section_mask = ob->section_mask;
 
   /* Object shadow caustics flag */
   if (ob->is_caustics_caster) {
@@ -906,6 +908,17 @@ void ObjectManager::device_update(Device *device,
   LOG_INFO << "Total " << scene->objects.size() << " objects.";
 
   device_free(device, dscene, false);
+
+  /* Sections. */
+  dscene->data.integrator.num_sections = int(sections_.size());
+  if (!sections_.empty()) {
+    KernelSection *ksections = dscene->sections.alloc(sections_.size());
+    std::copy(sections_.begin(), sections_.end(), ksections);
+    dscene->sections.copy_to_device();
+  }
+  else {
+    dscene->sections.free();
+  }
 
   if (scene->objects.empty()) {
     return;
@@ -1160,8 +1173,40 @@ void ObjectManager::device_update_geom_offsets(Device * /*unused*/,
   }
 }
 
+void ObjectManager::set_sections(Scene *scene, const vector<KernelSection> &sections)
+{
+  if (sections.size() == sections_.size() &&
+      (sections.empty() ||
+       memcmp(sections.data(), sections_.data(), sizeof(KernelSection) * sections.size()) == 0))
+  {
+    return;
+  }
+  const bool had_section_shadows = need_section_shadows();
+  sections_ = sections;
+  tag_update(scene, OBJECT_MODIFIED);
+  if (need_section_shadows() != had_section_shadows) {
+    scene->shader_manager->tag_update(scene, ShaderManager::SHADER_MODIFIED);
+  }
+}
+
+bool ObjectManager::need_section_shadows() const
+{
+  for (const KernelSection &section : sections_) {
+    if (!(section.flags & SECTION_AFFECT_LIGHTING)) {
+      return true;
+    }
+    if ((section.flags & SECTION_CAP) && section.cap_mode != SECTION_CAP_FLAT) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void ObjectManager::device_free(Device * /*unused*/, DeviceScene *dscene, bool force_free)
 {
+  if (force_free) {
+    dscene->sections.free();
+  }
   dscene->objects.free_if_need_realloc(force_free);
   dscene->object_motion_pass.free_if_need_realloc(force_free);
   dscene->object_motion.free_if_need_realloc(force_free);

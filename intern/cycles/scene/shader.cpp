@@ -70,6 +70,11 @@ NODE_DEFINE(Shader)
 
   SOCKET_FLOAT(volume_step_rate, "Volume Step Rate", 1.0f);
 
+  SOCKET_BOOLEAN(use_quick_caustics, "Use Quick Caustics", false);
+  SOCKET_FLOAT(quick_caustics_strength, "Quick Caustics Strength", 1.0f);
+  SOCKET_FLOAT(quick_caustics_depth, "Quick Caustics Depth", 2.0f);
+  SOCKET_FLOAT(quick_caustics_ior, "Quick Caustics IOR", 1.33f);
+
   static NodeEnum displacement_method_enum;
   displacement_method_enum.insert("bump", DISPLACE_BUMP);
   displacement_method_enum.insert("true", DISPLACE_TRUE);
@@ -642,6 +647,14 @@ void ShaderManager::device_update_common(Device * /*device*/,
     if (shader->has_surface_transparent && shader->get_use_transparent_shadow()) {
       flag |= SD_HAS_TRANSPARENT_SHADOW;
     }
+    if (scene->object_manager->need_section_shadows()) {
+      /* Shadow rays go through what sections cut away. */
+      flag |= SD_HAS_TRANSPARENT_SHADOW;
+    }
+    if (shader->get_use_quick_caustics()) {
+      /* Shadow rays stop at the surface to get the light it refracts. */
+      flag |= SD_HAS_TRANSPARENT_SHADOW;
+    }
     if (shader->has_surface_raytrace) {
       flag |= SD_HAS_RAYTRACE;
     }
@@ -706,6 +719,12 @@ void ShaderManager::device_update_common(Device * /*device*/,
     kshader->constant_emission[1] = shader->emission_estimate.y;
     kshader->constant_emission[2] = shader->emission_estimate.z;
     kshader->cryptomatte_id = util_hash_to_float(cryptomatte_id);
+    const bool use_quick_caustics = shader->get_use_quick_caustics() &&
+                                    shader->get_quick_caustics_depth() > 0.0f;
+    kshader->quick_caustics_strength = shader->get_quick_caustics_strength();
+    kshader->quick_caustics_depth = use_quick_caustics ? shader->get_quick_caustics_depth() : 0.0f;
+    kshader->quick_caustics_ior = shader->get_quick_caustics_ior();
+    kshader->pad1 = kshader->pad2 = kshader->pad3 = 0.0f;
     kshader++;
 
     has_transparent_shadow |= (flag & SD_HAS_TRANSPARENT_SHADOW) != 0;

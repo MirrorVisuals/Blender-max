@@ -90,6 +90,7 @@ set(ADDON_FILES
   addon/operators.py
   addon/osl.py
   addon/presets.py
+  addon/sections.py
   addon/properties.py
   addon/ui.py
   addon/version_update.py

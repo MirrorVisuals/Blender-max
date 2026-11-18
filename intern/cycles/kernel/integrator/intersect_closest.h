@@ -14,6 +14,8 @@
 
 #include "kernel/bvh/bvh.h"
 
+#include "kernel/geom/section.h"
+
 CCL_NAMESPACE_BEGIN
 
 ccl_device_forceinline bool integrator_intersect_skip_lights(KernelGlobals kg,
@@ -384,6 +386,50 @@ ccl_device void integrator_intersect_closest(KernelGlobals kg,
   ray.self.light_object = OBJECT_NONE;
   ray.self.light_prim = PRIM_NONE;
   bool hit = scene_intersect(kg, &ray, visibility, &isect);
+
+  /* Sections: skip what they cut away, and find the cap of a cut object. */
+  if (kernel_data.integrator.num_sections > 0) {
+    const uint32_t section_flag = INTEGRATOR_STATE(state, path, flag);
+    const bool from_cap = (section_flag & PATH_RAY_SECTION_FROM_CAP) != 0;
+    if (section_flag & (PATH_RAY_SECTION_CAP | PATH_RAY_SECTION_FROM_CAP)) {
+      INTEGRATOR_STATE_WRITE(state, path, flag) &= ~(PATH_RAY_SECTION_CAP |
+                                                     PATH_RAY_SECTION_FROM_CAP);
+    }
+
+    const float ray_tmin = ray.tmin;
+    for (int skipped = 0; hit; skipped++) {
+      if (!section_hit_clipped(kg, isect.object, ray.P + ray.D * isect.t, visibility, from_cap)) {
+        break;
+      }
+      if (skipped == SECTION_MAX_SKIPPED_HITS) {
+        hit = false;
+        break;
+      }
+      ray.tmin = intersection_t_offset(isect.t);
+      ray.self.object = isect.object;
+      ray.self.prim = isect.prim;
+      hit = scene_intersect(kg, &ray, visibility, &isect);
+    }
+
+    if (hit) {
+      float cap_t;
+      const int cap = section_cap_at_hit(kg, &ray, &isect, ray_tmin, visibility, from_cap, &cap_t);
+      if (cap != -1) {
+        /* The cap is shaded on the section, with the object and its back face hit. */
+        isect.t = cap_t;
+        uint32_t cap_flag = PATH_RAY_SECTION_CAP;
+        if (kernel_data_fetch(sections, cap).cap_mode != SECTION_CAP_FLAT) {
+          cap_flag |= PATH_RAY_SECTION_FROM_CAP;
+        }
+        INTEGRATOR_STATE_WRITE(state, path, flag) |= cap_flag;
+      }
+    }
+
+    /* Lights are intersected from the start of the ray again. */
+    ray.tmin = ray_tmin;
+    ray.self.object = last_isect_object;
+    ray.self.prim = last_isect_prim;
+  }
 
   /* TODO: remove this and do it in the various intersection functions instead. */
   if (!hit) {

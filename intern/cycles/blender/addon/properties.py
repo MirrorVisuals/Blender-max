@@ -10,6 +10,7 @@ from bpy.props import (
     CollectionProperty,
     EnumProperty,
     FloatProperty,
+    FloatVectorProperty,
     IntProperty,
     PointerProperty,
     StringProperty,
@@ -1205,6 +1206,35 @@ class CyclesMaterialSettings(bpy.types.PropertyGroup):
         min=0.001, max=1000.0, soft_min=0.1, soft_max=10.0, precision=4
     )
 
+    use_quick_caustics: BoolProperty(
+        name="Quick Caustics",
+        description="Light from the sun (and sky) goes through this surface and makes caustics on what is below "
+        "it, as with water. Quick and noise free, without tracing caustic light paths. The ripples must be "
+        "geometry (modeled, Displace or Ocean modifier, or true displacement), not bump mapping",
+        default=False,
+    )
+    quick_caustics_strength: FloatProperty(
+        name="Strength",
+        description="Contrast of the caustics: 0 lets the light through evenly, 1 is as the ripples focus it, "
+        "higher exaggerates them",
+        default=1.0,
+        min=0.0, soft_max=4.0,
+    )
+    quick_caustics_depth: FloatProperty(
+        name="Depth",
+        description="Distance below the surface over which the caustics fade out. Deeper, the light arrives "
+        "evenly",
+        default=2.0,
+        min=0.0, soft_max=20.0,
+        subtype='DISTANCE',
+    )
+    quick_caustics_ior: FloatProperty(
+        name="IOR",
+        description="Index of refraction of the surface, 1.33 for water",
+        default=1.33,
+        min=1.0, soft_max=2.5,
+    )
+
     @classmethod
     def register(cls):
         bpy.types.Material.cycles = PointerProperty(
@@ -1479,8 +1509,104 @@ class CyclesMeshSettings(bpy.types.PropertyGroup):
         del bpy.types.MetaBall.cycles
 
 
+class CyclesSectionTarget(bpy.types.PropertyGroup):
+    """An object a section cuts."""
+    __slots__ = ()
+
+    object: PointerProperty(name="Object", type=bpy.types.Object)
+
+
+class CyclesSectionCollection(bpy.types.PropertyGroup):
+    """A collection whose objects a section cuts."""
+    __slots__ = ()
+
+    collection: PointerProperty(name="Collection", type=bpy.types.Collection)
+
+
+enum_section_shape = (
+    ('PLANE', "Plane", "Cut away everything on the side the plane's normal points to"),
+    ('BOX', "Box", "Cut away everything inside the box (the cube the empty draws)"),
+)
+
+enum_section_cap_mode = (
+    ('FLAT', "Flat Color", "Fill the cut with a flat color, not lit (as a drawing)"),
+    ('LIT', "Lit Color", "Fill the cut with a color lit by the scene"),
+    ('MATERIAL', "Object Material", "Fill the cut with the material of the object that is cut"),
+)
+
+
+def _section_shape_update(self, _context):
+    # Draw the empty as what it cuts with.
+    ob = self.id_data
+    if isinstance(ob, bpy.types.Object) and ob.type == 'EMPTY':
+        ob.empty_display_type = 'CUBE' if self.section_shape == 'BOX' else 'PLANE'
+
+
 class CyclesObjectSettings(bpy.types.PropertyGroup):
     __slots__ = ()
+
+    # Sections (for empties).
+    is_section: BoolProperty(
+        name="Section",
+        description="This empty cuts the scene as an architectural section: the camera sees the geometry cut "
+        "away on one side, while the lighting stays as in the whole scene (Cycles)",
+        default=False,
+    )
+    section_enabled: BoolProperty(
+        name="Enabled",
+        description="Cut the scene with this section",
+        default=True,
+    )
+    section_shape: EnumProperty(
+        name="Shape",
+        items=enum_section_shape,
+        default='PLANE',
+        update=_section_shape_update,
+    )
+    section_invert: BoolProperty(
+        name="Invert",
+        description="Keep the other side of the plane, or only the inside of the box",
+        default=False,
+    )
+    section_cap: BoolProperty(
+        name="Cap",
+        description="Fill the cut of closed objects",
+        default=True,
+    )
+    section_cap_mode: EnumProperty(
+        name="Cap",
+        items=enum_section_cap_mode,
+        default='FLAT',
+    )
+    section_cap_color: FloatVectorProperty(
+        name="Cap Color",
+        subtype='COLOR',
+        size=3,
+        default=(0.8, 0.2, 0.1),
+        min=0.0, max=1.0,
+    )
+    section_affect_lighting: BoolProperty(
+        name="Keep Lighting",
+        description="What is cut away still blocks and bounces light, so the lighting inside stays as in the "
+        "whole building (only what is seen is cut). Off: the light comes in through the cut too",
+        default=True,
+    )
+    section_camera_only: BoolProperty(
+        name="Only Camera Rays",
+        description="Only what the camera sees directly is cut: reflections and refractions show the whole scene",
+        default=False,
+    )
+    section_targets: CollectionProperty(
+        name="Target Objects",
+        description="Objects this section cuts. With no objects and no collections, it cuts every object",
+        type=CyclesSectionTarget,
+    )
+    section_target_collections: CollectionProperty(
+        name="Target Collections",
+        description="Collections whose objects this section cuts",
+        type=CyclesSectionCollection,
+    )
+    section_ui_expanded: BoolProperty(default=True)
 
     use_motion_blur: BoolProperty(
         name="Use Motion Blur",
@@ -2108,6 +2234,8 @@ def register():
     bpy.utils.register_class(CyclesWorldSettings)
     bpy.utils.register_class(CyclesVisibilitySettings)
     bpy.utils.register_class(CyclesMeshSettings)
+    bpy.utils.register_class(CyclesSectionTarget)
+    bpy.utils.register_class(CyclesSectionCollection)
     bpy.utils.register_class(CyclesObjectSettings)
     bpy.utils.register_class(CyclesCurveRenderSettings)
     bpy.utils.register_class(CyclesDeviceSettings)
@@ -2129,6 +2257,8 @@ def unregister():
     bpy.utils.unregister_class(CyclesWorldSettings)
     bpy.utils.unregister_class(CyclesMeshSettings)
     bpy.utils.unregister_class(CyclesObjectSettings)
+    bpy.utils.unregister_class(CyclesSectionCollection)
+    bpy.utils.unregister_class(CyclesSectionTarget)
     bpy.utils.unregister_class(CyclesVisibilitySettings)
     bpy.utils.unregister_class(CyclesCurveRenderSettings)
     bpy.utils.unregister_class(CyclesDeviceSettings)

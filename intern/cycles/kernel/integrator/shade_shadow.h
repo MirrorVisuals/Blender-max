@@ -12,6 +12,10 @@
 #include "kernel/geom/shader_data.h"
 #include "kernel/light/light.h"
 
+#include "kernel/closure/bsdf_util.h"
+
+#include "kernel/geom/section.h"
+
 CCL_NAMESPACE_BEGIN
 
 enum TransparentShadowEvalResult {
@@ -85,6 +89,140 @@ ccl_device_inline bool shadow_intersections_has_remaining(const uint packed_num_
 }
 
 #ifdef __TRANSPARENT_SHADOWS__
+
+/* Quick Caustics
+ *
+ * Sunlight (or light from the sky) through a water surface onto what is below it, without
+ * tracing caustic paths, as the quick sun caustics of V-Ray. Shadow rays of distant lights go
+ * through the surface instead of being blocked by it, carrying the light that the surface
+ * refracts towards the shaded point:
+ *
+ * The rays of a distant light are parallel. Each point of the surface bends them by its normal,
+ * so a small patch of the surface sends its light to a patch of another size below it: where the
+ * ripples focus the light the patch is smaller and brighter (the bright lines), where they spread
+ * it larger and darker. The ratio of the two areas is the brightness of the caustic. It is
+ * measured at the point where the shadow ray crosses the surface, from the smooth vertex normals
+ * of the triangle (so displaced or modeled ripples, not bump mapping), on a plane through the
+ * shaded point facing the light. */
+
+/* Brightest focus, to keep the focal lines of a ripple (where the area goes to zero) finite. */
+#  define QUICK_CAUSTICS_MAX_FOCUS 24.0f
+
+ccl_device_inline float3 quick_caustics_normal(KernelGlobals kg,
+                                               const ccl_private ShaderData *sd,
+                                               const float u,
+                                               const float v,
+                                               const float3 L)
+{
+  float3 N = triangle_smooth_normal(kg, sd->Ng, sd->object, sd->object_flag, sd->prim, u, v);
+  if (!(sd->object_flag & SD_OBJECT_TRANSFORM_APPLIED)) {
+    object_normal_transform(kg, sd, &N);
+  }
+  /* Facing the light: the light enters the surface from that side. */
+  return (dot(N, L) < 0.0f) ? -N : N;
+}
+
+/* Where the light that reaches the surface at `x` (with normal `N`), refracted, crosses the plane
+ * facing the light at `height` below `x`. */
+ccl_device_inline float3 quick_caustics_project(
+    const float3 x, const float3 N, const float3 L, const float eta, const float height)
+{
+  const float cos_i = dot(L, N);
+  const float k = 1.0f - eta * eta * (1.0f - cos_i * cos_i);
+  const float3 T = -eta * L + (eta * cos_i - sqrtf(max(k, 0.0f))) * N;
+  const float down = max(-dot(T, L), 1e-3f);
+  return x + T * (height / down);
+}
+
+ccl_device_inline float3 quick_caustics_on_plane(const float3 a, const float3 L)
+{
+  return a - L * dot(a, L);
+}
+
+/* Brightness of the light refracted by the surface at the receiver `height` below it: 1 for a
+ * flat surface, more where it focuses the light, less where it spreads it. */
+ccl_device float quick_caustics_focus(KernelGlobals kg,
+                                      const ccl_private ShaderData *sd,
+                                      const float3 L,
+                                      const float height,
+                                      const float eta)
+{
+  if (sd->type != PRIMITIVE_TRIANGLE || !(sd->shader & SHADER_SMOOTH_NORMAL)) {
+    return 1.0f;
+  }
+
+  /* Neighbors of the hit on the triangle (the normals are linear over it). Shader setup flips the
+   * derivatives of back faces, undo that to match the vertex normals. */
+  const float eps = 0.01f;
+  const float flip = (sd->flag & SD_BACKFACING) ? -1.0f : 1.0f;
+  const float3 x0 = sd->P;
+  const float3 xu = x0 + sd->dPdu * (eps * flip);
+  const float3 xv = x0 + sd->dPdv * (eps * flip);
+
+  const float3 N0 = quick_caustics_normal(kg, sd, sd->u, sd->v, L);
+  const float3 Nu = quick_caustics_normal(kg, sd, sd->u + eps, sd->v, L);
+  const float3 Nv = quick_caustics_normal(kg, sd, sd->u, sd->v + eps, L);
+
+  const float hu = height + dot(xu - x0, L);
+  const float hv = height + dot(xv - x0, L);
+
+  /* Cross-section of the beam at the receiver, refracted by the ripples, and by a flat surface
+   * there (the face of the triangle): their ratio is the focus of the ripples alone, so a flat
+   * surface lets the light through evenly whatever the angle of the light. */
+  const float3 q0 = quick_caustics_project(x0, N0, L, eta, height);
+  const float3 qu = quick_caustics_project(xu, Nu, L, eta, hu);
+  const float3 qv = quick_caustics_project(xv, Nv, L, eta, hv);
+
+  const float3 Nf = (dot(sd->Ng, L) < 0.0f) ? -sd->Ng : sd->Ng;
+  const float3 f0 = quick_caustics_project(x0, Nf, L, eta, height);
+  const float3 fu = quick_caustics_project(xu, Nf, L, eta, hu);
+  const float3 fv = quick_caustics_project(xv, Nf, L, eta, hv);
+
+  const float area_flat = len(
+      cross(quick_caustics_on_plane(fu - f0, L), quick_caustics_on_plane(fv - f0, L)));
+  const float area_ripples = len(
+      cross(quick_caustics_on_plane(qu - q0, L), quick_caustics_on_plane(qv - q0, L)));
+  if (!(area_flat > 0.0f)) {
+    return 1.0f;
+  }
+  if (!(area_ripples * QUICK_CAUSTICS_MAX_FOCUS > area_flat)) {
+    return QUICK_CAUSTICS_MAX_FOCUS;
+  }
+  return area_flat / area_ripples;
+}
+
+/* Light through a Quick Caustics surface, or a negative value when it does not apply (not a
+ * distant light, or Quick Caustics off): then the surface casts its shadow as usual. */
+ccl_device float quick_caustics_transmission(KernelGlobals kg,
+                                             const ccl_private ShaderData *sd,
+                                             const ccl_private Ray *ray,
+                                             const float t)
+{
+  const KernelShader kshader = kernel_data_fetch(shaders, sd->shader & SHADER_MASK);
+  const float depth = kshader.quick_caustics_depth;
+  if (!(depth > 0.0f) || ray->tmax != FLT_MAX) {
+    return -1.0f;
+  }
+
+  const float3 L = ray->D;
+  const float ior = max(kshader.quick_caustics_ior, 1.0f);
+  const float eta = 1.0f / ior;
+
+  /* Light lost to the reflection at the surface. */
+  const float3 N = quick_caustics_normal(kg, sd, sd->u, sd->v, L);
+  const float transmission = 1.0f - fresnel_dielectric_cos(dot(L, N), ior);
+
+  /* The pattern fades out towards Depth, deeper the light arrives evenly. */
+  const float fade = 1.0f - smoothstep(0.75f * depth, depth, t);
+  if (!(fade > 0.0f)) {
+    return transmission;
+  }
+  const float focus = quick_caustics_focus(kg, sd, L, t, eta);
+  const float brightness = max(1.0f + kshader.quick_caustics_strength * fade * (focus - 1.0f),
+                               0.0f);
+  return transmission * brightness;
+}
+
 ccl_device_inline Spectrum
 integrate_transparent_surface_shadow(KernelGlobals kg,
                                      IntegratorShadowState state,
@@ -107,6 +245,19 @@ integrate_transparent_surface_shadow(KernelGlobals kg,
 
   Ray ray ccl_optional_struct_init;
   integrator_state_read_shadow_ray(state, &ray);
+
+  /* Sections: light goes through what they cut away, when the cut is real for the light or the
+   * light is for a cap. */
+  if (kernel_data.integrator.num_sections > 0 &&
+      section_shadow_hit_clipped(
+          kg,
+          isect.object,
+          ray.P + ray.D * isect.t,
+          (INTEGRATOR_STATE(state, shadow_path, flag) & PATH_RAY_SECTION_FROM_CAP) != 0))
+  {
+    result = SHADER_EVAL_OK;
+    return one_spectrum();
+  }
 
   shader_setup_from_ray(kg, shadow_sd, &ray, &isect);
 
@@ -136,6 +287,13 @@ integrate_transparent_surface_shadow(KernelGlobals kg,
 
   /* Compute transparency from closures. */
   result = SHADER_EVAL_OK;
+
+  /* Quick Caustics: the light that the surface refracts, instead of its shadow. */
+  const float caustics = quick_caustics_transmission(kg, shadow_sd, &ray, isect.t);
+  if (caustics >= 0.0f) {
+    return make_spectrum(caustics);
+  }
+
   return surface_shader_transparency(shadow_sd);
 }
 

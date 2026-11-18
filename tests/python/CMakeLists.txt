@@ -696,6 +696,16 @@ if(WITH_CYCLES)
     cycles_light_mix
     --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_light_mix.py
   )
+
+  add_blender_test(
+    cycles_quick_caustics
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_quick_caustics.py
+  )
+
+  add_blender_test(
+    cycles_sections
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_sections.py
+  )
 endif()
 
 add_blender_test(

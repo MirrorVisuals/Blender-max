@@ -1717,6 +1717,10 @@ void BlenderSync::sync_materials(blender::Depsgraph &b_depsgraph,
       shader->set_volume_interpolation_method(get_volume_interpolation(cmat));
       shader->set_volume_step_rate(get_float(cmat, "volume_step_rate"));
       shader->set_displacement_method(get_displacement_method(b_mat));
+      shader->set_use_quick_caustics(get_boolean(cmat, "use_quick_caustics"));
+      shader->set_quick_caustics_strength(get_float(cmat, "quick_caustics_strength"));
+      shader->set_quick_caustics_depth(get_float(cmat, "quick_caustics_depth"));
+      shader->set_quick_caustics_ior(get_float(cmat, "quick_caustics_ior"));
 
       shader->set_graph(std::move(graph));
 

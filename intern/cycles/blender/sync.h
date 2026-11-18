@@ -176,6 +176,16 @@ class BlenderSync {
                       TaskPool *geom_task_pool);
   void sync_object_motion_init(blender::Object &b_parent, blender::Object &b_ob, Object *object);
 
+  /* Sections: empties marked as section in the view layer, and the objects they cut. */
+  struct SectionTargets {
+    bool all = true;
+    vector<const blender::ID *> objects;
+    vector<blender::Collection *> collections;
+  };
+  vector<SectionTargets> section_targets_;
+  void sync_sections(blender::ViewLayer &b_view_layer);
+  uint get_section_mask(blender::Object &b_ob, blender::Object *b_parent);
+
   void sync_procedural(blender::Object &b_ob,
                        blender::MeshSequenceCacheModifier &b_mesh_cache,
                        bool has_subdivision);

@@ -10,7 +10,8 @@ Blender-max
 An experimental fork of **Blender 5.2.3 LTS** that brings a 3ds Max style modifier workflow to
 Blender: editable modeling levels in the modifier stack, UVW Map and Unwrap modifiers, a solid
 Extrude Manifold, a Slice Plane, camera tilt correction, a V-Ray style frame buffer with
-interactive render and Light Mix, and a few more rendering extras. Branch: `edit-poly-stack`.
+interactive render and Light Mix, quick sun caustics, architectural sections, and a few more
+rendering extras. Branch: `edit-poly-stack`.
 Experimental and unofficial: not affiliated with the Blender Foundation.
 
 What is different from Blender 5.2.3
@@ -210,6 +211,40 @@ sidebars, and in a Light Mix button of the Image Editor header.
   just to have something to mix) are there too.
 - **From the Light Mix add-on:** Import Light Mix Add-on Mix takes over its settings and
   removes its compositor nodes. Disable the add-on afterwards.
+
+### Cycles: Quick Caustics, as V-Ray's quick sun caustics
+
+Sunlight through water onto what is below it, without tracing caustic paths: quick and free of
+noise, on CPU and GPU. It is in Material Properties > Settings > Quick Caustics.
+
+- **Strength** (contrast of the pattern), **Depth** (the pattern fades out over this distance
+  below the surface) and **IOR** (1.33 for water).
+- Shadow rays of the sun and the sky go through the surface. The brightness of the light
+  below it comes from how its ripples focus the parallel light of the sun: bright lines where
+  they focus it, darker cells where they spread it. A flat surface lets the light through
+  evenly, less what it reflects.
+- The caustics are sunlight: in the Combined and direct light passes, and in the light group
+  of the sun (so the Light Mix and the denoiser handle them).
+- The ripples must be geometry (modeled, a Displace or Ocean modifier, or true displacement),
+  not bump mapping. Other lights are shadowed by the surface as before.
+
+### Cycles: Sections, as the ArchViz Clipper
+
+Architectural sections and cut-aways rendered by Cycles, without booleans or changes to the
+materials. Add > Section (or Section Box), or the Sections tab of the 3D View sidebar.
+
+- **A section is an empty:** a plane cuts away the side its normal points to, a box its inside
+  (Invert keeps the other side, or only the inside of the box). Move or rotate it and the render
+  follows at once.
+- **The lighting stays:** the camera sees the building cut open, while the sun and the bounced
+  light still see the whole building, so the inside stays lit as it is. **Keep Lighting** off
+  lets the light in through the cut too.
+- **Caps:** the cut of closed objects is filled on the section, with a **Flat Color**, a **Lit
+  Color** or the **Object Material**.
+- **Targets:** the objects (and collection instances) and collections a section cuts, or every
+  object. **Only Camera Rays** keeps reflections and refractions uncut.
+- Several sections at once, each with on/off, and **Clean All**. Cycles only for now: Solid
+  view and EEVEE do not show the cut yet.
 
 ### Preferences: Scene Selector Position
 

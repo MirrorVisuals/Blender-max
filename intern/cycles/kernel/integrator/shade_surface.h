@@ -14,7 +14,11 @@
 #include "kernel/light/sample.h"
 
 #include "kernel/geom/motion_triangle.h"
+#include "kernel/geom/section.h"
 #include "kernel/geom/triangle.h"
+
+#include "kernel/closure/bsdf_diffuse.h"
+#include "kernel/closure/emissive.h"
 
 #include "kernel/integrator/guiding.h"
 #include "kernel/integrator/shadow_linking.h"
@@ -37,6 +41,78 @@ ccl_device_forceinline void integrate_surface_shader_setup(KernelGlobals kg,
   integrator_state_read_ray(state, &ray);
 
   shader_setup_from_ray(kg, sd, &ray, &isect);
+
+  /* Sections: the cap is on the section, facing the ray, instead of the back face that was hit
+   * (see kernel/geom/section.h). */
+  if (INTEGRATOR_STATE(state, path, flag) & PATH_RAY_SECTION_CAP) {
+    float t;
+    float3 N;
+    if (section_cap_find(kg,
+                         sd->object,
+                         ray.P,
+                         ray.D,
+                         0.0f,
+                         isect.t * 1.0001f + 1e-5f,
+                         path_state_ray_visibility(state),
+                         false,
+                         &t,
+                         &N) != -1)
+    {
+      sd->P = ray.P + ray.D * t;
+      sd->N = N;
+      sd->Ng = N;
+      sd->flag &= ~SD_BACKFACING;
+      sd->ray_length = t;
+    }
+  }
+}
+
+/* Sections: a cap of a flat or lit color instead of the material of the object. */
+ccl_device_forceinline void integrate_surface_section_cap_closures(KernelGlobals kg,
+                                                                   ConstIntegratorState state,
+                                                                   ccl_private ShaderData *sd)
+{
+  Intersection isect ccl_optional_struct_init;
+  integrator_state_read_isect(state, &isect);
+  Ray ray ccl_optional_struct_init;
+  integrator_state_read_ray(state, &ray);
+
+  float t;
+  float3 N;
+  const int cap = section_cap_find(kg,
+                                   sd->object,
+                                   ray.P,
+                                   ray.D,
+                                   0.0f,
+                                   isect.t * 1.0001f + 1e-5f,
+                                   path_state_ray_visibility(state),
+                                   false,
+                                   &t,
+                                   &N);
+  if (cap == -1) {
+    return;
+  }
+  const KernelSection section = kernel_data_fetch(sections, cap);
+  if (section.cap_mode == SECTION_CAP_MATERIAL) {
+    return;
+  }
+
+  /* Replace the closures of the material. */
+  const int capacity = sd->num_closure + sd->num_closure_left;
+  sd->num_closure = 0;
+  sd->num_closure_left = capacity;
+  sd->flag &= ~SD_CLOSURE_FLAGS;
+  sd->closure_transparent_extinction = zero_spectrum();
+  sd->closure_emission_background = zero_spectrum();
+
+  const Spectrum color = rgb_to_spectrum(
+      make_float3(section.cap_color[0], section.cap_color[1], section.cap_color[2]));
+  if (section.cap_mode == SECTION_CAP_FLAT) {
+    emission_setup(sd, color);
+  }
+  else {
+    bsdf_diffuse_setup(sd, sd->N, color);
+  }
 }
 
 ccl_device_forceinline float3 integrate_surface_ray_offset(KernelGlobals kg,
@@ -791,6 +867,10 @@ ccl_device int integrate_surface(KernelGlobals kg,
 
     if (sd.flag & SD_CACHE_MISS) {
       return LABEL_CACHE_MISS;
+    }
+
+    if (path_flag & PATH_RAY_SECTION_CAP) {
+      integrate_surface_section_cap_closures(kg, state, &sd);
     }
 
     /* After shader evaluation, in case of texture cache miss. */

@@ -71,6 +71,9 @@ class Object : public Node {
 
   NODE_SOCKET_API(ustring, lightgroup)
   NODE_SOCKET_API(uint, receiver_light_set)
+
+  /* Sections that cut this object, a bit per section of ObjectManager::set_sections. */
+  NODE_SOCKET_API(uint, section_mask)
   NODE_SOCKET_API(uint64_t, light_set_membership)
   NODE_SOCKET_API(uint, blocker_shadow_set)
   NODE_SOCKET_API(uint64_t, shadow_set_membership)
@@ -191,7 +194,14 @@ class ObjectManager {
   string get_cryptomatte_objects(Scene *scene);
   string get_cryptomatte_assets(Scene *scene);
 
+  /* Sections (see kernel/geom/section.h). Objects refer to them by index in `section_mask`. */
+  void set_sections(Scene *scene, const vector<KernelSection> &sections);
+  /* Shadow rays have to go through what sections cut away: transparent shadows are needed. */
+  bool need_section_shadows() const;
+
  protected:
+  vector<KernelSection> sections_;
+
   void device_update_object_transform(UpdateObjectTransformState *state,
                                       Object *ob,
                                       bool update_all,

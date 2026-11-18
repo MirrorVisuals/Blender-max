@@ -138,6 +138,7 @@ set(SRC_KERNEL_GEOM_HEADERS
   geom/point.h
   geom/point_intersect.h
   geom/primitive.h
+  geom/section.h
   geom/shader_data.h
   geom/triangle.h
   geom/triangle_intersect.h

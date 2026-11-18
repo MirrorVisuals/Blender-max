@@ -2118,6 +2118,33 @@ class CYCLES_MATERIAL_PT_settings_surface(CyclesButtonsPanel, Panel):
         self.draw_shared(self, context.material)
 
 
+class CYCLES_MATERIAL_PT_settings_quick_caustics(CyclesButtonsPanel, Panel):
+    bl_label = "Quick Caustics"
+    bl_parent_id = "CYCLES_MATERIAL_PT_settings"
+    bl_context = "material"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return CyclesButtonsPanel.poll(context) and context.material is not None
+
+    def draw_header(self, context):
+        self.layout.prop(context.material.cycles, "use_quick_caustics", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        cmat = context.material.cycles
+        col = layout.column()
+        col.active = cmat.use_quick_caustics
+        col.prop(cmat, "quick_caustics_strength")
+        col.prop(cmat, "quick_caustics_depth")
+        col.prop(cmat, "quick_caustics_ior", text="IOR")
+        col.label(text="Sun and sky light only. Ripples must be geometry", icon='INFO')
+
+
 class CYCLES_MATERIAL_PT_settings_volume(CyclesButtonsPanel, Panel):
     bl_label = "Volume"
     bl_translation_context = i18n_contexts.id_id
@@ -2723,6 +2750,7 @@ classes = (
     CYCLES_MATERIAL_PT_displacement,
     CYCLES_MATERIAL_PT_settings,
     CYCLES_MATERIAL_PT_settings_surface,
+    CYCLES_MATERIAL_PT_settings_quick_caustics,
     CYCLES_MATERIAL_PT_settings_volume,
     CYCLES_RENDER_PT_bake,
     CYCLES_RENDER_PT_bake_influence,

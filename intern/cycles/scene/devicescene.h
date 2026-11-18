@@ -40,6 +40,7 @@ class DeviceScene {
 
   /* objects */
   device_vector<KernelObject> objects;
+  device_vector<KernelSection> sections;
   device_vector<Transform> object_motion_pass;
   device_vector<DecomposedTransform> object_motion;
   device_vector<uint> object_flag;
