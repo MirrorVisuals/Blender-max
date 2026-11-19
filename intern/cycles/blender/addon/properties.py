@@ -1547,11 +1547,16 @@ enum_decal_list_mode = (
 )
 
 
+def decal_display_type(shape):
+    # A planar decal draws as its box; a cylindrical one as its axis, its cylinder drawn over it
+    # (see decals.py).
+    return 'SINGLE_ARROW' if shape == 'CYLINDER' else 'CUBE'
+
+
 def _decal_shape_update(self, _context):
-    # Draw the empty as the box the decal is projected in.
     ob = self.id_data
     if isinstance(ob, bpy.types.Object) and ob.type == 'EMPTY':
-        ob.empty_display_type = 'CUBE'
+        ob.empty_display_type = decal_display_type(self.decal_shape)
 
 
 def _section_shape_update(self, _context):

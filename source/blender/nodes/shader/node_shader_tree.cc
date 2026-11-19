@@ -29,6 +29,7 @@
 
 #include "BKE_context.hh"
 #include "BKE_global.hh"
+#include "BKE_idprop.hh"
 #include "BKE_layer.hh"
 #include "BKE_lib_id.hh"
 #include "BKE_linestyle.h"
@@ -63,6 +64,46 @@ static bool shader_tree_poll(const bContext *C, bke::bNodeTreeType * /*treetype*
           !BKE_scene_use_shading_nodes_custom(scene));
 }
 
+/* A decal or section empty of Cycles has a material in its Cycles settings (the material of the
+ * decal, or of the caps of the section): edit it as the material of the empty. */
+static Material *empty_cycles_material(const Object *ob)
+{
+  for (const IDProperty *group : {ob->id.system_properties, ob->id.properties}) {
+    if (group == nullptr) {
+      continue;
+    }
+    const IDProperty *cycles = IDP_GetPropertyTypeFromGroup(group, "cycles", IDP_GROUP);
+    if (cycles == nullptr) {
+      continue;
+    }
+    auto get_bool = [&](const char *name) {
+      const IDProperty *prop = IDP_GetPropertyFromGroup(cycles, name);
+      if (prop == nullptr) {
+        return false;
+      }
+      if (prop->type == IDP_BOOLEAN) {
+        return IDP_bool_get(prop) != 0;
+      }
+      if (prop->type == IDP_INT) {
+        return IDP_int_get(prop) != 0;
+      }
+      return false;
+    };
+    auto get_material = [&](const char *name) -> Material * {
+      const IDProperty *prop = IDP_GetPropertyTypeFromGroup(cycles, name, IDP_ID);
+      ID *id = prop ? IDP_ID_get(prop) : nullptr;
+      return (id && GS(id->name) == ID_MA) ? id_cast<Material *>(id) : nullptr;
+    };
+    if (get_bool("is_decal")) {
+      return get_material("decal_material");
+    }
+    if (get_bool("is_section")) {
+      return get_material("section_cap_material");
+    }
+  }
+  return nullptr;
+}
+
 static void shader_get_from_context(const bContext *C,
                                     bke::bNodeTreeType * /*treetype*/,
                                     bNodeTree **r_ntree,
@@ -85,6 +126,9 @@ static void shader_get_from_context(const bContext *C,
       }
       else {
         Material *ma = BKE_object_material_get(ob, ob->actcol);
+        if (ma == nullptr && ob->type == OB_EMPTY) {
+          ma = empty_cycles_material(ob);
+        }
         if (ma) {
           *r_id = &ma->id;
           *r_ntree = ma->nodetree;

@@ -18,7 +18,7 @@ from bpy.app.translations import pgettext_tip as tip_
 from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel
 
-from .ui import CyclesButtonsPanel
+from .ui import CyclesButtonsPanel, panel_node_draw
 
 
 def scene_sections(scene):
@@ -225,6 +225,12 @@ def draw_section_settings(layout, ob):
         sub.prop(cob, "section_cap_material", text="")
         if cob.section_cap_material is None:
             sub.prop(cob, "section_cap_color", text="Color")
+        else:
+            header, body = sub.panel("CYCLES_section_cap_material_" + ob.name, default_closed=True)
+            header.label(text="Material Settings", icon='MATERIAL')
+            if body:
+                body.label(text="Also in the Shader Editor, with the section active", icon='NODETREE')
+                panel_node_draw(body, cob.section_cap_material, 'Surface')
     elif cob.section_cap_mode != 'MATERIAL':
         sub.prop(cob, "section_cap_color", text="Color")
     if cob.section_cap_mode in {'MATERIAL', 'CUSTOM'}:
@@ -278,23 +284,33 @@ class CYCLES_VIEW3D_PT_sections(Panel):
             layout.label(text="No sections yet", icon='INFO')
             return
 
+        active = context.active_object
+        if active is not None and not (active.type == 'EMPTY' and active.cycles.is_section):
+            active = None
+
+        # The list: one row per section, click one to edit it.
+        col = layout.box().column(align=True)
         for ob in sections:
             cob = ob.cycles
-            box = layout.box()
-            header = box.row(align=True)
-            header.prop(
-                cob, "section_ui_expanded", text="", emboss=False,
-                icon='TRIA_DOWN' if cob.section_ui_expanded else 'TRIA_RIGHT',
-            )
-            header.prop(
+            row = col.row(align=True)
+            row.prop(
                 cob, "section_enabled", text="", emboss=False,
                 icon='HIDE_OFF' if cob.section_enabled else 'HIDE_ON',
             )
-            header.prop(ob, "name", text="")
-            header.operator("cycles.section_select", text="", icon='RESTRICT_SELECT_OFF').section = ob.name
-            header.operator("cycles.section_remove", text="", icon='X').section = ob.name
-            if cob.section_ui_expanded:
-                draw_section_settings(box, ob)
+            op = row.operator(
+                "cycles.section_select", text=ob.name, depress=(ob == active),
+                icon='MESH_CUBE' if cob.section_shape == 'BOX' else 'MESH_PLANE',
+            )
+            op.section = ob.name
+            row.operator("cycles.section_remove", text="", icon='X', emboss=False).section = ob.name
+
+        # The settings of the active section only.
+        if active is None:
+            layout.label(text="Click a section to edit it", icon='INFO')
+        else:
+            box = layout.box()
+            box.prop(active, "name", text="", icon='MOD_BOOLEAN')
+            draw_section_settings(box, active)
 
         layout.separator()
         layout.operator("cycles.section_clean_all", icon='TRASH')

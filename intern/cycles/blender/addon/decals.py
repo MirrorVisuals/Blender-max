@@ -21,7 +21,8 @@ from bpy.app.translations import pgettext_tip as tip_
 from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel
 
-from .ui import CyclesButtonsPanel
+from .properties import decal_display_type
+from .ui import CyclesButtonsPanel, panel_node_draw
 
 
 # Decals listed in the sidebar at most: past that, only the selected ones.
@@ -87,7 +88,7 @@ class CYCLES_OT_decal_add(Operator):
 
     def execute(self, context):
         ob = bpy.data.objects.new("Decal", None)
-        ob.empty_display_type = 'CUBE'
+        ob.empty_display_type = decal_display_type(self.shape)
         ob.empty_display_size = 1.0
         ob.location = context.scene.cursor.location
         if self.shape == 'PLANE':
@@ -241,7 +242,12 @@ def draw_decal_settings(layout, ob):
     if cob.decal_material is None:
         col.label(text="Choose a material for the decal", icon='ERROR')
     else:
-        col.label(text="Textures use the decal UV, alpha shows the surface", icon='INFO')
+        # The material is edited here, or in the Shader Editor with the decal active.
+        header, body = col.panel("CYCLES_decal_material_" + ob.name, default_closed=True)
+        header.label(text="Material Settings", icon='MATERIAL')
+        if body:
+            body.label(text="Also in the Shader Editor, with the decal active", icon='NODETREE')
+            panel_node_draw(body, cob.decal_material, 'Surface')
 
     sub = col.column(align=True)
     sub.prop(cob, "decal_opacity")
@@ -306,28 +312,39 @@ class CYCLES_VIEW3D_PT_decals(Panel):
             layout.label(text="No decals yet", icon='INFO')
             return
 
+        active = context.active_object
+        if active is not None and not (active.type == 'EMPTY' and active.cycles.is_decal):
+            active = None
+
+        # The list: one row per decal, click one to edit it.
+        listed = decals
         if len(decals) > MAX_LISTED_DECALS:
             # Many decals (scattered stains, dirt...): only the selected ones are listed.
             layout.label(text=tip_("{:d} decals, the selected ones:").format(len(decals)), icon='INFO')
-            decals = [ob for ob in decals if ob.select_get()][:MAX_LISTED_DECALS]
-
-        for ob in decals:
+            listed = [ob for ob in decals if ob.select_get() or ob == active][:MAX_LISTED_DECALS]
+        col = layout.box().column(align=True)
+        for ob in listed:
             cob = ob.cycles
-            box = layout.box()
-            header = box.row(align=True)
-            header.prop(
-                cob, "decal_ui_expanded", text="", emboss=False,
-                icon='TRIA_DOWN' if cob.decal_ui_expanded else 'TRIA_RIGHT',
-            )
-            header.prop(
+            row = col.row(align=True)
+            row.prop(
                 cob, "decal_enabled", text="", emboss=False,
                 icon='HIDE_OFF' if cob.decal_enabled else 'HIDE_ON',
             )
-            header.prop(ob, "name", text="")
-            header.operator("cycles.decal_select", text="", icon='RESTRICT_SELECT_OFF').decal = ob.name
-            header.operator("cycles.decal_remove", text="", icon='X').decal = ob.name
-            if cob.decal_ui_expanded:
-                draw_decal_settings(box, ob)
+            op = row.operator(
+                "cycles.decal_select", text=ob.name, depress=(ob == active),
+                icon='MESH_CYLINDER' if cob.decal_shape == 'CYLINDER' else 'MOD_UVPROJECT',
+            )
+            op.decal = ob.name
+            row.operator("cycles.decal_remove", text="", icon='X', emboss=False).decal = ob.name
+
+        # The settings of the active decal only.
+        if active is None:
+            layout.label(text="Click a decal to edit it", icon='INFO')
+            return
+        box = layout.box()
+        row = box.row()
+        row.prop(active, "name", text="", icon='MOD_UVPROJECT')
+        draw_decal_settings(box, active)
 
 
 class CYCLES_OBJECT_PT_decal(CyclesButtonsPanel, Panel):
@@ -347,6 +364,110 @@ class CYCLES_OBJECT_PT_decal(CyclesButtonsPanel, Panel):
         layout.active = ob.cycles.is_decal
         layout.prop(ob.cycles, "decal_enabled")
         draw_decal_settings(layout, ob)
+
+
+# Preview of cylindrical decals in the 3D View: the cylinder they wrap around, the part their span
+# covers drawn bright, the rest dim (an empty cannot draw a cylinder).
+
+_draw_handler = None
+CYLINDER_SEGMENTS = 48
+
+
+def _cylinder_lines(ob):
+    """Lines of the cylinder of a decal, in world space: (covered, uncovered)."""
+    import math
+    from mathutils import Vector
+    cob = ob.cycles
+    size = ob.empty_display_size
+    matrix = ob.matrix_world
+    span = cob.decal_span
+    covered = []
+    uncovered = []
+
+    def point(angle, z):
+        # Angle 0 towards -Y, as in the kernel (kernel/geom/decal.h).
+        return matrix @ Vector((math.sin(angle) * size, -math.cos(angle) * size, z * size))
+
+    for i in range(CYLINDER_SEGMENTS):
+        a0 = -math.pi + 2.0 * math.pi * i / CYLINDER_SEGMENTS
+        a1 = -math.pi + 2.0 * math.pi * (i + 1) / CYLINDER_SEGMENTS
+        mid = 0.5 * (a0 + a1)
+        lines = covered if abs(mid) <= 0.5 * span else uncovered
+        for z in (-1.0, 1.0):
+            lines += [point(a0, z), point(a1, z)]
+    # The edges of the span, and a few lines along the cylinder.
+    for angle in (-0.5 * span, 0.5 * span):
+        covered += [point(angle, -1.0), point(angle, 1.0)]
+    for i in range(8):
+        angle = -math.pi + 2.0 * math.pi * i / 8
+        lines = covered if abs(angle) <= 0.5 * span else uncovered
+        lines += [point(angle, -1.0), point(angle, 1.0)]
+    # Where the decal is centered.
+    covered += [matrix @ Vector((0.0, 0.0, 0.0)), point(0.0, 0.0)]
+    return covered, uncovered
+
+
+def _draw_cylinders():
+    context = bpy.context
+    space = context.space_data
+    if space is None or space.type != 'VIEW_3D' or not space.overlay.show_overlays:
+        return
+    if not space.overlay.show_extras:
+        return
+    scene = context.scene
+    view_layer = context.view_layer
+    if scene is None or view_layer is None:
+        return
+    active = view_layer.objects.active
+    groups = {}
+    for ob in scene.objects:
+        if ob.type != 'EMPTY':
+            continue
+        cob = ob.cycles
+        if not cob.is_decal or cob.decal_shape != 'CYLINDER':
+            continue
+        if not ob.visible_get(view_layer=view_layer):
+            continue
+        if ob == active and ob.select_get():
+            color = (1.0, 0.67, 0.25)
+        elif ob.select_get():
+            color = (0.95, 0.45, 0.1)
+        else:
+            color = (0.0, 0.0, 0.0)
+        alpha = 1.0 if cob.decal_enabled else 0.35
+        covered, uncovered = _cylinder_lines(ob)
+        groups.setdefault((color, alpha, ob.show_in_front), []).append(covered)
+        groups.setdefault((color, alpha * 0.35, ob.show_in_front), []).append(uncovered)
+    if not groups:
+        return
+
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+    region = context.region
+    shader.uniform_float("viewportSize", (region.width, region.height))
+    shader.uniform_float("lineWidth", 1.5)
+    gpu.state.blend_set('ALPHA')
+    for (color, alpha, in_front), parts in groups.items():
+        coords = [p for part in parts for p in part]
+        if not coords:
+            continue
+        gpu.state.depth_test_set('NONE' if in_front else 'LESS_EQUAL')
+        batch = batch_for_shader(shader, 'LINES', {"pos": coords})
+        shader.uniform_float("color", (*color, alpha))
+        batch.draw(shader)
+    gpu.state.depth_test_set('NONE')
+    gpu.state.blend_set('NONE')
+
+
+@bpy.app.handlers.persistent
+def _update_display_types(*_args):
+    # Decals made before cylindrical ones drew as their axis.
+    for ob in bpy.data.objects:
+        if ob.type == 'EMPTY' and ob.cycles.is_decal:
+            display = decal_display_type(ob.cycles.decal_shape)
+            if ob.empty_display_type != display and not ob.library:
+                ob.empty_display_type = display
 
 
 def draw_add_menu(self, context):
@@ -372,14 +493,24 @@ classes = (
 
 
 def register():
+    global _draw_handler
     from bpy.utils import register_class
     for cls in classes:
         register_class(cls)
     bpy.types.VIEW3D_MT_add.append(draw_add_menu)
+    if not bpy.app.background:
+        _draw_handler = bpy.types.SpaceView3D.draw_handler_add(_draw_cylinders, (), 'WINDOW', 'POST_VIEW')
+    bpy.app.handlers.load_post.append(_update_display_types)
 
 
 def unregister():
+    global _draw_handler
     from bpy.utils import unregister_class
+    if _update_display_types in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_update_display_types)
+    if _draw_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_draw_handler, 'WINDOW')
+        _draw_handler = None
     bpy.types.VIEW3D_MT_add.remove(draw_add_menu)
     for cls in reversed(classes):
         unregister_class(cls)
