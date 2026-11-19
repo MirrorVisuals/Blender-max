@@ -2114,6 +2114,16 @@ class CYCLES_MATERIAL_PT_settings_surface(CyclesButtonsPanel, Panel):
         col.prop(mat, "use_transparent_shadow")
         col.prop(cmat, "use_bump_map_correction")
 
+        # Caustics of this material only, when they are off for the scene in Light Paths.
+        cscene = bpy.context.scene.cycles
+        col = layout.column(heading="Caustics", align=True)
+        sub = col.row(align=True)
+        sub.active = not cscene.caustics_reflective
+        sub.prop(cmat, "use_caustics_reflective", text="Reflective")
+        sub = col.row(align=True)
+        sub.active = not cscene.caustics_refractive
+        sub.prop(cmat, "use_caustics_refractive", text="Refractive")
+
     def draw(self, context):
         self.draw_shared(self, context.material)
 

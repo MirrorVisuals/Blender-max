@@ -227,6 +227,9 @@ noise, on CPU and GPU. It is in Material Properties > Settings > Quick Caustics.
   of the sun (so the Light Mix and the denoiser handle them).
 - The ripples must be geometry (modeled, a Displace or Ocean modifier, or true displacement),
   not bump mapping. Other lights are shadowed by the surface as before.
+- **Caustics per material:** Material > Settings > Surface > Caustics (Reflective, Refractive)
+  lets the light through or off this material make real caustics while they stay off in Light
+  Paths for the rest of the scene, so one pool or glass gets them without their noise everywhere.
 
 ### Cycles: Sections, as the ArchViz Clipper
 

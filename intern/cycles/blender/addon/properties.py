@@ -1235,6 +1235,19 @@ class CyclesMaterialSettings(bpy.types.PropertyGroup):
         min=1.0, soft_max=2.5,
     )
 
+    use_caustics_reflective: BoolProperty(
+        name="Reflective Caustics",
+        description="Light reflected by this material makes caustics, even when Reflective Caustics are off in "
+        "Light Paths: caustics of this water or glass only, without their noise in the whole scene",
+        default=False,
+    )
+    use_caustics_refractive: BoolProperty(
+        name="Refractive Caustics",
+        description="Light refracted through this material makes caustics, even when Refractive Caustics are off "
+        "in Light Paths: caustics of this water or glass only, without their noise in the whole scene",
+        default=False,
+    )
+
     @classmethod
     def register(cls):
         bpy.types.Material.cycles = PointerProperty(

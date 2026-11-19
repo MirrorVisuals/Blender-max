@@ -90,6 +90,9 @@ class Shader : public Node {
   NODE_SOCKET_API(float, quick_caustics_strength)
   NODE_SOCKET_API(float, quick_caustics_depth)
   NODE_SOCKET_API(float, quick_caustics_ior)
+  /* Caustics through this material even when they are off in Light Paths. */
+  NODE_SOCKET_API(bool, caustics_reflective)
+  NODE_SOCKET_API(bool, caustics_refractive)
 
   /* displacement */
   NODE_SOCKET_API(DisplacementMethod, displacement_method)

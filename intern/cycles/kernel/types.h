@@ -1841,7 +1841,15 @@ struct KernelShader {
   float quick_caustics_strength;
   float quick_caustics_depth;
   float quick_caustics_ior;
-  float pad1, pad2, pad3;
+  /* Caustics through this material even when they are off in Light Paths (KernelShaderCaustics).
+   */
+  int caustics;
+  float pad2, pad3;
+};
+
+enum KernelShaderCaustics {
+  SHADER_CAUSTICS_REFLECTIVE = (1 << 0),
+  SHADER_CAUSTICS_REFRACTIVE = (1 << 1),
 };
 static_assert_align(KernelShader, 16);
 

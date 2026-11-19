@@ -1721,6 +1721,8 @@ void BlenderSync::sync_materials(blender::Depsgraph &b_depsgraph,
       shader->set_quick_caustics_strength(get_float(cmat, "quick_caustics_strength"));
       shader->set_quick_caustics_depth(get_float(cmat, "quick_caustics_depth"));
       shader->set_quick_caustics_ior(get_float(cmat, "quick_caustics_ior"));
+      shader->set_caustics_reflective(get_boolean(cmat, "use_caustics_reflective"));
+      shader->set_caustics_refractive(get_boolean(cmat, "use_caustics_refractive"));
 
       shader->set_graph(std::move(graph));
 

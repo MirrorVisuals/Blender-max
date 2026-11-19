@@ -711,6 +711,11 @@ if(WITH_CYCLES)
     cycles_decals
     --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_decals.py
   )
+
+  add_blender_test(
+    cycles_material_caustics
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_material_caustics.py
+  )
 endif()
 
 add_blender_test(

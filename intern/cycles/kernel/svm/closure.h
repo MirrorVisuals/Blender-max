@@ -24,6 +24,22 @@
 
 CCL_NAMESPACE_BEGIN
 
+/* Caustics are allowed by Light Paths, or by the material (for one water surface or glass, without
+ * the noise of caustics in the whole scene). */
+ccl_device_inline bool svm_caustics_reflective(KernelGlobals kg, const ccl_private ShaderData *sd)
+{
+  return kernel_data.integrator.caustics_reflective ||
+         (kernel_data_fetch(shaders, sd->shader & SHADER_MASK).caustics &
+          SHADER_CAUSTICS_REFLECTIVE);
+}
+
+ccl_device_inline bool svm_caustics_refractive(KernelGlobals kg, const ccl_private ShaderData *sd)
+{
+  return kernel_data.integrator.caustics_refractive ||
+         (kernel_data_fetch(shaders, sd->shader & SHADER_MASK).caustics &
+          SHADER_CAUSTICS_REFRACTIVE);
+}
+
 /* Closure Nodes */
 
 ccl_device_inline int svm_node_closure_bsdf_skip(int offset, const uint type)
@@ -256,7 +272,7 @@ ccl_device
     N = safe_normalize_fallback(N, sd->N);
 
 #ifdef __CAUSTICS_TRICKS__
-    const bool reflective_caustics = (kernel_data.integrator.caustics_reflective ||
+    const bool reflective_caustics = (svm_caustics_reflective(kg, sd) ||
                                       (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE) == 0);
 #else
     const bool reflective_caustics = true;
@@ -279,7 +295,7 @@ ccl_device
       N = safe_normalize_fallback(N, sd->N);
 
 #ifdef __CAUSTICS_TRICKS__
-      const bool reflective_caustics = (kernel_data.integrator.caustics_reflective ||
+      const bool reflective_caustics = (svm_caustics_reflective(kg, sd) ||
                                         (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE) == 0);
 #else
       const bool reflective_caustics = true;
@@ -353,7 +369,7 @@ ccl_device
       }
 
 #ifdef __CAUSTICS_TRICKS__
-      const bool refractive_caustics = (kernel_data.integrator.caustics_refractive ||
+      const bool refractive_caustics = (svm_caustics_refractive(kg, sd) ||
                                         (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE) == 0);
 #else
       const bool refractive_caustics = true;
@@ -564,9 +580,7 @@ ccl_device
           kg, &offset);
 
 #ifdef __CAUSTICS_TRICKS__
-      if (!kernel_data.integrator.caustics_reflective &&
-          (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE))
-      {
+      if (!svm_caustics_reflective(kg, sd) && (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE)) {
         break;
       }
 #endif
@@ -668,9 +682,7 @@ ccl_device
           kg, &offset);
 
 #ifdef __CAUSTICS_TRICKS__
-      if (!kernel_data.integrator.caustics_reflective &&
-          (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE))
-      {
+      if (!svm_caustics_reflective(kg, sd) && (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE)) {
         break;
       }
 #endif
@@ -741,9 +753,7 @@ ccl_device
           svm_node_get<SVMNodeRefractionBsdfData>(kg, &offset);
 
 #ifdef __CAUSTICS_TRICKS__
-      if (!kernel_data.integrator.caustics_refractive &&
-          (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE))
-      {
+      if (!svm_caustics_refractive(kg, sd) && (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE)) {
         break;
       }
 #endif
@@ -784,9 +794,9 @@ ccl_device
           kg, &offset);
 
 #ifdef __CAUSTICS_TRICKS__
-      const bool reflective_caustics = (kernel_data.integrator.caustics_reflective ||
+      const bool reflective_caustics = (svm_caustics_reflective(kg, sd) ||
                                         (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE) == 0);
-      const bool refractive_caustics = (kernel_data.integrator.caustics_refractive ||
+      const bool refractive_caustics = (svm_caustics_refractive(kg, sd) ||
                                         (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE) == 0);
       if (!(reflective_caustics || refractive_caustics)) {
         break;
@@ -880,7 +890,7 @@ ccl_device
                                                                                           &offset);
 
 #ifdef __CAUSTICS_TRICKS__
-      if (type == CLOSURE_BSDF_GLOSSY_TOON_ID && !kernel_data.integrator.caustics_reflective &&
+      if (type == CLOSURE_BSDF_GLOSSY_TOON_ID && !svm_caustics_reflective(kg, sd) &&
           (ray_visibility & PATH_RAY_VISIBILITY_DIFFUSE))
       {
         break;

@@ -74,6 +74,8 @@ NODE_DEFINE(Shader)
   SOCKET_FLOAT(quick_caustics_strength, "Quick Caustics Strength", 1.0f);
   SOCKET_FLOAT(quick_caustics_depth, "Quick Caustics Depth", 2.0f);
   SOCKET_FLOAT(quick_caustics_ior, "Quick Caustics IOR", 1.33f);
+  SOCKET_BOOLEAN(caustics_reflective, "Reflective Caustics", false);
+  SOCKET_BOOLEAN(caustics_refractive, "Refractive Caustics", false);
 
   static NodeEnum displacement_method_enum;
   displacement_method_enum.insert("bump", DISPLACE_BUMP);
@@ -724,7 +726,9 @@ void ShaderManager::device_update_common(Device * /*device*/,
     kshader->quick_caustics_strength = shader->get_quick_caustics_strength();
     kshader->quick_caustics_depth = use_quick_caustics ? shader->get_quick_caustics_depth() : 0.0f;
     kshader->quick_caustics_ior = shader->get_quick_caustics_ior();
-    kshader->pad1 = kshader->pad2 = kshader->pad3 = 0.0f;
+    kshader->caustics = (shader->get_caustics_reflective() ? SHADER_CAUSTICS_REFLECTIVE : 0) |
+                        (shader->get_caustics_refractive() ? SHADER_CAUSTICS_REFRACTIVE : 0);
+    kshader->pad2 = kshader->pad3 = 0.0f;
     kshader++;
 
     has_transparent_shadow |= (flag & SD_HAS_TRANSPARENT_SHADOW) != 0;
