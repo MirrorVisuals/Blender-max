@@ -1539,6 +1539,8 @@ enum_section_cap_mode = (
 enum_decal_shape = (
     ('PLANE', "Planar", "Project the decal along the -Z axis of the box (the cube the empty draws)"),
     ('CYLINDER', "Cylindrical", "Wrap the decal around the Z axis of the box, as a label on a bottle"),
+    ('SPHERE', "Spherical", "Project the decal from the center of the sphere outwards, by longitude and latitude, "
+     "as a print on a ball or a dome"),
 )
 
 enum_decal_list_mode = (
@@ -1550,7 +1552,7 @@ enum_decal_list_mode = (
 def decal_display_type(shape):
     # A planar decal draws as its box; a cylindrical one as its axis, its cylinder drawn over it
     # (see decals.py).
-    return 'SINGLE_ARROW' if shape == 'CYLINDER' else 'CUBE'
+    return {'CYLINDER': 'SINGLE_ARROW', 'SPHERE': 'SPHERE'}.get(shape, 'CUBE')
 
 
 def _decal_shape_update(self, _context):
@@ -1669,7 +1671,7 @@ class CyclesObjectSettings(bpy.types.PropertyGroup):
     )
     decal_span: FloatProperty(
         name="Span",
-        description="Angle the decal covers around the cylinder",
+        description="Angle the decal covers around the cylinder, or the sphere (longitude)",
         min=0.001, max=2.0 * pi,
         default=pi,
         subtype='ANGLE',

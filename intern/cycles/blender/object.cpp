@@ -586,7 +586,8 @@ void BlenderSync::sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLaye
     kdecal.tfm = tfm;
     kdecal.itfm = transform_inverse(tfm);
     kdecal.shader = -1;
-    kdecal.flags = (get_enum(cobject, "decal_shape") == 1 ? DECAL_CYLINDER : 0) |
+    const int shape = get_enum(cobject, "decal_shape");
+    kdecal.flags = (shape == 1 ? DECAL_CYLINDER : 0) | (shape == 2 ? DECAL_SPHERE : 0) |
                    (get_boolean(cobject, "decal_back_faces") ? DECAL_BACK_FACES : 0) |
                    (get_enum(cobject, "decal_list_mode") == 1 ? DECAL_INCLUDE : 0);
     kdecal.opacity = clamp(get_float(cobject, "decal_opacity"), 0.0f, 1.0f);

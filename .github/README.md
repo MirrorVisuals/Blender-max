@@ -250,11 +250,12 @@ materials. Add > Section (or Section Box), or the Sections tab of the 3D View si
 ### Cycles: Decals, as V-Ray Decal
 
 A material projected onto the surfaces inside a box, without changing them: signs, labels,
-stains, cracks. Add > Decal (or Cylindrical Decal), or the Decals tab of the 3D View sidebar.
+stains, cracks. Add > Decal (Cylindrical, Spherical), or the Decals tab of the 3D View sidebar.
 
-- **A decal is a Cube empty:** it projects along its -Z axis (**Planar**), or wraps around its
-  Z axis (**Cylindrical**, with the **Span** it covers), as a label on a bottle. Move, rotate
-  and scale it to place it.
+- **A decal is an empty:** it projects along its -Z axis (**Planar**, a cube), wraps around its
+  Z axis (**Cylindrical**, as a label on a bottle), or is projected from its center outwards by
+  longitude and latitude (**Spherical**, as a print on a ball). **Span** sets how far around a
+  cylinder or sphere it goes. Move, rotate and scale it to place it.
 - **Any material:** its default UV and generated coordinates are the decal's, so Image
   Textures, procedural textures and Normal Maps follow it. Its alpha shows the surface under
   it; **Opacity** fades the whole decal. The + button makes a material with an Image Texture

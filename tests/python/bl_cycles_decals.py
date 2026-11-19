@@ -239,6 +239,38 @@ check(close(wrapped(1.2, 0.0), plain(1.2, 0.0), 0.01 * g + 1e-4), "outside the c
 bpy.ops.cycles.decal_remove(decal=cyl.name)
 check(not any(ob.cycles.is_decal for ob in scene.objects), "the decal is removed")
 
+print("Spherical decal")
+bpy.ops.cycles.decal_add(shape='SPHERE')
+sph = bpy.context.object
+check(sph.empty_display_type == 'SPHERE', "a spherical decal draws as a sphere")
+sph.cycles.decal_material = uv_material("UV4")
+sph.cycles.decal_span = math.pi
+# Center below the ground, its front (local -Y) up: U is the longitude along X, V the latitude
+# along Y.
+sph.location = (0.0, 0.0, -0.5)
+sph.rotation_euler = (math.radians(-90.0), 0.0, 0.0)
+sph.scale = (1.0, 1.0, 1.0)
+sph.empty_display_size = 1.0
+ball = render("sphere")
+center = ball(0.0, 0.0)
+# At the pixel center, a little off the front.
+pc = (int((0.0 + VIEW / 2) / VIEW * RES) + 0.5) * VIEW / RES - VIEW / 2
+expected = (0.5 + math.atan2(pc, 0.5) / math.pi, 0.5 + math.asin(pc / math.sqrt(2 * pc * pc + 0.25)) / math.pi)
+check(abs(center[0] - expected[0]) < 0.03 and abs(center[1] - expected[1]) < 0.03,
+      "at its front: U = V = 0.5 (%.3f, %.3f), expected (%.3f, %.3f)" % (center[:2] + expected))
+cx = (int((0.5 + VIEW / 2) / VIEW * RES) + 0.5) * VIEW / RES - VIEW / 2
+cy = (int((0.0 + VIEW / 2) / VIEW * RES) + 0.5) * VIEW / RES - VIEW / 2
+expected_u = 0.5 + math.atan2(cx, 0.5) / math.pi
+check(abs(ball(0.5, 0.0)[0] - expected_u) < 0.03,
+      "U follows the longitude (%.3f, expected %.3f)" % (ball(0.5, 0.0)[0], expected_u))
+cx = (int((0.0 + VIEW / 2) / VIEW * RES) + 0.5) * VIEW / RES - VIEW / 2
+cy = (int((0.5 + VIEW / 2) / VIEW * RES) + 0.5) * VIEW / RES - VIEW / 2
+expected_v = 0.5 + math.asin(cy / math.sqrt(cx * cx + cy * cy + 0.25)) / math.pi
+check(abs(ball(0.0, 0.5)[1] - expected_v) < 0.03,
+      "V follows the latitude (%.3f, expected %.3f)" % (ball(0.0, 0.5)[1], expected_v))
+check(close(ball(1.2, 0.0), plain(1.2, 0.0), 0.01 * g + 1e-4), "outside the sphere: no decal")
+bpy.data.objects.remove(sph, do_unlink=True)
+
 print("Order")
 red = emission_material("Red", (1.0, 0.0, 0.0))
 green = emission_material("Green", (0.0, 1.0, 0.0))

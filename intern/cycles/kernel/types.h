@@ -1543,6 +1543,8 @@ enum KernelDecalFlag {
   DECAL_BACK_FACES = (1 << 1),
   /* Only on the objects of its list (else on all but them). */
   DECAL_INCLUDE = (1 << 2),
+  /* Projected from the center of a sphere outwards (longitude and latitude). */
+  DECAL_SPHERE = (1 << 3),
 };
 
 /* Node of the BVH of the boxes of the decals. An inner node has its children at `left` and
@@ -1565,7 +1567,8 @@ enum DecalAttribute {
 
 struct KernelDecal {
   /* Local space of the decal to world, and back: the projection box is -1 to 1 on every axis,
-   * projected along -Z (planar), or the cylinder of radius 1 around Z (cylindrical). */
+   * projected along -Z (planar), the cylinder of radius 1 around Z (cylindrical), or the sphere
+   * of radius 1 (spherical). */
   Transform tfm;
   Transform itfm;
   int shader;

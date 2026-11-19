@@ -6,7 +6,8 @@
  *
  * A decal projects a material onto the surfaces inside its box, without changing them: a label
  * on a bottle, a sign on a wall, a stain, a crack. The empty of the decal is the box (-1 to 1 on
- * every axis): it projects along its -Z axis (planar), or wraps around its Z axis (cylindrical).
+ * every axis): it projects along its -Z axis (planar), wraps around its Z axis (cylindrical), or
+ * is projected from its center outwards, by longitude and latitude (spherical).
  *
  * Where a surface is inside the box, the material of the decal is evaluated after the material of
  * the surface, with the coordinates of the decal as the default UV, generated coordinates and
@@ -88,7 +89,35 @@ ccl_device float decal_setup(KernelGlobals kg,
 
   float3 axis;
   float3 tangent;
-  if (decal.flags & DECAL_CYLINDER) {
+  if (decal.flags & DECAL_SPHERE) {
+    const float r2 = dot(p, p);
+    const float rxy2 = p.x * p.x + p.y * p.y;
+    if (r2 > 1.0f || rxy2 < 1e-12f) {
+      return 0.0f;
+    }
+    /* Longitude around Z, 0 towards -Y (the front of the empty), and latitude. */
+    const float angle = atan2f(p.x, -p.y);
+    const float span = max(decal.span, 1e-4f);
+    if (fabsf(angle) > 0.5f * span) {
+      return 0.0f;
+    }
+    const float r = sqrtf(r2);
+    const float rxy = sqrtf(rxy2);
+    sd->decal_uvw = make_float3(
+        0.5f + angle / span, 0.5f + asinf(clamp(p.z / r, -1.0f, 1.0f)) * M_1_PI_F, r);
+    /* d(latitude) = (dz r - z dr) / (r rxy), with dr = (p . dp) / r. */
+    const float dr_x = dot(p, dx) / r;
+    const float dr_y = dot(p, dy) / r;
+    sd->decal_duvw_dx = make_float3((p.x * dx.y - p.y * dx.x) / (rxy2 * span),
+                                    (dx.z * r - p.z * dr_x) / (r * rxy) * M_1_PI_F,
+                                    dr_x);
+    sd->decal_duvw_dy = make_float3((p.x * dy.y - p.y * dy.x) / (rxy2 * span),
+                                    (dy.z * r - p.z * dr_y) / (r * rxy) * M_1_PI_F,
+                                    dr_y);
+    axis = safe_normalize(transform_direction(&decal.tfm, p));
+    tangent = transform_direction(&decal.tfm, make_float3(-p.y, p.x, 0.0f));
+  }
+  else if (decal.flags & DECAL_CYLINDER) {
     const float r2 = p.x * p.x + p.y * p.y;
     if (r2 > 1.0f || r2 < 1e-12f) {
       return 0.0f;

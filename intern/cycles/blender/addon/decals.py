@@ -6,15 +6,18 @@
 Decals: a material projected onto the surfaces inside a box, rendered by Cycles without changing
 the geometry (labels, signs, stains, cracks...).
 
-A decal is a Cube empty with the Decal option of its Cycles settings and a material. There can be
-any number of them. It projects
-along its -Z axis (planar), or wraps around its Z axis (cylindrical). In the material, the default
-UV and the generated coordinates are the ones of the decal, so an Image Texture and a Normal Map
+A decal is an empty (a Cube, an arrow for a cylinder, a Sphere) with the Decal option of its
+Cycles settings and a material. There can be any number of them. It projects along its -Z axis
+(planar), wraps around its Z axis (cylindrical) or is projected from its center outwards
+(spherical). In the material, the default UV and the generated coordinates are the ones of the
+decal, so an Image Texture and a Normal Map
 follow it, and the alpha of the material shows the surface under it. See
 intern/cycles/kernel/geom/decal.h.
 """
 
 from __future__ import annotations
+
+import math
 
 import bpy
 from bpy.app.translations import pgettext_tip as tip_
@@ -24,6 +27,8 @@ from bpy.types import Operator, Panel
 from .properties import decal_display_type
 from .ui import CyclesButtonsPanel, panel_node_draw
 
+
+SHAPE_ICONS = {'PLANE': 'MOD_UVPROJECT', 'CYLINDER': 'MESH_CYLINDER', 'SPHERE': 'MESH_UVSPHERE'}
 
 # Decals listed in the sidebar at most: past that, only the selected ones.
 MAX_LISTED_DECALS = 30
@@ -82,6 +87,7 @@ class CYCLES_OT_decal_add(Operator):
         items=(
             ('PLANE', "Planar", "Project along the -Z axis of the box"),
             ('CYLINDER', "Cylindrical", "Wrap around the Z axis of the box"),
+            ('SPHERE', "Spherical", "Project from the center of the sphere outwards"),
         ),
         default='PLANE',
     )
@@ -96,6 +102,9 @@ class CYCLES_OT_decal_add(Operator):
             ob.scale = (0.5, 0.5, 0.1)
         else:
             ob.scale = (0.5, 0.5, 0.5)
+        if self.shape == 'SPHERE':
+            # All around.
+            ob.cycles.decal_span = 2.0 * math.pi
         ob.show_in_front = True
         ob.cycles.is_decal = True
         ob.cycles.decal_shape = self.shape
@@ -252,7 +261,7 @@ def draw_decal_settings(layout, ob):
     sub = col.column(align=True)
     sub.prop(cob, "decal_opacity")
     sub.prop(cob, "decal_surface_bump")
-    if cob.decal_shape == 'CYLINDER':
+    if cob.decal_shape in {'CYLINDER', 'SPHERE'}:
         col.prop(cob, "decal_span")
 
     box = col.box()
@@ -306,6 +315,7 @@ class CYCLES_VIEW3D_PT_decals(Panel):
         row.scale_y = 1.4
         row.operator("cycles.decal_add", text="Planar", icon='MOD_UVPROJECT').shape = 'PLANE'
         row.operator("cycles.decal_add", text="Cylindrical", icon='MESH_CYLINDER').shape = 'CYLINDER'
+        row.operator("cycles.decal_add", text="Spherical", icon='MESH_UVSPHERE').shape = 'SPHERE'
 
         decals = scene_decals(context.scene)
         if not decals:
@@ -332,7 +342,7 @@ class CYCLES_VIEW3D_PT_decals(Panel):
             )
             op = row.operator(
                 "cycles.decal_select", text=ob.name, depress=(ob == active),
-                icon='MESH_CYLINDER' if cob.decal_shape == 'CYLINDER' else 'MOD_UVPROJECT',
+                icon=SHAPE_ICONS[cob.decal_shape],
             )
             op.decal = ob.name
             row.operator("cycles.decal_remove", text="", icon='X', emboss=False).decal = ob.name
@@ -407,6 +417,32 @@ def _cylinder_lines(ob):
     return covered, uncovered
 
 
+def _sphere_lines(ob):
+    """Lines of the span of a spherical decal (its edges and center meridians), in world space."""
+    import math
+    from mathutils import Vector
+    size = ob.empty_display_size
+    matrix = ob.matrix_world
+    span = ob.cycles.decal_span
+    lines = []
+
+    def point(angle, latitude):
+        c = math.cos(latitude)
+        return matrix @ Vector((math.sin(angle) * c * size, -math.cos(angle) * c * size, math.sin(latitude) * size))
+
+    meridians = [0.0]
+    if span < 2.0 * math.pi - 1e-3:
+        meridians += [-0.5 * span, 0.5 * span]
+    for angle in meridians:
+        for i in range(CYLINDER_SEGMENTS // 2):
+            l0 = -0.5 * math.pi + math.pi * i / (CYLINDER_SEGMENTS // 2)
+            l1 = -0.5 * math.pi + math.pi * (i + 1) / (CYLINDER_SEGMENTS // 2)
+            lines += [point(angle, l0), point(angle, l1)]
+    # Where the decal is centered.
+    lines += [matrix @ Vector((0.0, 0.0, 0.0)), point(0.0, 0.0)]
+    return lines
+
+
 def _draw_cylinders():
     context = bpy.context
     space = context.space_data
@@ -424,7 +460,7 @@ def _draw_cylinders():
         if ob.type != 'EMPTY':
             continue
         cob = ob.cycles
-        if not cob.is_decal or cob.decal_shape != 'CYLINDER':
+        if not cob.is_decal or cob.decal_shape not in {'CYLINDER', 'SPHERE'}:
             continue
         if not ob.visible_get(view_layer=view_layer):
             continue
@@ -435,7 +471,10 @@ def _draw_cylinders():
         else:
             color = (0.0, 0.0, 0.0)
         alpha = 1.0 if cob.decal_enabled else 0.35
-        covered, uncovered = _cylinder_lines(ob)
+        if cob.decal_shape == 'SPHERE':
+            covered, uncovered = _sphere_lines(ob), []
+        else:
+            covered, uncovered = _cylinder_lines(ob)
         groups.setdefault((color, alpha, ob.show_in_front), []).append(covered)
         groups.setdefault((color, alpha * 0.35, ob.show_in_front), []).append(uncovered)
     if not groups:
@@ -476,6 +515,7 @@ def draw_add_menu(self, context):
     layout = self.layout
     layout.operator("cycles.decal_add", text="Decal", icon='MOD_UVPROJECT').shape = 'PLANE'
     layout.operator("cycles.decal_add", text="Cylindrical Decal", icon='MESH_CYLINDER').shape = 'CYLINDER'
+    layout.operator("cycles.decal_add", text="Spherical Decal", icon='MESH_UVSPHERE').shape = 'SPHERE'
 
 
 classes = (
