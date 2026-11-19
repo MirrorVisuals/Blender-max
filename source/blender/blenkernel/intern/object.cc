@@ -3934,6 +3934,12 @@ bool BKE_object_minmax_empty_drawtype(const Object *ob, float r_min[3], float r_
       ok = true;
       break;
     }
+    case OB_EMPTY_CYLINDER: {
+      min = float3(-radius);
+      max = float3(radius);
+      ok = true;
+      break;
+    }
     case OB_EMPTY_CONE: {
       min = float3(-radius, 0.0f, -radius);
       max = float3(radius, radius * 2.0f, radius);

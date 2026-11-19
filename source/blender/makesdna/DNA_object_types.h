@@ -206,6 +206,8 @@ enum eObject_EmptyDrawType : char {
   OB_EMPTY_IMAGE = 8,
   /** Square with its normal, used as an infinite slice plane in Edit Mode. */
   OB_EMPTY_PLANE = 9,
+  /** Cylinder around Z, from -1 to 1, used by cylindrical decals of Cycles. */
+  OB_EMPTY_CYLINDER = 10,
 };
 
 /**

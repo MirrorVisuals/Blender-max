@@ -376,8 +376,8 @@ class CYCLES_OBJECT_PT_decal(CyclesButtonsPanel, Panel):
         draw_decal_settings(layout, ob)
 
 
-# Preview of cylindrical decals in the 3D View: the cylinder they wrap around, the part their span
-# covers drawn bright, the rest dim (an empty cannot draw a cylinder).
+# Preview of cylindrical and spherical decals in the 3D View: the empty draws the cylinder or
+# sphere, and the part their span covers is drawn over it.
 
 _draw_handler = None
 CYLINDER_SEGMENTS = 48
@@ -471,12 +471,12 @@ def _draw_cylinders():
         else:
             color = (0.0, 0.0, 0.0)
         alpha = 1.0 if cob.decal_enabled else 0.35
+        # The empty draws the whole cylinder or sphere: the part the decal covers is drawn over it.
         if cob.decal_shape == 'SPHERE':
-            covered, uncovered = _sphere_lines(ob), []
+            covered = _sphere_lines(ob)
         else:
-            covered, uncovered = _cylinder_lines(ob)
+            covered = _cylinder_lines(ob)[0]
         groups.setdefault((color, alpha, ob.show_in_front), []).append(covered)
-        groups.setdefault((color, alpha * 0.35, ob.show_in_front), []).append(uncovered)
     if not groups:
         return
 
@@ -501,7 +501,7 @@ def _draw_cylinders():
 
 @bpy.app.handlers.persistent
 def _update_display_types(*_args):
-    # Decals made before cylindrical ones drew as their axis.
+    # Decals made before cylindrical ones drew as a cylinder.
     for ob in bpy.data.objects:
         if ob.type == 'EMPTY' and ob.cycles.is_decal:
             display = decal_display_type(ob.cycles.decal_shape)

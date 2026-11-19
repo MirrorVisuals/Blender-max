@@ -1550,9 +1550,8 @@ enum_decal_list_mode = (
 
 
 def decal_display_type(shape):
-    # A planar decal draws as its box; a cylindrical one as its axis, its cylinder drawn over it
-    # (see decals.py).
-    return {'CYLINDER': 'SINGLE_ARROW', 'SPHERE': 'SPHERE'}.get(shape, 'CUBE')
+    # The empty draws as the volume the decal is projected in.
+    return {'CYLINDER': 'CYLINDER', 'SPHERE': 'SPHERE'}.get(shape, 'CUBE')
 
 
 def _decal_shape_update(self, _context):

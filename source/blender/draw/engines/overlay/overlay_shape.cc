@@ -663,6 +663,30 @@ ShapeCache::ShapeCache()
     empty_plane = BatchPtr(
         GPU_batch_create_ex(GPU_PRIM_LINES, vbo_from_vector(verts), nullptr, GPU_BATCH_OWNS_VBO));
   }
+  /* empty_cylinder */
+  {
+    /* Circles at both ends, lines along the sides and the axis. */
+    constexpr int resolution = 32;
+    constexpr int sides = 8;
+    Vector<Vertex> verts;
+    for (const float z : {-1.0f, 1.0f}) {
+      for (int i = 0; i < resolution; i++) {
+        const float a0 = 2.0f * float(M_PI) * i / resolution;
+        const float a1 = 2.0f * float(M_PI) * (i + 1) / resolution;
+        verts.append({{sinf(a0), cosf(a0), z}, VCLASS_EMPTY_SCALED});
+        verts.append({{sinf(a1), cosf(a1), z}, VCLASS_EMPTY_SCALED});
+      }
+    }
+    for (int i = 0; i < sides; i++) {
+      const float a = 2.0f * float(M_PI) * i / sides;
+      verts.append({{sinf(a), cosf(a), -1.0f}, VCLASS_EMPTY_SCALED});
+      verts.append({{sinf(a), cosf(a), 1.0f}, VCLASS_EMPTY_SCALED});
+    }
+    verts.append({{0.0f, 0.0f, -1.0f}, VCLASS_EMPTY_SCALED});
+    verts.append({{0.0f, 0.0f, 1.0f}, VCLASS_EMPTY_SCALED});
+    empty_cylinder = BatchPtr(
+        GPU_batch_create_ex(GPU_PRIM_LINES, vbo_from_vector(verts), nullptr, GPU_BATCH_OWNS_VBO));
+  }
   /* empty_cone */
   {
     constexpr int resolution = 8;
