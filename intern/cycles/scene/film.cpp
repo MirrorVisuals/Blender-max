@@ -772,6 +772,13 @@ void Film::finalize_passes(Scene *scene, const bool use_denoise)
         continue;
       }
 
+      /* A light group pass is not the pass of all the light: don't merge them. Otherwise the
+       * combined pass the viewport adds (without a name) disappears into the first light group
+       * pass when that comes first, as with the light group passes of the viewport Light Mix. */
+      if (new_pass->get_lightgroup() != pass->get_lightgroup()) {
+        continue;
+      }
+
       /* If both passes have a name and the names are different, don't merge.
        * If either pass has a name, we'll use that name. */
       if (!pass->get_name().empty() && !new_pass->get_name().empty() &&
