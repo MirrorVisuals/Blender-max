@@ -2142,7 +2142,18 @@ class CYCLES_MATERIAL_PT_settings_quick_caustics(CyclesButtonsPanel, Panel):
         col.prop(cmat, "quick_caustics_strength")
         col.prop(cmat, "quick_caustics_depth")
         col.prop(cmat, "quick_caustics_ior", text="IOR")
-        col.label(text="Sun and sky light only. Ripples must be geometry", icon='INFO')
+
+        # The pattern comes from the smooth normals of the ripple geometry.
+        ob = context.object
+        if cmat.use_quick_caustics and ob is not None and ob.type == 'MESH':
+            polygons = ob.data.polygons
+            if len(polygons) and not any(p.use_smooth for p in polygons[:1000]):
+                box = layout.box()
+                box.label(text="The surface is flat shaded: no pattern", icon='ERROR')
+                box.operator("object.shade_smooth", text="Shade Smooth")
+        col = layout.column(align=True)
+        col.label(text="Sun and sky light only. Ripples must be geometry,", icon='INFO')
+        col.label(text="shaded smooth. Depth must reach the floor below")
 
 
 class CYCLES_MATERIAL_PT_settings_volume(CyclesButtonsPanel, Panel):

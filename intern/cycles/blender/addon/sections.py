@@ -221,8 +221,14 @@ def draw_section_settings(layout, ob):
     sub = box.column()
     sub.active = cob.section_cap
     sub.prop(cob, "section_cap_mode", text="")
-    if cob.section_cap_mode != 'MATERIAL':
+    if cob.section_cap_mode == 'CUSTOM':
+        sub.prop(cob, "section_cap_material", text="")
+        if cob.section_cap_material is None:
+            sub.prop(cob, "section_cap_color", text="Color")
+    elif cob.section_cap_mode != 'MATERIAL':
         sub.prop(cob, "section_cap_color", text="Color")
+    if cob.section_cap_mode in {'MATERIAL', 'CUSTOM'}:
+        sub.label(text="Textures: use Object or Box mapping", icon='INFO')
 
     box = col.box()
     box.label(text="Target Objects", icon='OBJECT_DATA')

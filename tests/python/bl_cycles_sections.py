@@ -107,6 +107,30 @@ section.location = (0, 0, 3)
 cs = section.cycles
 check(cs.is_section and cs.section_enabled and cs.section_affect_lighting, "a new section, keeping the lighting")
 check(section.empty_display_type == 'PLANE', "drawn as a plane")
+check(cs.section_cap_mode == 'MATERIAL', "caps are the object's material by default")
+
+# The walls: a lit red material, to tell the caps apart.
+walls = bpy.data.materials.new("Walls")
+walls.use_nodes = True
+walls.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.8, 0.05, 0.05, 1.0)
+room.data.materials.append(walls)
+material_cut = render("material_cap")
+material_cap = material_cut(*WALL)
+check(material_cap[0] > 0.1 and material_cap[0] > 3.0 * material_cap[1],
+      "material cap: the wall's material, lit by the sun (%.3f, %.3f, %.3f)" % material_cap)
+
+capmat = bpy.data.materials.new("Cap")
+capmat.use_nodes = True
+capmat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.05, 0.8, 0.05, 1.0)
+cs.section_cap_mode = 'CUSTOM'
+cs.section_cap_material = capmat
+custom_cut = render("custom_cap")
+custom_cap = custom_cut(*WALL)
+check(custom_cap[1] > 0.1 and custom_cap[1] > 3.0 * custom_cap[0],
+      "custom cap material: the chosen material, lit (%.3f, %.3f, %.3f)" % custom_cap)
+check(abs(brightness(custom_cut(*OUTSIDE)) - ground) < 0.02 * ground + 1e-4, "the ground is unchanged")
+cs.section_cap_mode = 'FLAT'
+room.data.materials.clear()
 
 cut = render("cut")
 inside = brightness(cut(*CENTER))

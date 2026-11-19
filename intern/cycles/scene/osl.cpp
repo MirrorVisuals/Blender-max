@@ -1540,7 +1540,7 @@ void OSLCompiler::compile(Shader *shader)
 
     Shader::OSLCache cache;
 
-    if (shader->reference_count()) {
+    if (shader->is_used()) {
       if (shader->has_surface) {
         cache.surface = compile_type(shader, graph, SHADER_TYPE_SURFACE);
         if (shader->has_bump_from_displacement) {

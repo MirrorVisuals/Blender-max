@@ -1101,7 +1101,7 @@ void SVMCompiler::compile_type(Shader *shader, ShaderGraph *graph, ShaderType ty
         nullptr, NODE_ENTER_BUMP_EVAL, SVMNodeEnterBumpEval{.state_offset = bump_state_offset});
   }
 
-  if (shader->reference_count()) {
+  if (shader->is_used()) {
     CompilerState state(graph);
 
     switch (type) {

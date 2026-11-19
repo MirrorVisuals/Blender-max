@@ -589,7 +589,7 @@ void ShaderManager::device_update_pre(Device * /*device*/,
       }
     }
 
-    if (shader->reference_count()) {
+    if (shader->is_used()) {
       has_volumes |= shader->has_volume;
     }
   }
@@ -883,7 +883,7 @@ uint ShaderManager::get_kernel_features(Scene *scene)
   uint kernel_features = KERNEL_FEATURE_NODE_BSDF | KERNEL_FEATURE_NODE_EMISSION;
   for (int i = 0; i < scene->shaders.size(); i++) {
     Shader *shader = scene->shaders[i];
-    if (!shader->reference_count()) {
+    if (!shader->is_used()) {
       continue;
     }
 

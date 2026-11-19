@@ -47,22 +47,30 @@ ccl_device_forceinline void integrate_surface_shader_setup(KernelGlobals kg,
   if (INTEGRATOR_STATE(state, path, flag) & PATH_RAY_SECTION_CAP) {
     float t;
     float3 N;
-    if (section_cap_find(kg,
-                         sd->object,
-                         ray.P,
-                         ray.D,
-                         0.0f,
-                         isect.t * 1.0001f + 1e-5f,
-                         path_state_ray_visibility(state),
-                         false,
-                         &t,
-                         &N) != -1)
-    {
+    const int cap = section_cap_find(kg,
+                                     sd->object,
+                                     ray.P,
+                                     ray.D,
+                                     0.0f,
+                                     isect.t * 1.0001f + 1e-5f,
+                                     path_state_ray_visibility(state),
+                                     false,
+                                     &t,
+                                     &N);
+    if (cap != -1) {
       sd->P = ray.P + ray.D * t;
       sd->N = N;
       sd->Ng = N;
       sd->flag &= ~SD_BACKFACING;
       sd->ray_length = t;
+
+      /* A material chosen for the caps instead of the one of the object. */
+      const KernelSection section = kernel_data_fetch(sections, cap);
+      if (section.cap_mode == SECTION_CAP_CUSTOM && section.cap_shader >= 0) {
+        sd->shader = (sd->shader & ~SHADER_MASK) | section.cap_shader;
+        sd->flag = (sd->flag & ~SD_SHADER_FLAGS) |
+                   kernel_data_fetch(shaders, section.cap_shader).flags;
+      }
     }
   }
 }
@@ -93,9 +101,13 @@ ccl_device_forceinline void integrate_surface_section_cap_closures(KernelGlobals
     return;
   }
   const KernelSection section = kernel_data_fetch(sections, cap);
-  if (section.cap_mode == SECTION_CAP_MATERIAL) {
+  if (section.cap_mode == SECTION_CAP_MATERIAL ||
+      (section.cap_mode == SECTION_CAP_CUSTOM && section.cap_shader >= 0))
+  {
+    /* Shaded with a material. */
     return;
   }
+  /* A flat color, or a lit one (also with Custom Material but no material chosen). */
 
   /* Replace the closures of the material. */
   const int capacity = sd->num_closure + sd->num_closure_left;

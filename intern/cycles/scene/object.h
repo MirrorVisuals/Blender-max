@@ -195,12 +195,16 @@ class ObjectManager {
   string get_cryptomatte_assets(Scene *scene);
 
   /* Sections (see kernel/geom/section.h). Objects refer to them by index in `section_mask`. */
-  void set_sections(Scene *scene, const vector<KernelSection> &sections);
+  void set_sections(Scene *scene,
+                    const vector<KernelSection> &sections,
+                    const vector<Shader *> &cap_shaders);
   /* Shadow rays have to go through what sections cut away: transparent shadows are needed. */
   bool need_section_shadows() const;
 
  protected:
   vector<KernelSection> sections_;
+  /* Shader of the caps of each section with SECTION_CAP_CUSTOM, or null. */
+  vector<Shader *> section_cap_shaders_;
 
   void device_update_object_transform(UpdateObjectTransformState *state,
                                       Object *ob,

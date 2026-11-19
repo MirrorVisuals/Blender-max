@@ -387,10 +387,11 @@ static const blender::ID *section_original_id(const blender::ID *id)
   return (id && id->orig_id) ? id->orig_id : id;
 }
 
-void BlenderSync::sync_sections(blender::ViewLayer &b_view_layer)
+void BlenderSync::sync_sections(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer)
 {
   section_targets_.clear();
   vector<KernelSection> sections;
+  vector<Shader *> cap_shaders;
 
   for (blender::Base &b_base : b_view_layer.object_bases) {
     blender::Object *b_ob = b_base.object;
@@ -428,7 +429,30 @@ void BlenderSync::sync_sections(blender::ViewLayer &b_view_layer)
                                                                         0) |
                      (get_boolean(cobject, "section_camera_only") ? SECTION_CAMERA_ONLY : 0) |
                      (get_boolean(cobject, "section_cap") ? SECTION_CAP : 0);
+    ksection.cap_shader = -1;
     sections.push_back(ksection);
+
+    /* The material chosen for the caps. */
+    Shader *cap_shader = nullptr;
+    if (ksection.cap_mode == SECTION_CAP_CUSTOM) {
+      const blender::PointerRNA b_material = RNA_pointer_get(&cobject, "section_cap_material");
+      blender::ID *b_material_id = static_cast<blender::ID *>(b_material.data);
+      if (b_material_id) {
+        cap_shader = shader_map.find(b_material_id);
+        if (cap_shader == nullptr) {
+          blender::ID *b_material_eval = DEG_get_evaluated_id(
+              &b_depsgraph, const_cast<blender::ID *>(section_original_id(b_material_id)));
+          cap_shader = b_material_eval ? shader_map.find(b_material_eval) : nullptr;
+        }
+        if (cap_shader && !cap_shader->used_by_section) {
+          /* Compile it, though no object uses it. */
+          cap_shader->used_by_section = true;
+          cap_shader->tag_modified();
+          scene->shader_manager->tag_update(scene, ShaderManager::SHADER_MODIFIED);
+        }
+      }
+    }
+    cap_shaders.push_back(cap_shader);
 
     /* Targets: the objects and collections listed, or else every object. */
     SectionTargets targets;
@@ -459,7 +483,7 @@ void BlenderSync::sync_sections(blender::ViewLayer &b_view_layer)
     section_targets_.push_back(std::move(targets));
   }
 
-  scene->object_manager->set_sections(scene, sections);
+  scene->object_manager->set_sections(scene, sections, cap_shaders);
 }
 
 uint BlenderSync::get_section_mask(blender::Object &b_ob, blender::Object *b_parent)
@@ -623,7 +647,7 @@ void BlenderSync::sync_objects(blender::Depsgraph &b_depsgraph,
 
   /* Sections first: objects refer to them. */
   if (motion_time == 0.0f) {
-    sync_sections(b_view_layer);
+    sync_sections(b_depsgraph, b_view_layer);
   }
 
   blender::DEGObjectIterSettings deg_iter_settings{};

@@ -1498,6 +1498,8 @@ enum KernelSectionCapMode {
   SECTION_CAP_LIT = 1,
   /* The material of the object that is cut. */
   SECTION_CAP_MATERIAL = 2,
+  /* A material chosen for the caps (KernelSection.cap_shader). */
+  SECTION_CAP_CUSTOM = 3,
 };
 
 struct KernelSection {
@@ -1507,7 +1509,9 @@ struct KernelSection {
   float cap_color[3];
   int flags;
   int cap_mode;
-  int pad1, pad2, pad3;
+  /* Shader of the cap with SECTION_CAP_CUSTOM, or -1. */
+  int cap_shader;
+  int pad2, pad3;
 };
 static_assert_align(KernelSection, 16);
 

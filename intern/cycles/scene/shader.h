@@ -97,6 +97,15 @@ class Shader : public Node {
   float prev_volume_step_rate;
   bool prev_has_surface_shadow_transparency;
 
+  /* Used for the caps of a section (ObjectManager::set_sections), which is not a reference from
+   * a socket: compile it even when no geometry uses it. */
+  bool used_by_section = false;
+  /* Referenced by geometry or used by a section: the shader is compiled. */
+  bool is_used() const
+  {
+    return reference_count() != 0 || used_by_section;
+  }
+
   /* synchronization */
   bool need_update_uvs;
   bool need_update_attribute;

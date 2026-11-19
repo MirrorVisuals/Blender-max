@@ -1531,7 +1531,8 @@ enum_section_shape = (
 enum_section_cap_mode = (
     ('FLAT', "Flat Color", "Fill the cut with a flat color, not lit (as a drawing)"),
     ('LIT', "Lit Color", "Fill the cut with a color lit by the scene"),
-    ('MATERIAL', "Object Material", "Fill the cut with the material of the object that is cut"),
+    ('MATERIAL', "Object Material", "Fill the cut with the material of the object that is cut, lit as a real surface"),
+    ('CUSTOM', "Custom Material", "Fill the cut with a material chosen for the caps, lit as a real surface"),
 )
 
 
@@ -1576,7 +1577,12 @@ class CyclesObjectSettings(bpy.types.PropertyGroup):
     section_cap_mode: EnumProperty(
         name="Cap",
         items=enum_section_cap_mode,
-        default='FLAT',
+        default='MATERIAL',
+    )
+    section_cap_material: PointerProperty(
+        name="Cap Material",
+        description="Material of the caps (with Custom Material)",
+        type=bpy.types.Material,
     )
     section_cap_color: FloatVectorProperty(
         name="Cap Color",

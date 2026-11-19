@@ -914,6 +914,17 @@ void ObjectManager::device_update(Device *device,
   if (!sections_.empty()) {
     KernelSection *ksections = dscene->sections.alloc(sections_.size());
     std::copy(sections_.begin(), sections_.end(), ksections);
+    /* Shader indices are known now. */
+    for (size_t i = 0; i < sections_.size(); i++) {
+      const Shader *cap_shader = (i < section_cap_shaders_.size()) ? section_cap_shaders_[i] :
+                                                                     nullptr;
+      ksections[i].cap_shader = -1;
+      if (cap_shader && std::find(scene->shaders.begin(), scene->shaders.end(), cap_shader) !=
+                            scene->shaders.end())
+      {
+        ksections[i].cap_shader = cap_shader->id;
+      }
+    }
     dscene->sections.copy_to_device();
   }
   else {
@@ -1173,9 +1184,11 @@ void ObjectManager::device_update_geom_offsets(Device * /*unused*/,
   }
 }
 
-void ObjectManager::set_sections(Scene *scene, const vector<KernelSection> &sections)
+void ObjectManager::set_sections(Scene *scene,
+                                 const vector<KernelSection> &sections,
+                                 const vector<Shader *> &cap_shaders)
 {
-  if (sections.size() == sections_.size() &&
+  if (sections.size() == sections_.size() && cap_shaders == section_cap_shaders_ &&
       (sections.empty() ||
        memcmp(sections.data(), sections_.data(), sizeof(KernelSection) * sections.size()) == 0))
   {
@@ -1183,6 +1196,7 @@ void ObjectManager::set_sections(Scene *scene, const vector<KernelSection> &sect
   }
   const bool had_section_shadows = need_section_shadows();
   sections_ = sections;
+  section_cap_shaders_ = cap_shaders;
   tag_update(scene, OBJECT_MODIFIED);
   if (need_section_shadows() != had_section_shadows) {
     scene->shader_manager->tag_update(scene, ShaderManager::SHADER_MODIFIED);

@@ -183,7 +183,7 @@ class BlenderSync {
     vector<blender::Collection *> collections;
   };
   vector<SectionTargets> section_targets_;
-  void sync_sections(blender::ViewLayer &b_view_layer);
+  void sync_sections(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer);
   uint get_section_mask(blender::Object &b_ob, blender::Object *b_parent);
 
   void sync_procedural(blender::Object &b_ob,
