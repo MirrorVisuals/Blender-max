@@ -1,0 +1,375 @@
+# SPDX-FileCopyrightText: 2026 Blender Authors
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Decals: a material projected onto the surfaces inside a box, rendered by Cycles without changing
+the geometry (labels, signs, stains, cracks...).
+
+A decal is a Cube empty with the Decal option of its Cycles settings and a material. It projects
+along its -Z axis (planar), or wraps around its Z axis (cylindrical). In the material, the default
+UV and the generated coordinates are the ones of the decal, so an Image Texture and a Normal Map
+follow it, and the alpha of the material shows the surface under it. See
+intern/cycles/kernel/geom/decal.h.
+"""
+
+from __future__ import annotations
+
+import bpy
+from bpy.app.translations import pgettext_tip as tip_
+from bpy.props import EnumProperty, IntProperty, StringProperty
+from bpy.types import Operator, Panel
+
+from .ui import CyclesButtonsPanel
+
+
+def scene_decals(scene):
+    """The decal empties of the scene, in the order they are layered."""
+    return sorted(
+        (ob for ob in scene.objects if ob.type == 'EMPTY' and ob.cycles.is_decal),
+        key=lambda ob: (ob.cycles.decal_order, ob.name),
+    )
+
+
+def _decal(context, name):
+    ob = context.scene.objects.get(name)
+    if ob is None or ob.type != 'EMPTY' or not ob.cycles.is_decal:
+        return None
+    return ob
+
+
+def new_decal_material(name="Decal"):
+    """A material for decals: an Image Texture on the decal UV, its alpha showing the surface under it."""
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    bsdf = nodes.get("Principled BSDF")
+    image = nodes.new("ShaderNodeTexImage")
+    image.location = (bsdf.location.x - 400, bsdf.location.y)
+    image.extension = 'CLIP'
+    links.new(image.outputs["Color"], bsdf.inputs["Base Color"])
+    links.new(image.outputs["Alpha"], bsdf.inputs["Alpha"])
+    return mat
+
+
+class CyclesDecalOperator:
+    bl_options = {'REGISTER', 'UNDO'}
+
+    decal: StringProperty(name="Decal", description="Name of the decal empty", options={'SKIP_SAVE'})
+
+    def get_decal(self, context):
+        if self.decal:
+            return _decal(context, self.decal)
+        ob = context.object
+        return ob if ob is not None and ob.type == 'EMPTY' and ob.cycles.is_decal else None
+
+
+class CYCLES_OT_decal_add(Operator):
+    """Add a decal at the 3D cursor"""
+    bl_idname = "cycles.decal_add"
+    bl_label = "Add Decal"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    shape: EnumProperty(
+        name="Projection",
+        items=(
+            ('PLANE', "Planar", "Project along the -Z axis of the box"),
+            ('CYLINDER', "Cylindrical", "Wrap around the Z axis of the box"),
+        ),
+        default='PLANE',
+    )
+
+    def execute(self, context):
+        ob = bpy.data.objects.new("Decal", None)
+        ob.empty_display_type = 'CUBE'
+        ob.empty_display_size = 1.0
+        ob.location = context.scene.cursor.location
+        if self.shape == 'PLANE':
+            # A thin box, projecting down onto the floor: rotate it onto walls.
+            ob.scale = (0.5, 0.5, 0.1)
+        else:
+            ob.scale = (0.5, 0.5, 0.5)
+        ob.show_in_front = True
+        ob.cycles.is_decal = True
+        ob.cycles.decal_shape = self.shape
+        ob.cycles.decal_material = new_decal_material()
+        context.collection.objects.link(ob)
+        for other in context.selected_objects:
+            other.select_set(False)
+        ob.select_set(True)
+        context.view_layer.objects.active = ob
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_material_new(CyclesDecalOperator, Operator):
+    """Make a new material for the decal: an Image Texture on the decal UV, with its alpha"""
+    bl_idname = "cycles.decal_material_new"
+    bl_label = "New Decal Material"
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None:
+            return {'CANCELLED'}
+        ob.cycles.decal_material = new_decal_material()
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_remove(CyclesDecalOperator, Operator):
+    """Delete the decal"""
+    bl_idname = "cycles.decal_remove"
+    bl_label = "Remove Decal"
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None:
+            return {'CANCELLED'}
+        bpy.data.objects.remove(ob, do_unlink=True)
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_select(CyclesDecalOperator, Operator):
+    """Select the decal empty, to move, rotate or scale it"""
+    bl_idname = "cycles.decal_select"
+    bl_label = "Select Decal"
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None:
+            return {'CANCELLED'}
+        for other in context.selected_objects:
+            other.select_set(False)
+        try:
+            ob.select_set(True)
+        except RuntimeError:
+            return {'CANCELLED'}
+        context.view_layer.objects.active = ob
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_add_selected(CyclesDecalOperator, Operator):
+    """Add the selected objects to the list of the decal (excluded, or the only ones it is projected on)"""
+    bl_idname = "cycles.decal_add_selected"
+    bl_label = "Add Selected"
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None:
+            return {'CANCELLED'}
+        listed = ob.cycles.decal_objects
+        existing = {entry.object for entry in listed}
+        added = 0
+        for other in context.selected_objects:
+            if other == ob or other in existing:
+                continue
+            if other.type in {'LIGHT', 'CAMERA', 'SPEAKER', 'LIGHT_PROBE'}:
+                continue
+            if other.type == 'EMPTY' and other.instance_type != 'COLLECTION':
+                continue
+            listed.add().object = other
+            added += 1
+        self.report({'INFO'}, tip_("Added {:d} object(s)").format(added))
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_object_remove(CyclesDecalOperator, Operator):
+    """Remove the object from the list of the decal"""
+    bl_idname = "cycles.decal_object_remove"
+    bl_label = "Remove Object"
+
+    index: IntProperty(name="Index", default=-1, options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None or not (0 <= self.index < len(ob.cycles.decal_objects)):
+            return {'CANCELLED'}
+        ob.cycles.decal_objects.remove(self.index)
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_collection_add(CyclesDecalOperator, Operator):
+    """Add the active collection to the list of the decal"""
+    bl_idname = "cycles.decal_collection_add"
+    bl_label = "Add Collection"
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None:
+            return {'CANCELLED'}
+        collection = context.collection
+        if collection is None or collection == context.scene.collection:
+            self.report({'WARNING'}, "Make a collection active in the Outliner first")
+            return {'CANCELLED'}
+        if any(entry.collection == collection for entry in ob.cycles.decal_collections):
+            return {'CANCELLED'}
+        ob.cycles.decal_collections.add().collection = collection
+        return {'FINISHED'}
+
+
+class CYCLES_OT_decal_collection_remove(CyclesDecalOperator, Operator):
+    """Remove the collection from the list of the decal"""
+    bl_idname = "cycles.decal_collection_remove"
+    bl_label = "Remove Collection"
+
+    index: IntProperty(name="Index", default=-1, options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        ob = self.get_decal(context)
+        if ob is None or not (0 <= self.index < len(ob.cycles.decal_collections)):
+            return {'CANCELLED'}
+        ob.cycles.decal_collections.remove(self.index)
+        return {'FINISHED'}
+
+
+def draw_decal_settings(layout, ob):
+    """The settings of one decal."""
+    cob = ob.cycles
+    col = layout.column()
+    col.active = cob.decal_enabled
+
+    row = col.row(align=True)
+    row.prop(cob, "decal_shape", expand=True)
+
+    row = col.row(align=True)
+    row.prop(cob, "decal_material", text="")
+    row.operator("cycles.decal_material_new", text="", icon='ADD').decal = ob.name
+    if cob.decal_material is None:
+        col.label(text="Choose a material for the decal", icon='ERROR')
+    else:
+        col.label(text="Textures use the decal UV, alpha shows the surface", icon='INFO')
+
+    sub = col.column(align=True)
+    sub.prop(cob, "decal_opacity")
+    sub.prop(cob, "decal_surface_bump")
+    if cob.decal_shape == 'CYLINDER':
+        col.prop(cob, "decal_span")
+
+    box = col.box()
+    box.label(text="Projection", icon='MOD_UVPROJECT')
+    sub = box.column(align=True)
+    sub.prop(cob, "decal_angle_limit")
+    sub.prop(cob, "decal_angle_fade")
+    sub.prop(cob, "decal_depth_fade")
+    box.prop(cob, "decal_back_faces")
+    box.prop(cob, "decal_order")
+
+    box = col.box()
+    row = box.row()
+    row.label(text="Objects", icon='OBJECT_DATA')
+    row.prop(cob, "decal_list_mode", text="")
+    row = box.row(align=True)
+    row.operator("cycles.decal_add_selected", text="Add Selected", icon='EYEDROPPER').decal = ob.name
+    row.operator("cycles.decal_collection_add", text="Add Collection", icon='OUTLINER_COLLECTION').decal = ob.name
+    for i, entry in enumerate(cob.decal_objects):
+        row = box.row(align=True)
+        row.prop(entry, "object", text="")
+        op = row.operator("cycles.decal_object_remove", text="", icon='X')
+        op.decal = ob.name
+        op.index = i
+    for i, entry in enumerate(cob.decal_collections):
+        row = box.row(align=True)
+        row.prop(entry, "collection", text="", icon='OUTLINER_COLLECTION')
+        op = row.operator("cycles.decal_collection_remove", text="", icon='X')
+        op.decal = ob.name
+        op.index = i
+    if not cob.decal_objects and not cob.decal_collections:
+        if cob.decal_list_mode == 'EXCLUDE':
+            box.label(text="Projected on every object in the box", icon='INFO')
+        else:
+            box.label(text="No objects: projected on nothing", icon='ERROR')
+
+
+class CYCLES_VIEW3D_PT_decals(Panel):
+    bl_label = "Decals"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Decals"
+
+    @classmethod
+    def poll(cls, context):
+        return context.engine == 'CYCLES'
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.operator("cycles.decal_add", text="Planar", icon='MOD_UVPROJECT').shape = 'PLANE'
+        row.operator("cycles.decal_add", text="Cylindrical", icon='MESH_CYLINDER').shape = 'CYLINDER'
+
+        decals = scene_decals(context.scene)
+        if not decals:
+            layout.label(text="No decals yet", icon='INFO')
+            return
+
+        for ob in decals:
+            cob = ob.cycles
+            box = layout.box()
+            header = box.row(align=True)
+            header.prop(
+                cob, "decal_ui_expanded", text="", emboss=False,
+                icon='TRIA_DOWN' if cob.decal_ui_expanded else 'TRIA_RIGHT',
+            )
+            header.prop(
+                cob, "decal_enabled", text="", emboss=False,
+                icon='HIDE_OFF' if cob.decal_enabled else 'HIDE_ON',
+            )
+            header.prop(ob, "name", text="")
+            header.operator("cycles.decal_select", text="", icon='RESTRICT_SELECT_OFF').decal = ob.name
+            header.operator("cycles.decal_remove", text="", icon='X').decal = ob.name
+            if cob.decal_ui_expanded:
+                draw_decal_settings(box, ob)
+
+
+class CYCLES_OBJECT_PT_decal(CyclesButtonsPanel, Panel):
+    bl_label = "Decal"
+    bl_context = "object"
+
+    @classmethod
+    def poll(cls, context):
+        return CyclesButtonsPanel.poll(context) and context.object is not None and context.object.type == 'EMPTY'
+
+    def draw_header(self, context):
+        self.layout.prop(context.object.cycles, "is_decal", text="")
+
+    def draw(self, context):
+        ob = context.object
+        layout = self.layout
+        layout.active = ob.cycles.is_decal
+        layout.prop(ob.cycles, "decal_enabled")
+        draw_decal_settings(layout, ob)
+
+
+def draw_add_menu(self, context):
+    if context.engine != 'CYCLES':
+        return
+    layout = self.layout
+    layout.operator("cycles.decal_add", text="Decal", icon='MOD_UVPROJECT').shape = 'PLANE'
+    layout.operator("cycles.decal_add", text="Cylindrical Decal", icon='MESH_CYLINDER').shape = 'CYLINDER'
+
+
+classes = (
+    CYCLES_OT_decal_add,
+    CYCLES_OT_decal_material_new,
+    CYCLES_OT_decal_remove,
+    CYCLES_OT_decal_select,
+    CYCLES_OT_decal_add_selected,
+    CYCLES_OT_decal_object_remove,
+    CYCLES_OT_decal_collection_add,
+    CYCLES_OT_decal_collection_remove,
+    CYCLES_VIEW3D_PT_decals,
+    CYCLES_OBJECT_PT_decal,
+)
+
+
+def register():
+    from bpy.utils import register_class
+    for cls in classes:
+        register_class(cls)
+    bpy.types.VIEW3D_MT_add.append(draw_add_menu)
+
+
+def unregister():
+    from bpy.utils import unregister_class
+    bpy.types.VIEW3D_MT_add.remove(draw_add_menu)
+    for cls in reversed(classes):
+        unregister_class(cls)

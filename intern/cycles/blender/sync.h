@@ -186,6 +186,17 @@ class BlenderSync {
   void sync_sections(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer);
   uint get_section_mask(blender::Object &b_ob, blender::Object *b_parent);
 
+  /* Decals: empties marked as decal in the view layer, and the objects they are projected on. */
+  struct DecalTargets {
+    /* Exclude the objects and collections listed (else only project on them). */
+    bool exclude = true;
+    vector<const blender::ID *> objects;
+    vector<blender::Collection *> collections;
+  };
+  vector<DecalTargets> decal_targets_;
+  void sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer);
+  uint get_decal_mask(blender::Object &b_ob, blender::Object *b_parent);
+
   void sync_procedural(blender::Object &b_ob,
                        blender::MeshSequenceCacheModifier &b_mesh_cache,
                        bool has_subdivision);

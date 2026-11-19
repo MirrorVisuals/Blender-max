@@ -761,6 +761,10 @@ enum AttributeElement {
   ATTR_ELEMENT_IS_NORMAL = (1 << 9),
   ATTR_ELEMENT_IS_BYTE = (1 << 10),
 
+  /* Decal coordinates, read from the ShaderData while a decal material is evaluated (see
+   * kernel/geom/decal.h). The offset is the DecalAttribute. */
+  ATTR_ELEMENT_DECAL = (1 << 11),
+
   /* Only these combinations are supported by the kernel and can be
    * created on geometry. */
   ATTR_ELEMENT_VERTEX_NORMAL = ATTR_ELEMENT_VERTEX | ATTR_ELEMENT_IS_NORMAL,
@@ -1013,6 +1017,9 @@ enum ShaderDataObjectFlag : uint {
   SD_OBJECT_HAS_VOLUME_MOTION = (1u << 11),
   /* Geometry has per-corner normals instead of per-vertex. */
   SD_OBJECT_HAS_CORNER_NORMALS = (1u << 12),
+  /* A decal material is being evaluated: the default UV, generated coordinates and tangent are
+   * the ones of the decal (not in SD_OBJECT_FLAGS, only set during shading). */
+  SD_OBJECT_DECAL_EVAL = (1u << 13),
 
   /* object is using caustics */
   SD_OBJECT_CAUSTICS = (SD_OBJECT_CAUSTICS_CASTER | SD_OBJECT_CAUSTICS_RECEIVER),
@@ -1098,6 +1105,13 @@ struct ccl_align(16) ShaderData {
    * emission and shadow transparency with MAX_CLOSURE 0. */
   Spectrum closure_emission_background;
   Spectrum closure_transparent_extinction;
+
+  /* Coordinates of the decal whose material is evaluated (with SD_OBJECT_DECAL_EVAL): UV and
+   * depth, their differentials, and the tangent along U in object space. */
+  float3 decal_uvw;
+  float3 decal_duvw_dx;
+  float3 decal_duvw_dy;
+  float3 decal_tangent;
 
   /* At the end so we can adjust size in ShaderDataTinyStorage. */
   struct ShaderClosure closure[MAX_CLOSURE];
@@ -1471,6 +1485,8 @@ struct KernelObject {
 
   /* Sections that cut the object, a bit per section. */
   uint section_mask;
+  /* Decals projected on the object, a bit per decal. */
+  uint decal_mask;
 };
 static_assert_align(KernelObject, 16);
 
@@ -1514,6 +1530,45 @@ struct KernelSection {
   int pad2, pad3;
 };
 static_assert_align(KernelSection, 16);
+
+/* Decals (see kernel/geom/decal.h). */
+
+#define KERNEL_MAX_DECALS 32
+
+enum KernelDecalFlag {
+  /* Wrapped around the local Z axis instead of projected along it. */
+  DECAL_CYLINDER = (1 << 0),
+  /* Also on the surfaces facing away from the projection. */
+  DECAL_BACK_FACES = (1 << 1),
+};
+
+enum DecalAttribute {
+  DECAL_ATTR_UV = 0,
+  DECAL_ATTR_GENERATED = 1,
+  DECAL_ATTR_TANGENT = 2,
+  DECAL_ATTR_TANGENT_SIGN = 3,
+};
+
+struct KernelDecal {
+  /* Local space of the decal to world, and back: the projection box is -1 to 1 on every axis,
+   * projected along -Z (planar), or the cylinder of radius 1 around Z (cylindrical). */
+  Transform tfm;
+  Transform itfm;
+  int shader;
+  int flags;
+  float opacity;
+  /* How much of the bump of the surface under the decal shows on it, 0 to 1. */
+  float surface_bump;
+  /* Cosine of the largest angle between the surface and the projection, and of the angle where
+   * the decal starts to fade out towards it. */
+  float cos_angle_limit;
+  float cos_angle_fade;
+  /* Part of the depth, at both ends, where the decal fades out. */
+  float depth_fade;
+  /* Angle the decal spans around a cylinder. */
+  float span;
+};
+static_assert_align(KernelDecal, 16);
 
 struct KernelCurve {
   int shader_id;

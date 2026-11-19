@@ -240,11 +240,32 @@ materials. Add > Section (or Section Box), or the Sections tab of the 3D View si
   light still see the whole building, so the inside stays lit as it is. **Keep Lighting** off
   lets the light in through the cut too.
 - **Caps:** the cut of closed objects is filled on the section, with a **Flat Color**, a **Lit
-  Color** or the **Object Material**.
+  Color**, the **Object Material** or a **Custom Material**, also where objects touch or overlap
+  (a column on the floor, walls meeting at a corner).
 - **Targets:** the objects (and collection instances) and collections a section cuts, or every
   object. **Only Camera Rays** keeps reflections and refractions uncut.
 - Several sections at once, each with on/off, and **Clean All**. Cycles only for now: Solid
   view and EEVEE do not show the cut yet.
+
+### Cycles: Decals, as V-Ray Decal
+
+A material projected onto the surfaces inside a box, without changing them: signs, labels,
+stains, cracks. Add > Decal (or Cylindrical Decal), or the Decals tab of the 3D View sidebar.
+
+- **A decal is a Cube empty:** it projects along its -Z axis (**Planar**), or wraps around its
+  Z axis (**Cylindrical**, with the **Span** it covers), as a label on a bottle. Move, rotate
+  and scale it to place it.
+- **Any material:** its default UV and generated coordinates are the decal's, so Image
+  Textures, procedural textures and Normal Maps follow it. Its alpha shows the surface under
+  it; **Opacity** fades the whole decal. The + button makes a material with an Image Texture
+  and its alpha.
+- **Bump:** **Surface Bump** keeps the bump of the surface under the decal (a sign painted on
+  bricks), and the decal's own bump or normal map is added (a recessed or embossed decal).
+- **Projection:** **Angle Limit** and **Angle Fade** keep it off the surfaces turned away,
+  **Depth Fade** fades it at the ends of the box, **Back Faces** projects through. **Order**
+  layers decals over each other.
+- **Objects:** exclude objects and collections, or project only on them.
+- Cycles only for now, without displacement.
 
 ### Preferences: Scene Selector Position
 

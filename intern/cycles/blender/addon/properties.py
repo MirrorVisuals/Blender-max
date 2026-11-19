@@ -1536,6 +1536,24 @@ enum_section_cap_mode = (
 )
 
 
+enum_decal_shape = (
+    ('PLANE', "Planar", "Project the decal along the -Z axis of the box (the cube the empty draws)"),
+    ('CYLINDER', "Cylindrical", "Wrap the decal around the Z axis of the box, as a label on a bottle"),
+)
+
+enum_decal_list_mode = (
+    ('EXCLUDE', "Exclude", "Project on every object but the ones listed"),
+    ('INCLUDE', "Include", "Project only on the objects listed"),
+)
+
+
+def _decal_shape_update(self, _context):
+    # Draw the empty as the box the decal is projected in.
+    ob = self.id_data
+    if isinstance(ob, bpy.types.Object) and ob.type == 'EMPTY':
+        ob.empty_display_type = 'CUBE'
+
+
 def _section_shape_update(self, _context):
     # Draw the empty as what it cuts with.
     ob = self.id_data
@@ -1613,6 +1631,99 @@ class CyclesObjectSettings(bpy.types.PropertyGroup):
         type=CyclesSectionCollection,
     )
     section_ui_expanded: BoolProperty(default=True)
+
+    # Decals (for empties).
+    is_decal: BoolProperty(
+        name="Decal",
+        description="This empty projects a material onto the surfaces inside its box, as a decal (Cycles)",
+        default=False,
+    )
+    decal_enabled: BoolProperty(
+        name="Enabled",
+        description="Project this decal",
+        default=True,
+    )
+    decal_shape: EnumProperty(
+        name="Projection",
+        items=enum_decal_shape,
+        default='PLANE',
+        update=_decal_shape_update,
+    )
+    decal_material: PointerProperty(
+        name="Material",
+        description="Material of the decal. Its default UV and generated coordinates are the ones of the decal, "
+        "and its alpha shows the surface under it",
+        type=bpy.types.Material,
+    )
+    decal_opacity: FloatProperty(
+        name="Opacity",
+        description="How much the decal covers the surface",
+        min=0.0, max=1.0,
+        default=1.0,
+        subtype='FACTOR',
+    )
+    decal_span: FloatProperty(
+        name="Span",
+        description="Angle the decal covers around the cylinder",
+        min=0.001, max=2.0 * pi,
+        default=pi,
+        subtype='ANGLE',
+    )
+    decal_angle_limit: FloatProperty(
+        name="Angle Limit",
+        description="Largest angle between the surface and the projection where the decal shows",
+        min=0.0, max=pi,
+        default=pi * 80.0 / 180.0,
+        subtype='ANGLE',
+    )
+    decal_angle_fade: FloatProperty(
+        name="Angle Fade",
+        description="Below the angle limit, the angles over which the decal fades out",
+        min=0.0, max=pi,
+        default=pi * 10.0 / 180.0,
+        subtype='ANGLE',
+    )
+    decal_depth_fade: FloatProperty(
+        name="Depth Fade",
+        description="Part of the depth of the box, at both ends, where the decal fades out",
+        min=0.0, max=1.0,
+        default=0.0,
+        subtype='FACTOR',
+    )
+    decal_back_faces: BoolProperty(
+        name="Back Faces",
+        description="Also project on the surfaces facing away from the projection",
+        default=False,
+    )
+    decal_surface_bump: FloatProperty(
+        name="Surface Bump",
+        description="How much of the bump of the surface under the decal shows on it (the decal's own bump or "
+        "normal map is added)",
+        min=0.0, max=1.0,
+        default=1.0,
+        subtype='FACTOR',
+    )
+    decal_order: IntProperty(
+        name="Order",
+        description="Decals with a higher order are layered on top of the others",
+        default=0,
+    )
+    decal_list_mode: EnumProperty(
+        name="Objects",
+        items=enum_decal_list_mode,
+        default='EXCLUDE',
+    )
+    decal_objects: CollectionProperty(
+        name="Objects",
+        description="Objects excluded from the decal, or the only ones it is projected on",
+        type=CyclesSectionTarget,
+    )
+    decal_collections: CollectionProperty(
+        name="Collections",
+        description="Collections whose objects are excluded from the decal, or the only ones it is projected on",
+        type=CyclesSectionCollection,
+    )
+    decal_ui_expanded: BoolProperty(default=True)
 
     use_motion_blur: BoolProperty(
         name="Use Motion Blur",

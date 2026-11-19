@@ -107,6 +107,7 @@ NODE_DEFINE(Object)
   SOCKET_STRING(lightgroup, "Light Group", ustring());
   SOCKET_UINT(receiver_light_set, "Light Set Index", 0);
   SOCKET_UINT(section_mask, "Section Mask", 0);
+  SOCKET_UINT(decal_mask, "Decal Mask", 0);
   SOCKET_UINT64(light_set_membership, "Light Set Membership", LIGHT_LINK_MASK_ALL);
   SOCKET_UINT(blocker_shadow_set, "Shadow Set Index", 0);
   SOCKET_UINT64(shadow_set_membership, "Shadow Set Membership", LIGHT_LINK_MASK_ALL);
@@ -721,6 +722,7 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
   kobject.visibility = ob->visibility_for_tracing();
   kobject.primitive_type = geom->primitive_type();
   kobject.section_mask = ob->section_mask;
+  kobject.decal_mask = ob->decal_mask;
 
   /* Object shadow caustics flag */
   if (ob->is_caustics_caster) {
@@ -929,6 +931,27 @@ void ObjectManager::device_update(Device *device,
   }
   else {
     dscene->sections.free();
+  }
+
+  /* Decals. */
+  dscene->data.integrator.num_decals = int(decals_.size());
+  if (!decals_.empty()) {
+    KernelDecal *kdecals = dscene->decals.alloc(decals_.size());
+    std::copy(decals_.begin(), decals_.end(), kdecals);
+    /* Shader indices are known now. */
+    for (size_t i = 0; i < decals_.size(); i++) {
+      const Shader *shader = (i < decal_shaders_.size()) ? decal_shaders_[i] : nullptr;
+      kdecals[i].shader = -1;
+      if (shader &&
+          std::find(scene->shaders.begin(), scene->shaders.end(), shader) != scene->shaders.end())
+      {
+        kdecals[i].shader = shader->id;
+      }
+    }
+    dscene->decals.copy_to_device();
+  }
+  else {
+    dscene->decals.free();
   }
 
   if (scene->objects.empty()) {
@@ -1203,6 +1226,21 @@ void ObjectManager::set_sections(Scene *scene,
   }
 }
 
+void ObjectManager::set_decals(Scene *scene,
+                               const vector<KernelDecal> &decals,
+                               const vector<Shader *> &shaders)
+{
+  if (decals.size() == decals_.size() && shaders == decal_shaders_ &&
+      (decals.empty() ||
+       memcmp(decals.data(), decals_.data(), sizeof(KernelDecal) * decals.size()) == 0))
+  {
+    return;
+  }
+  decals_ = decals;
+  decal_shaders_ = shaders;
+  tag_update(scene, OBJECT_MODIFIED);
+}
+
 bool ObjectManager::need_section_shadows() const
 {
   for (const KernelSection &section : sections_) {
@@ -1220,6 +1258,7 @@ void ObjectManager::device_free(Device * /*unused*/, DeviceScene *dscene, bool f
 {
   if (force_free) {
     dscene->sections.free();
+    dscene->decals.free();
   }
   dscene->objects.free_if_need_realloc(force_free);
   dscene->object_motion_pass.free_if_need_realloc(force_free);

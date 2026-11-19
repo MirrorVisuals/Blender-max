@@ -310,6 +310,7 @@ Object *BlenderSync::sync_object(blender::ViewLayer &b_view_layer,
   object->set_is_bake_target(b_ob_info.real_object == b_bake_target);
 
   object->set_section_mask(get_section_mask(b_ob, b_parent));
+  object->set_decal_mask(get_decal_mask(b_ob, b_parent));
 
   /* sync the asset name for Cryptomatte */
   blender::Object *parent = b_ob.parent;
@@ -521,6 +522,171 @@ uint BlenderSync::get_section_mask(blender::Object &b_ob, blender::Object *b_par
   return mask;
 }
 
+/* Decals */
+
+void BlenderSync::sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer)
+{
+  decal_targets_.clear();
+
+  struct DecalSync {
+    int order;
+    string name;
+    KernelDecal kdecal;
+    Shader *shader;
+    DecalTargets targets;
+  };
+  vector<DecalSync> found;
+
+  for (blender::Base &b_base : b_view_layer.object_bases) {
+    blender::Object *b_ob = b_base.object;
+    if (b_ob == nullptr || b_ob->type != blender::OB_EMPTY) {
+      continue;
+    }
+    blender::PointerRNA b_ob_rna = RNA_id_pointer_create(&b_ob->id);
+    blender::PointerRNA cobject = RNA_pointer_get(&b_ob_rna, "cycles");
+    if (!get_boolean(cobject, "is_decal") || !get_boolean(cobject, "decal_enabled")) {
+      continue;
+    }
+
+    /* The material of the decal. */
+    Shader *shader = nullptr;
+    const blender::PointerRNA b_material = RNA_pointer_get(&cobject, "decal_material");
+    blender::ID *b_material_id = static_cast<blender::ID *>(b_material.data);
+    if (b_material_id) {
+      shader = shader_map.find(b_material_id);
+      if (shader == nullptr) {
+        blender::ID *b_material_eval = DEG_get_evaluated_id(
+            &b_depsgraph, const_cast<blender::ID *>(section_original_id(b_material_id)));
+        shader = b_material_eval ? shader_map.find(b_material_eval) : nullptr;
+      }
+      if (shader && !shader->used_by_decal) {
+        /* Compile it, though no object uses it. */
+        shader->used_by_decal = true;
+        shader->tag_modified();
+        scene->shader_manager->tag_update(scene, ShaderManager::SHADER_MODIFIED);
+      }
+    }
+    if (shader == nullptr) {
+      continue;
+    }
+
+    DecalSync decal;
+    decal.order = get_int(cobject, "decal_order");
+    decal.name = b_ob->id.name;
+    decal.shader = shader;
+
+    KernelDecal &kdecal = decal.kdecal;
+    kdecal = {};
+    /* The box is the cube the empty draws. */
+    const float size = max(b_ob->empty_drawsize, 1e-6f);
+    const Transform tfm = get_transform(b_ob->object_to_world()) *
+                          transform_scale(make_float3(size, size, size));
+    kdecal.tfm = tfm;
+    kdecal.itfm = transform_inverse(tfm);
+    kdecal.shader = -1;
+    kdecal.flags = (get_enum(cobject, "decal_shape") == 1 ? DECAL_CYLINDER : 0) |
+                   (get_boolean(cobject, "decal_back_faces") ? DECAL_BACK_FACES : 0);
+    kdecal.opacity = clamp(get_float(cobject, "decal_opacity"), 0.0f, 1.0f);
+    kdecal.surface_bump = clamp(get_float(cobject, "decal_surface_bump"), 0.0f, 1.0f);
+    const float angle_limit = clamp(get_float(cobject, "decal_angle_limit"), 0.0f, M_PI_F);
+    const float angle_fade = clamp(get_float(cobject, "decal_angle_fade"), 0.0f, angle_limit);
+    kdecal.cos_angle_limit = (angle_limit >= M_PI_F - 1e-4f) ? -2.0f : cosf(angle_limit);
+    kdecal.cos_angle_fade = cosf(angle_limit - angle_fade);
+    kdecal.depth_fade = clamp(get_float(cobject, "decal_depth_fade"), 0.0f, 1.0f);
+    kdecal.span = clamp(get_float(cobject, "decal_span"), 1e-3f, M_2PI_F);
+
+    /* Targets: all objects but the listed ones, or only the listed ones. */
+    DecalTargets &targets = decal.targets;
+    targets.exclude = get_enum(cobject, "decal_list_mode") == 0;
+    blender::CollectionPropertyIterator iter;
+    for (RNA_collection_begin(&cobject, "decal_objects", &iter); iter.valid;
+         RNA_property_collection_next(&iter))
+    {
+      blender::PointerRNA item = iter.ptr;
+      const blender::PointerRNA target = RNA_pointer_get(&item, "object");
+      if (target.data) {
+        targets.objects.push_back(section_original_id(static_cast<blender::ID *>(target.data)));
+      }
+    }
+    RNA_property_collection_end(&iter);
+    for (RNA_collection_begin(&cobject, "decal_collections", &iter); iter.valid;
+         RNA_property_collection_next(&iter))
+    {
+      blender::PointerRNA item = iter.ptr;
+      const blender::PointerRNA target = RNA_pointer_get(&item, "collection");
+      if (target.data) {
+        targets.collections.push_back(
+            reinterpret_cast<blender::Collection *>(const_cast<blender::ID *>(
+                section_original_id(static_cast<blender::ID *>(target.data)))));
+      }
+    }
+    RNA_property_collection_end(&iter);
+
+    found.push_back(std::move(decal));
+  }
+
+  /* Layered in their order (the higher on top), then by name. Indices are sorted: the decals
+   * are over-aligned for the temporary buffer of a stable sort. */
+  vector<int> sorted(found.size());
+  for (size_t i = 0; i < found.size(); i++) {
+    sorted[i] = int(i);
+  }
+  std::sort(sorted.begin(), sorted.end(), [&found](const int a, const int b) {
+    const DecalSync &da = found[a];
+    const DecalSync &db = found[b];
+    return (da.order != db.order) ? da.order < db.order : da.name < db.name;
+  });
+  if (sorted.size() > KERNEL_MAX_DECALS) {
+    LOG_WARNING << "Only " << KERNEL_MAX_DECALS << " decals are supported.";
+    sorted.resize(KERNEL_MAX_DECALS);
+  }
+
+  vector<KernelDecal> decals;
+  vector<Shader *> shaders;
+  for (const int i : sorted) {
+    DecalSync &decal = found[i];
+    decals.push_back(decal.kdecal);
+    shaders.push_back(decal.shader);
+    decal_targets_.push_back(std::move(decal.targets));
+  }
+  scene->object_manager->set_decals(scene, decals, shaders);
+}
+
+uint BlenderSync::get_decal_mask(blender::Object &b_ob, blender::Object *b_parent)
+{
+  if (decal_targets_.empty()) {
+    return 0;
+  }
+  const blender::ID *ob_id = section_original_id(&b_ob.id);
+  const blender::ID *parent_id = section_original_id(b_parent ? &b_parent->id : nullptr);
+  blender::Object *ob = reinterpret_cast<blender::Object *>(const_cast<blender::ID *>(ob_id));
+  blender::Object *parent = reinterpret_cast<blender::Object *>(
+      const_cast<blender::ID *>(parent_id));
+
+  uint mask = 0;
+  for (size_t i = 0; i < decal_targets_.size(); i++) {
+    const DecalTargets &targets = decal_targets_[i];
+    bool listed = false;
+    for (const blender::ID *id : targets.objects) {
+      if (listed) {
+        break;
+      }
+      listed = (id == ob_id) || (parent && id == parent_id);
+    }
+    for (blender::Collection *collection : targets.collections) {
+      if (listed) {
+        break;
+      }
+      listed = blender::BKE_collection_has_object_recursive(collection, ob) ||
+               (parent && blender::BKE_collection_has_object_recursive(collection, parent));
+    }
+    if (listed != targets.exclude) {
+      mask |= (1u << i);
+    }
+  }
+  return mask;
+}
+
 static float4 lookup_instance_property(blender::Object &ob,
                                        blender::DEGObjectIterData &b_deg_iter_data,
                                        const string &name,
@@ -648,6 +814,7 @@ void BlenderSync::sync_objects(blender::Depsgraph &b_depsgraph,
   /* Sections first: objects refer to them. */
   if (motion_time == 0.0f) {
     sync_sections(b_depsgraph, b_view_layer);
+    sync_decals(b_depsgraph, b_view_layer);
   }
 
   blender::DEGObjectIterSettings deg_iter_settings{};

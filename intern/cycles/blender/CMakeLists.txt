@@ -91,6 +91,7 @@ set(ADDON_FILES
   addon/osl.py
   addon/presets.py
   addon/sections.py
+  addon/decals.py
   addon/properties.py
   addon/ui.py
   addon/version_update.py

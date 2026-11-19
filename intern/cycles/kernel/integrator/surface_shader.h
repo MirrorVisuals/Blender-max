@@ -9,6 +9,8 @@
 #include "kernel/closure/bsdf.h"
 #include "kernel/closure/emissive.h"
 
+#include "kernel/geom/decal.h"
+
 #include "kernel/film/light_passes.h"
 
 #include "kernel/integrator/guiding.h"
@@ -1252,7 +1254,8 @@ ccl_device void surface_shader_eval(KernelGlobals kg,
                                     ccl_global float *ccl_restrict buffer,
                                     const PathRayVisibility path_visibility,
                                     const uint32_t path_flag,
-                                    bool use_caustics_storage = false)
+                                    bool use_caustics_storage = false,
+                                    const bool use_decals = false)
 {
   /* Initialize additional RNG for BSDFs and image textures. */
   sd->lcg_state = integrator_state_lcg_init(state, 0xb4bc3953);
@@ -1282,8 +1285,26 @@ ccl_device void surface_shader_eval(KernelGlobals kg,
 #endif
   {
 #ifdef __SVM__
-    svm_eval_nodes<node_feature_mask, SHADER_TYPE_SURFACE>(
-        kg, state, sd, buffer, path_visibility, path_flag);
+    /* The material of the surface, then the one of each decal on it, layered on top (see
+     * kernel/geom/decal.h). One call site, to not inline the interpreter more than once. */
+    DecalLayerState decal_state;
+    decal_state.shader = sd->shader & SHADER_MASK;
+    decal_state.has_surface_N = false;
+    int decal = -1;
+    for (;;) {
+      svm_eval_nodes<node_feature_mask, SHADER_TYPE_SURFACE>(
+          kg, state, sd, buffer, path_visibility, path_flag);
+      if (decal != -1) {
+        decal_layer_end(kg, sd, decal, &decal_state);
+      }
+      if (!use_decals || (sd->flag & SD_CACHE_MISS)) {
+        break;
+      }
+      decal = decal_layer_begin(kg, sd, decal + 1, &decal_state);
+      if (decal == -1) {
+        break;
+      }
+    }
 #else
     if (sd->object == OBJECT_NONE) {
       sd->closure_emission_background = make_spectrum(0.8f);

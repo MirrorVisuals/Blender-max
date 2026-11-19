@@ -15,6 +15,7 @@
 
 #include "kernel/geom/attribute.h"
 #include "kernel/geom/curve.h"
+#include "kernel/geom/decal.h"
 #include "kernel/geom/object.h"
 #include "kernel/geom/point.h"
 #include "kernel/geom/triangle.h"
@@ -37,6 +38,10 @@ ccl_device_forceinline T primitive_surface_attribute(KernelGlobals kg,
 
   if (desc.element & (ATTR_ELEMENT_OBJECT | ATTR_ELEMENT_MESH)) {
     return T(attribute_data_fetch<BaseT>(kg, desc.element, desc.offset));
+  }
+
+  if (desc.element == ATTR_ELEMENT_DECAL) {
+    return decal_attribute<T>(sd, desc);
   }
 
   if (sd->type & PRIMITIVE_TRIANGLE) {

@@ -100,10 +100,12 @@ class Shader : public Node {
   /* Used for the caps of a section (ObjectManager::set_sections), which is not a reference from
    * a socket: compile it even when no geometry uses it. */
   bool used_by_section = false;
-  /* Referenced by geometry or used by a section: the shader is compiled. */
+  /* Used by a decal (ObjectManager::set_decals), likewise. */
+  bool used_by_decal = false;
+  /* Referenced by geometry or used by a section or a decal: the shader is compiled. */
   bool is_used() const
   {
-    return reference_count() != 0 || used_by_section;
+    return reference_count() != 0 || used_by_section || used_by_decal;
   }
 
   /* synchronization */

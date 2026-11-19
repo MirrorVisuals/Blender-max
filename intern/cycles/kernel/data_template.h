@@ -237,6 +237,8 @@ KERNEL_STRUCT_MEMBER(integrator, int, use_guiding_direct_light)
 KERNEL_STRUCT_MEMBER(integrator, int, use_guiding_mis_weights)
 /* Sections. */
 KERNEL_STRUCT_MEMBER(integrator, int, num_sections)
+/* Decals. */
+KERNEL_STRUCT_MEMBER(integrator, int, num_decals)
 
 KERNEL_STRUCT_MEMBER(integrator, float2, pixel_jitter)
 KERNEL_STRUCT_END(KernelIntegrator)

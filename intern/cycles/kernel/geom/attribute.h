@@ -104,10 +104,45 @@ ccl_device_inline AttributeDescriptor find_attribute(KernelGlobals kg,
       &kernel_data_fetch(attributes_map, 0), object_attribute_map_offset(kg, object), prim, id);
 }
 
+/* Decal attributes in place of the attributes of the geometry. */
+ccl_device_inline AttributeDescriptor decal_find_attribute(const uint64_t id)
+{
+  AttributeDescriptor desc;
+  desc.element = ATTR_ELEMENT_DECAL;
+  desc.type = NODE_ATTR_FLOAT3;
+  switch (id) {
+    case ATTR_STD_UV:
+      desc.offset = DECAL_ATTR_UV;
+      break;
+    case ATTR_STD_GENERATED:
+      desc.offset = DECAL_ATTR_GENERATED;
+      break;
+    case ATTR_STD_UV_TANGENT:
+      desc.offset = DECAL_ATTR_TANGENT;
+      break;
+    case ATTR_STD_UV_TANGENT_SIGN:
+      desc.offset = DECAL_ATTR_TANGENT_SIGN;
+      desc.type = NODE_ATTR_FLOAT;
+      break;
+    default:
+      desc.element = ATTR_ELEMENT_NONE;
+      desc.offset = ATTR_STD_NOT_FOUND;
+      break;
+  }
+  return desc;
+}
+
 ccl_device_inline AttributeDescriptor find_attribute(KernelGlobals kg,
                                                      const ccl_private ShaderData *sd,
                                                      const uint64_t id)
 {
+  if (sd->object_flag & SD_OBJECT_DECAL_EVAL) {
+    /* The material of a decal: its coordinates (see kernel/geom/decal.h). */
+    const AttributeDescriptor desc = decal_find_attribute(id);
+    if (desc.element == ATTR_ELEMENT_DECAL) {
+      return desc;
+    }
+  }
   return find_attribute(kg, sd->object, sd->prim, id);
 }
 

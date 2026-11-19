@@ -706,6 +706,11 @@ if(WITH_CYCLES)
     cycles_sections
     --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_sections.py
   )
+
+  add_blender_test(
+    cycles_decals
+    --python ${CMAKE_CURRENT_LIST_DIR}/bl_cycles_decals.py
+  )
 endif()
 
 add_blender_test(

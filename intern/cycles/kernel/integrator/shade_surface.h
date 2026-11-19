@@ -874,7 +874,7 @@ ccl_device int integrate_surface(KernelGlobals kg,
       /* Evaluate shader. */
       PROFILING_EVENT(PROFILING_SHADE_SURFACE_EVAL);
       surface_shader_eval<node_feature_mask>(
-          kg, state, &sd, render_buffer, path_visibility, path_flag);
+          kg, state, &sd, render_buffer, path_visibility, path_flag, false, true);
     }
 
     if (sd.flag & SD_CACHE_MISS) {
