@@ -74,8 +74,8 @@ class Object : public Node {
 
   /* Sections that cut this object, a bit per section of ObjectManager::set_sections. */
   NODE_SOCKET_API(uint, section_mask)
-  /* Decals projected on this object, a bit per decal of ObjectManager::set_decals. */
-  NODE_SOCKET_API(uint, decal_mask)
+  /* Decals (indices in ObjectManager::set_decals) whose object list has this object. */
+  NODE_SOCKET_API_ARRAY(array<int>, decal_listed)
   NODE_SOCKET_API(uint64_t, light_set_membership)
   NODE_SOCKET_API(uint, blocker_shadow_set)
   NODE_SOCKET_API(uint64_t, shadow_set_membership)
@@ -204,13 +204,18 @@ class ObjectManager {
   bool need_section_shadows() const;
 
   /* Decals (see kernel/geom/decal.h), in the order they are layered. Objects refer to them by
-   * index in `decal_mask`. */
+   * index in `decal_listed`. */
   void set_decals(Scene *scene,
                   const vector<KernelDecal> &decals,
                   const vector<Shader *> &shaders);
+  bool has_decals() const
+  {
+    return !decals_.empty();
+  }
 
  protected:
   vector<KernelDecal> decals_;
+  void device_update_decals(DeviceScene *dscene, Scene *scene);
   /* Shader of each decal, or null. */
   vector<Shader *> decal_shaders_;
   vector<KernelSection> sections_;

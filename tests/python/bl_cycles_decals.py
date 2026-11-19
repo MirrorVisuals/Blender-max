@@ -10,6 +10,7 @@
 import math
 import os
 import sys
+import time
 
 import bpy
 
@@ -57,22 +58,24 @@ sun = bpy.data.objects.new("Sun", sun_data)
 scene.collection.objects.link(sun)
 
 
-def pixel_of(x, y):
-    px = int((x + VIEW / 2) / VIEW * RES)
-    py = int((y + VIEW / 2) / VIEW * RES)
-    return py * RES + px
+def pixel_of(x, y, res=RES):
+    px = int((x + VIEW / 2) / VIEW * res)
+    py = int((y + VIEW / 2) / VIEW * res)
+    return py * res + px
 
 
-def render(name):
+def render(name, res=RES):
     path = os.path.join(bpy.app.tempdir, "decals_" + name + ".exr")
     scene.render.filepath = path
+    scene.render.resolution_x = res
+    scene.render.resolution_y = res
     bpy.ops.render.render(write_still=True)
     img = bpy.data.images.load(path)
     px = list(img.pixels)
     bpy.data.images.remove(img)
 
     def at(x, y):
-        i = pixel_of(x, y) * 4
+        i = pixel_of(x, y, res) * 4
         return px[i], px[i + 1], px[i + 2]
     return at
 
@@ -93,6 +96,31 @@ def uv_material(name):
     nt.links.new(texco.outputs["UV"], emission.inputs["Color"])
     nt.links.new(emission.outputs["Emission"], out.inputs["Surface"])
     return mat
+
+
+def emission_material(name, color):
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    emission = nt.nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = (*color, 1.0)
+    nt.links.new(emission.outputs[0], out.inputs["Surface"])
+    return mat
+
+
+def new_decal(name, location, scale, material, order=0):
+    """A decal made without the operator (fast, for many)."""
+    ob = bpy.data.objects.new(name, None)
+    ob.empty_display_type = 'CUBE'
+    ob.location = location
+    ob.scale = scale
+    ob.cycles.is_decal = True
+    ob.cycles.decal_material = material
+    ob.cycles.decal_order = order
+    scene.collection.objects.link(ob)
+    return ob
 
 
 def half_transparent_material(name, color):
@@ -210,6 +238,91 @@ check(close(wrapped(1.2, 0.0), plain(1.2, 0.0), 0.01 * g + 1e-4), "outside the c
 
 bpy.ops.cycles.decal_remove(decal=cyl.name)
 check(not any(ob.cycles.is_decal for ob in scene.objects), "the decal is removed")
+
+print("Order")
+red = emission_material("Red", (1.0, 0.0, 0.0))
+green = emission_material("Green", (0.0, 1.0, 0.0))
+bottom = new_decal("Bottom", (0, 0, 0), (1, 1, 1), red, order=0)
+top = new_decal("Top", (0, 0, 0), (1, 1, 1), green, order=1)
+layered = render("order")(*CENTER)
+check(layered[1] > 0.9 and layered[0] < 0.05, "the decal with the higher order is on top (%.3f, %.3f, %.3f)" % layered)
+top.cycles.decal_order = -1
+layered = render("order_swapped")(*CENTER)
+check(layered[0] > 0.9 and layered[1] < 0.05, "changing the order swaps them (%.3f, %.3f, %.3f)" % layered)
+bpy.data.objects.remove(bottom, do_unlink=True)
+bpy.data.objects.remove(top, do_unlink=True)
+
+print("Layered materials")
+# Lit decals over each other need more closures than any one material: none may be lost.
+
+
+def lit_material(name, color, alpha=1.0):
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes["Principled BSDF"]
+    bsdf.inputs["Base Color"].default_value = (*color, 1.0)
+    bsdf.inputs["Alpha"].default_value = alpha
+    return mat
+
+
+upper = new_decal("Upper", (0, 0, 0), (1, 1, 1), lit_material("White", (0.9, 0.9, 0.9)), order=1)
+alone = render("lit_alone")(*CENTER)
+lower = new_decal("Lower", (0, 0, 0), (1, 1, 1), lit_material("Blue", (0.1, 0.1, 0.9), 0.5), order=0)
+layered = render("lit_layered")(*CENTER)
+check(close(layered, alone, 0.03 * sum(alone) / 3.0 + 1e-3),
+      "a lit decal over another one is shaded as alone (%.3f, %.3f, %.3f)" % layered)
+bpy.data.objects.remove(upper, do_unlink=True)
+bpy.data.objects.remove(lower, do_unlink=True)
+
+print("Many decals on one point")
+stack = []
+for i in range(40):
+    shade = (i + 1) / 40.0
+    stack.append(new_decal("Stack%02d" % i, (0, 0, 0), (1, 1, 1), emission_material("S%02d" % i, (shade, 0, 0)),
+                           order=i))
+stacked = render("stack")(*CENTER)
+check(abs(stacked[0] - 1.0) < 0.02, "40 decals on one point: the top one shows (%.3f)" % stacked[0])
+for ob in stack:
+    bpy.data.objects.remove(ob, do_unlink=True)
+
+print("Thousands of decals")
+GRID = 60
+SPACING = 5.0 / GRID
+HALF = 0.3 * SPACING
+uv_many = uv_material("UVMany")
+for ix in range(GRID):
+    for iy in range(GRID):
+        new_decal("Many", (-2.5 + (ix + 0.5) * SPACING, -2.5 + (iy + 0.5) * SPACING, 0.0), (HALF, HALF, 0.5),
+                  uv_many)
+num = sum(1 for ob in scene.objects if ob.type == 'EMPTY' and ob.cycles.is_decal)
+check(num == GRID * GRID, "%d decals" % num)
+scene.cycles.samples = 1
+start = time.time()
+many = render("many", 600)
+many_time = time.time() - start
+for ob in [ob for ob in scene.objects if ob.type == 'EMPTY' and ob.cycles.is_decal]:
+    bpy.data.objects.remove(ob, do_unlink=True)
+start = time.time()
+none = render("many_none", 600)
+none_time = time.time() - start
+print("  render with %d decals: %.2f s, without: %.2f s" % (GRID * GRID, many_time, none_time))
+checked = 0
+ok_centers = 0
+ok_gaps = 0
+for ix in range(0, GRID, 7):
+    for iy in range(0, GRID, 11):
+        cx = -2.5 + (ix + 0.5) * SPACING
+        cy = -2.5 + (iy + 0.5) * SPACING
+        if abs(cx) > 2.9 or abs(cy) > 2.9:
+            continue
+        checked += 1
+        c = many(cx, cy)
+        ok_centers += abs(c[0] - 0.5) < 0.15 and abs(c[1] - 0.5) < 0.15
+        gap = many(cx + 0.5 * SPACING, cy + 0.5 * SPACING)
+        ok_gaps += close(gap, none(cx + 0.5 * SPACING, cy + 0.5 * SPACING), 0.01 * g + 1e-4)
+check(checked > 20 and ok_centers == checked, "every decal shows its own UV at its center (%d of %d)" %
+      (ok_centers, checked))
+check(ok_gaps == checked, "and the ground between them is unchanged (%d of %d)" % (ok_gaps, checked))
 
 if failures:
     print("\n%d FAILED:" % len(failures))

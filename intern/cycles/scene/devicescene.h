@@ -42,6 +42,9 @@ class DeviceScene {
   device_vector<KernelObject> objects;
   device_vector<KernelSection> sections;
   device_vector<KernelDecal> decals;
+  device_vector<KernelDecalNode> decal_bvh_nodes;
+  device_vector<int> decal_bvh_items;
+  device_vector<int> decal_objects;
   device_vector<Transform> object_motion_pass;
   device_vector<DecomposedTransform> object_motion;
   device_vector<uint> object_flag;

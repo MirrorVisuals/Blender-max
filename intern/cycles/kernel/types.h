@@ -1485,8 +1485,6 @@ struct KernelObject {
 
   /* Sections that cut the object, a bit per section. */
   uint section_mask;
-  /* Decals projected on the object, a bit per decal. */
-  uint decal_mask;
 };
 static_assert_align(KernelObject, 16);
 
@@ -1533,14 +1531,30 @@ static_assert_align(KernelSection, 16);
 
 /* Decals (see kernel/geom/decal.h). */
 
-#define KERNEL_MAX_DECALS 32
+/* Decals layered at one shading point at most (the top ones are kept). */
+#define DECAL_MAX_STACK 16
+/* Depth of the traversal stack of the decal BVH. */
+#define DECAL_BVH_STACK_SIZE 64
 
 enum KernelDecalFlag {
   /* Wrapped around the local Z axis instead of projected along it. */
   DECAL_CYLINDER = (1 << 0),
   /* Also on the surfaces facing away from the projection. */
   DECAL_BACK_FACES = (1 << 1),
+  /* Only on the objects of its list (else on all but them). */
+  DECAL_INCLUDE = (1 << 2),
 };
+
+/* Node of the BVH of the boxes of the decals. An inner node has its children at `left` and
+ * `right`; a leaf has `left` = -1 - first, and `right` = the number of its decals, in
+ * `decal_bvh_items`. */
+struct KernelDecalNode {
+  float bmin[3];
+  int left;
+  float bmax[3];
+  int right;
+};
+static_assert_align(KernelDecalNode, 16);
 
 enum DecalAttribute {
   DECAL_ATTR_UV = 0,
@@ -1567,6 +1581,11 @@ struct KernelDecal {
   float depth_fade;
   /* Angle the decal spans around a cylinder. */
   float span;
+  /* The objects listed (excluded, or the only ones with DECAL_INCLUDE): sorted object indices in
+   * `decal_objects`. */
+  int list_offset;
+  int list_count;
+  int pad1, pad2;
 };
 static_assert_align(KernelDecal, 16);
 

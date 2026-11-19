@@ -265,6 +265,9 @@ stains, cracks. Add > Decal (or Cylindrical Decal), or the Decals tab of the 3D 
   **Depth Fade** fades it at the ends of the box, **Back Faces** projects through. **Order**
   layers decals over each other.
 - **Objects:** exclude objects and collections, or project only on them.
+- **Any number of decals:** a BVH of their boxes finds the few around each shading point, so
+  thousands of scattered decals (dirt, stains, puddles) render about as fast as a few. With many,
+  the sidebar lists only the selected ones.
 - Cycles only for now, without displacement.
 
 ### Preferences: Scene Selector Position

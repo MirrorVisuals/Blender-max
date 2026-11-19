@@ -13,7 +13,10 @@
  * tangent (so Image Textures and Normal Maps follow the decal). Its closures are layered on top:
  * the transparency of the decal material (its alpha) shows the surface under it, the decal's
  * opacity and the fading at the edges of the projection too. The decal can keep the bump of the
- * surface under it, and have its own bump or normal map (a recessed or embossed decal). */
+ * surface under it, and have its own bump or normal map (a recessed or embossed decal).
+ *
+ * There can be any number of decals: a BVH of their boxes finds the few around a shading point,
+ * which are layered in their order. */
 
 #pragma once
 
@@ -26,12 +29,27 @@
 
 CCL_NAMESPACE_BEGIN
 
-ccl_device_inline uint decal_object_mask(KernelGlobals kg, const int object)
+/* Is the decal projected on the object: not in its list, or in it with DECAL_INCLUDE? */
+ccl_device_inline bool decal_on_object(KernelGlobals kg,
+                                       const ccl_private KernelDecal &decal,
+                                       const int object)
 {
-  if (object == OBJECT_NONE || kernel_data.integrator.num_decals == 0) {
-    return 0;
+  /* Binary search in the sorted list. */
+  int lo = 0;
+  int hi = decal.list_count;
+  while (lo < hi) {
+    const int mid = (lo + hi) >> 1;
+    const int listed = kernel_data_fetch(decal_objects, decal.list_offset + mid);
+    if (listed < object) {
+      lo = mid + 1;
+    }
+    else {
+      hi = mid;
+    }
   }
-  return kernel_data_fetch(objects, object).decal_mask;
+  const bool listed = lo < decal.list_count &&
+                      kernel_data_fetch(decal_objects, decal.list_offset + lo) == object;
+  return listed == ((decal.flags & DECAL_INCLUDE) != 0);
 }
 
 /* World space differentials of the shading position. */
@@ -201,6 +219,11 @@ ccl_device_inline T decal_attribute(const ccl_private ShaderData *sd,
 struct DecalLayerState {
   /* The shader of the surface. */
   int shader;
+  /* The decals whose box contains the shading point, in layering order, and the next one. -1
+   * before they are looked up. */
+  int candidates[DECAL_MAX_STACK];
+  int num_candidates;
+  int next;
   /* First closure of the decal being evaluated. */
   int first_closure;
   /* Coverage of the decal being evaluated. */
@@ -213,6 +236,68 @@ struct DecalLayerState {
   float3 surface_N;
   bool has_surface_N;
 };
+
+ccl_device_inline void decal_layer_init(ccl_private DecalLayerState *state, const int shader)
+{
+  state->shader = shader;
+  state->num_candidates = -1;
+  state->next = 0;
+  state->has_surface_N = false;
+}
+
+/* The decals whose box contains P (the BVH of their boxes), at most DECAL_MAX_STACK, the top
+ * ones: decals are stored in layering order, so the highest indices. Sorted in that order. */
+ccl_device int decal_find_candidates(KernelGlobals kg, const float3 P, ccl_private int *candidates)
+{
+  int num = 0;
+  int stack[DECAL_BVH_STACK_SIZE];
+  int stack_size = 0;
+  stack[stack_size++] = 0;
+  while (stack_size > 0) {
+    const KernelDecalNode node = kernel_data_fetch(decal_bvh_nodes, stack[--stack_size]);
+    if (P.x < node.bmin[0] || P.y < node.bmin[1] || P.z < node.bmin[2] || P.x > node.bmax[0] ||
+        P.y > node.bmax[1] || P.z > node.bmax[2])
+    {
+      continue;
+    }
+    if (node.left >= 0) {
+      if (stack_size + 2 <= DECAL_BVH_STACK_SIZE) {
+        stack[stack_size++] = node.left;
+        stack[stack_size++] = node.right;
+      }
+      continue;
+    }
+    const int first = -1 - node.left;
+    for (int i = 0; i < node.right; i++) {
+      const int decal = kernel_data_fetch(decal_bvh_items, first + i);
+      if (num < DECAL_MAX_STACK) {
+        candidates[num++] = decal;
+        continue;
+      }
+      /* Full: keep the top ones, replacing the lowest. */
+      int lowest = 0;
+      for (int j = 1; j < num; j++) {
+        if (candidates[j] < candidates[lowest]) {
+          lowest = j;
+        }
+      }
+      if (decal > candidates[lowest]) {
+        candidates[lowest] = decal;
+      }
+    }
+  }
+  /* In layering order (insertion sort, few decals). */
+  for (int i = 1; i < num; i++) {
+    const int decal = candidates[i];
+    int j = i - 1;
+    while (j >= 0 && candidates[j] > decal) {
+      candidates[j + 1] = candidates[j];
+      j--;
+    }
+    candidates[j + 1] = decal;
+  }
+  return num;
+}
 
 /* The normal of the surface with its bump: the closures of its material. */
 ccl_device_inline float3 decal_surface_normal(const ccl_private ShaderData *sd, const int end)
@@ -227,24 +312,24 @@ ccl_device_inline float3 decal_surface_normal(const ccl_private ShaderData *sd, 
   return (len_squared(N) > 1e-12f) ? normalize(N) : sd->N;
 }
 
-/* Find the next decal on the shading point, from `start`, and prepare the evaluation of its
- * material. Returns the decal, or -1. */
+/* Find the next decal on the shading point and prepare the evaluation of its material. Returns
+ * the decal, or -1. */
 ccl_device int decal_layer_begin(KernelGlobals kg,
                                  ccl_private ShaderData *sd,
-                                 const int start,
                                  ccl_private DecalLayerState *state)
 {
-  const uint mask = decal_object_mask(kg, sd->object);
-  if (mask == 0 || !(sd->type & PRIMITIVE_TRIANGLE)) {
+  if (kernel_data.integrator.num_decals == 0 || sd->object == OBJECT_NONE ||
+      !(sd->type & PRIMITIVE_TRIANGLE))
+  {
     return -1;
   }
-  const int num_decals = kernel_data.integrator.num_decals;
-  for (int i = start; i < num_decals; i++) {
-    if (!(mask & (1u << i))) {
-      continue;
-    }
+  if (state->num_candidates < 0) {
+    state->num_candidates = decal_find_candidates(kg, sd->P, state->candidates);
+  }
+  while (state->next < state->num_candidates) {
+    const int i = state->candidates[state->next++];
     const KernelDecal decal = kernel_data_fetch(decals, i);
-    if (decal.shader < 0) {
+    if (decal.shader < 0 || !decal_on_object(kg, decal, sd->object)) {
       continue;
     }
     const float coverage = decal_setup(kg, sd, decal);

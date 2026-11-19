@@ -310,7 +310,8 @@ Object *BlenderSync::sync_object(blender::ViewLayer &b_view_layer,
   object->set_is_bake_target(b_ob_info.real_object == b_bake_target);
 
   object->set_section_mask(get_section_mask(b_ob, b_parent));
-  object->set_decal_mask(get_decal_mask(b_ob, b_parent));
+  array<int> decal_listed = get_decal_listed(b_ob, b_parent);
+  object->set_decal_listed(decal_listed);
 
   /* sync the asset name for Cryptomatte */
   blender::Object *parent = b_ob.parent;
@@ -526,7 +527,8 @@ uint BlenderSync::get_section_mask(blender::Object &b_ob, blender::Object *b_par
 
 void BlenderSync::sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer)
 {
-  decal_targets_.clear();
+  decal_listed_objects_.clear();
+  decal_listed_collections_.clear();
 
   struct DecalSync {
     int order;
@@ -585,7 +587,8 @@ void BlenderSync::sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLaye
     kdecal.itfm = transform_inverse(tfm);
     kdecal.shader = -1;
     kdecal.flags = (get_enum(cobject, "decal_shape") == 1 ? DECAL_CYLINDER : 0) |
-                   (get_boolean(cobject, "decal_back_faces") ? DECAL_BACK_FACES : 0);
+                   (get_boolean(cobject, "decal_back_faces") ? DECAL_BACK_FACES : 0) |
+                   (get_enum(cobject, "decal_list_mode") == 1 ? DECAL_INCLUDE : 0);
     kdecal.opacity = clamp(get_float(cobject, "decal_opacity"), 0.0f, 1.0f);
     kdecal.surface_bump = clamp(get_float(cobject, "decal_surface_bump"), 0.0f, 1.0f);
     const float angle_limit = clamp(get_float(cobject, "decal_angle_limit"), 0.0f, M_PI_F);
@@ -636,26 +639,31 @@ void BlenderSync::sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLaye
     const DecalSync &db = found[b];
     return (da.order != db.order) ? da.order < db.order : da.name < db.name;
   });
-  if (sorted.size() > KERNEL_MAX_DECALS) {
-    LOG_WARNING << "Only " << KERNEL_MAX_DECALS << " decals are supported.";
-    sorted.resize(KERNEL_MAX_DECALS);
-  }
 
   vector<KernelDecal> decals;
   vector<Shader *> shaders;
+  decals.reserve(sorted.size());
+  shaders.reserve(sorted.size());
   for (const int i : sorted) {
-    DecalSync &decal = found[i];
+    const DecalSync &decal = found[i];
+    const int index = int(decals.size());
     decals.push_back(decal.kdecal);
     shaders.push_back(decal.shader);
-    decal_targets_.push_back(std::move(decal.targets));
+    for (const blender::ID *id : decal.targets.objects) {
+      decal_listed_objects_[id].push_back(index);
+    }
+    for (blender::Collection *collection : decal.targets.collections) {
+      decal_listed_collections_.emplace_back(collection, index);
+    }
   }
   scene->object_manager->set_decals(scene, decals, shaders);
 }
 
-uint BlenderSync::get_decal_mask(blender::Object &b_ob, blender::Object *b_parent)
+array<int> BlenderSync::get_decal_listed(blender::Object &b_ob, blender::Object *b_parent)
 {
-  if (decal_targets_.empty()) {
-    return 0;
+  array<int> listed;
+  if (decal_listed_objects_.empty() && decal_listed_collections_.empty()) {
+    return listed;
   }
   const blender::ID *ob_id = section_original_id(&b_ob.id);
   const blender::ID *parent_id = section_original_id(b_parent ? &b_parent->id : nullptr);
@@ -663,28 +671,31 @@ uint BlenderSync::get_decal_mask(blender::Object &b_ob, blender::Object *b_paren
   blender::Object *parent = reinterpret_cast<blender::Object *>(
       const_cast<blender::ID *>(parent_id));
 
-  uint mask = 0;
-  for (size_t i = 0; i < decal_targets_.size(); i++) {
-    const DecalTargets &targets = decal_targets_[i];
-    bool listed = false;
-    for (const blender::ID *id : targets.objects) {
-      if (listed) {
-        break;
-      }
-      listed = (id == ob_id) || (parent && id == parent_id);
+  vector<int> decals;
+  for (const blender::ID *id : {ob_id, parent_id}) {
+    if (id == nullptr) {
+      continue;
     }
-    for (blender::Collection *collection : targets.collections) {
-      if (listed) {
-        break;
-      }
-      listed = blender::BKE_collection_has_object_recursive(collection, ob) ||
-               (parent && blender::BKE_collection_has_object_recursive(collection, parent));
-    }
-    if (listed != targets.exclude) {
-      mask |= (1u << i);
+    const auto it = decal_listed_objects_.find(id);
+    if (it != decal_listed_objects_.end()) {
+      decals.insert(decals.end(), it->second.begin(), it->second.end());
     }
   }
-  return mask;
+  for (const std::pair<blender::Collection *, int> &entry : decal_listed_collections_) {
+    if (blender::BKE_collection_has_object_recursive(entry.first, ob) ||
+        (parent && blender::BKE_collection_has_object_recursive(entry.first, parent)))
+    {
+      decals.push_back(entry.second);
+    }
+  }
+  std::sort(decals.begin(), decals.end());
+  decals.erase(std::unique(decals.begin(), decals.end()), decals.end());
+
+  listed.resize(decals.size());
+  for (size_t i = 0; i < decals.size(); i++) {
+    listed[i] = decals[i];
+  }
+  return listed;
 }
 
 static float4 lookup_instance_property(blender::Object &ob,

@@ -107,7 +107,7 @@ NODE_DEFINE(Object)
   SOCKET_STRING(lightgroup, "Light Group", ustring());
   SOCKET_UINT(receiver_light_set, "Light Set Index", 0);
   SOCKET_UINT(section_mask, "Section Mask", 0);
-  SOCKET_UINT(decal_mask, "Decal Mask", 0);
+  SOCKET_INT_ARRAY(decal_listed, "Decal Listed", array<int>());
   SOCKET_UINT64(light_set_membership, "Light Set Membership", LIGHT_LINK_MASK_ALL);
   SOCKET_UINT(blocker_shadow_set, "Shadow Set Index", 0);
   SOCKET_UINT64(shadow_set_membership, "Shadow Set Membership", LIGHT_LINK_MASK_ALL);
@@ -722,7 +722,6 @@ void ObjectManager::device_update_object_transform(UpdateObjectTransformState *s
   kobject.visibility = ob->visibility_for_tracing();
   kobject.primitive_type = geom->primitive_type();
   kobject.section_mask = ob->section_mask;
-  kobject.decal_mask = ob->decal_mask;
 
   /* Object shadow caustics flag */
   if (ob->is_caustics_caster) {
@@ -934,25 +933,7 @@ void ObjectManager::device_update(Device *device,
   }
 
   /* Decals. */
-  dscene->data.integrator.num_decals = int(decals_.size());
-  if (!decals_.empty()) {
-    KernelDecal *kdecals = dscene->decals.alloc(decals_.size());
-    std::copy(decals_.begin(), decals_.end(), kdecals);
-    /* Shader indices are known now. */
-    for (size_t i = 0; i < decals_.size(); i++) {
-      const Shader *shader = (i < decal_shaders_.size()) ? decal_shaders_[i] : nullptr;
-      kdecals[i].shader = -1;
-      if (shader &&
-          std::find(scene->shaders.begin(), scene->shaders.end(), shader) != scene->shaders.end())
-      {
-        kdecals[i].shader = shader->id;
-      }
-    }
-    dscene->decals.copy_to_device();
-  }
-  else {
-    dscene->decals.free();
-  }
+  device_update_decals(dscene, scene);
 
   if (scene->objects.empty()) {
     return;
@@ -1226,6 +1207,164 @@ void ObjectManager::set_sections(Scene *scene,
   }
 }
 
+/* BVH of the boxes of the decals, for the kernel to find the few around a shading point. */
+namespace {
+
+struct DecalBounds {
+  float3 bmin;
+  float3 bmax;
+  float3 center;
+  int decal;
+};
+
+int build_decal_bvh(vector<DecalBounds> &bounds,
+                    const int begin,
+                    const int end,
+                    vector<KernelDecalNode> &nodes,
+                    vector<int> &items,
+                    const int depth)
+{
+  const int node_index = int(nodes.size());
+  nodes.push_back(KernelDecalNode{});
+
+  float3 bmin = make_float3(FLT_MAX);
+  float3 bmax = make_float3(-FLT_MAX);
+  float3 cmin = make_float3(FLT_MAX);
+  float3 cmax = make_float3(-FLT_MAX);
+  for (int i = begin; i < end; i++) {
+    bmin = min(bmin, bounds[i].bmin);
+    bmax = max(bmax, bounds[i].bmax);
+    cmin = min(cmin, bounds[i].center);
+    cmax = max(cmax, bounds[i].center);
+  }
+
+  KernelDecalNode node;
+  node.bmin[0] = bmin.x;
+  node.bmin[1] = bmin.y;
+  node.bmin[2] = bmin.z;
+  node.bmax[0] = bmax.x;
+  node.bmax[1] = bmax.y;
+  node.bmax[2] = bmax.z;
+
+  const int count = end - begin;
+  /* Leaves of a few decals, and no deeper than the kernel's traversal stack allows (each level
+   * keeps one node on the stack). */
+  if (count <= 4 || depth >= DECAL_BVH_STACK_SIZE / 2 - 2) {
+    node.left = -1 - int(items.size());
+    node.right = count;
+    for (int i = begin; i < end; i++) {
+      items.push_back(bounds[i].decal);
+    }
+    nodes[node_index] = node;
+    return node_index;
+  }
+
+  /* Split at the median of the longest axis of the centers. */
+  const float3 extent = cmax - cmin;
+  const int axis = (extent.x >= extent.y && extent.x >= extent.z) ? 0 :
+                   (extent.y >= extent.z)                         ? 1 :
+                                                                    2;
+  const int mid = begin + count / 2;
+  std::nth_element(bounds.begin() + begin,
+                   bounds.begin() + mid,
+                   bounds.begin() + end,
+                   [axis](const DecalBounds &a, const DecalBounds &b) {
+                     return (axis == 0) ? a.center.x < b.center.x :
+                            (axis == 1) ? a.center.y < b.center.y :
+                                          a.center.z < b.center.z;
+                   });
+  node.left = build_decal_bvh(bounds, begin, mid, nodes, items, depth + 1);
+  node.right = build_decal_bvh(bounds, mid, end, nodes, items, depth + 1);
+  nodes[node_index] = node;
+  return node_index;
+}
+
+}  // namespace
+
+void ObjectManager::device_update_decals(DeviceScene *dscene, Scene *scene)
+{
+  const int num_decals = int(decals_.size());
+  dscene->data.integrator.num_decals = num_decals;
+  if (num_decals == 0) {
+    dscene->decals.free();
+    dscene->decal_bvh_nodes.free();
+    dscene->decal_bvh_items.free();
+    dscene->decal_objects.free();
+    return;
+  }
+
+  /* The objects listed by each decal: object indices are their place in the scene, sorted. */
+  vector<vector<int>> lists(num_decals);
+  for (size_t index = 0; index < scene->objects.size(); index++) {
+    for (const int decal : scene->objects[index]->get_decal_listed()) {
+      if (decal >= 0 && decal < num_decals) {
+        lists[decal].push_back(int(index));
+      }
+    }
+  }
+  size_t num_listed = 0;
+  for (const vector<int> &list : lists) {
+    num_listed += list.size();
+  }
+  int *kobjects = dscene->decal_objects.alloc(max(num_listed, size_t(1)));
+  kobjects[0] = -1;
+
+  KernelDecal *kdecals = dscene->decals.alloc(num_decals);
+  std::copy(decals_.begin(), decals_.end(), kdecals);
+  vector<DecalBounds> bounds(num_decals);
+  size_t offset = 0;
+  for (int i = 0; i < num_decals; i++) {
+    /* Shader indices are known now. */
+    const Shader *shader = (size_t(i) < decal_shaders_.size()) ? decal_shaders_[i] : nullptr;
+    kdecals[i].shader = -1;
+    if (shader &&
+        std::find(scene->shaders.begin(), scene->shaders.end(), shader) != scene->shaders.end())
+    {
+      kdecals[i].shader = shader->id;
+    }
+
+    kdecals[i].list_offset = int(offset);
+    kdecals[i].list_count = int(lists[i].size());
+    std::copy(lists[i].begin(), lists[i].end(), kobjects + offset);
+    offset += lists[i].size();
+
+    /* The box: the world bounds of the corners of the -1 to 1 cube. */
+    DecalBounds &b = bounds[i];
+    b.bmin = make_float3(FLT_MAX);
+    b.bmax = make_float3(-FLT_MAX);
+    for (int corner = 0; corner < 8; corner++) {
+      const float3 p = transform_point(&decals_[i].tfm,
+                                       make_float3((corner & 1) ? 1.0f : -1.0f,
+                                                   (corner & 2) ? 1.0f : -1.0f,
+                                                   (corner & 4) ? 1.0f : -1.0f));
+      b.bmin = min(b.bmin, p);
+      b.bmax = max(b.bmax, p);
+    }
+    /* A little margin for the precision of the transform. */
+    const float3 margin = 1e-5f * (b.bmax - b.bmin) + make_float3(1e-6f);
+    b.bmin -= margin;
+    b.bmax += margin;
+    b.center = 0.5f * (b.bmin + b.bmax);
+    b.decal = i;
+  }
+
+  vector<KernelDecalNode> nodes;
+  vector<int> items;
+  nodes.reserve(2 * num_decals);
+  items.reserve(num_decals);
+  build_decal_bvh(bounds, 0, num_decals, nodes, items, 0);
+
+  KernelDecalNode *knodes = dscene->decal_bvh_nodes.alloc(nodes.size());
+  std::copy(nodes.begin(), nodes.end(), knodes);
+  int *kitems = dscene->decal_bvh_items.alloc(items.size());
+  std::copy(items.begin(), items.end(), kitems);
+
+  dscene->decals.copy_to_device();
+  dscene->decal_objects.copy_to_device();
+  dscene->decal_bvh_nodes.copy_to_device();
+  dscene->decal_bvh_items.copy_to_device();
+}
+
 void ObjectManager::set_decals(Scene *scene,
                                const vector<KernelDecal> &decals,
                                const vector<Shader *> &shaders)
@@ -1259,6 +1398,9 @@ void ObjectManager::device_free(Device * /*unused*/, DeviceScene *dscene, bool f
   if (force_free) {
     dscene->sections.free();
     dscene->decals.free();
+    dscene->decal_bvh_nodes.free();
+    dscene->decal_bvh_items.free();
+    dscene->decal_objects.free();
   }
   dscene->objects.free_if_need_realloc(force_free);
   dscene->object_motion_pass.free_if_need_realloc(force_free);

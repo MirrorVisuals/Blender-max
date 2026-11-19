@@ -736,10 +736,15 @@ int Scene::get_max_closure_count()
     return MAX_CLOSURE;
   }
 
+  if (object_manager->has_decals()) {
+    /* The closures of decals are layered over the ones of the surface. */
+    return MAX_CLOSURE;
+  }
+
   int max_closures = 0;
   for (int i = 0; i < shaders.size(); i++) {
     Shader *shader = shaders[i];
-    if (shader->reference_count()) {
+    if (shader->is_used()) {
       const int num_closures = shader->graph->get_num_closures();
       max_closures = max(max_closures, num_closures);
     }

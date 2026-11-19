@@ -12,7 +12,10 @@
 #include "blender/viewport.h"
 
 #include "scene/scene.h"
+
 #include "session/session.h"
+#include "util/array.h"
+#include "util/map.h"
 
 #include "util/map.h"
 #include "util/set.h"
@@ -193,9 +196,12 @@ class BlenderSync {
     vector<const blender::ID *> objects;
     vector<blender::Collection *> collections;
   };
-  vector<DecalTargets> decal_targets_;
+  /* The decals (indices in their layering order) listing each object, and listing each
+   * collection. */
+  unordered_map<const blender::ID *, vector<int>> decal_listed_objects_;
+  vector<std::pair<blender::Collection *, int>> decal_listed_collections_;
   void sync_decals(blender::Depsgraph &b_depsgraph, blender::ViewLayer &b_view_layer);
-  uint get_decal_mask(blender::Object &b_ob, blender::Object *b_parent);
+  array<int> get_decal_listed(blender::Object &b_ob, blender::Object *b_parent);
 
   void sync_procedural(blender::Object &b_ob,
                        blender::MeshSequenceCacheModifier &b_mesh_cache,

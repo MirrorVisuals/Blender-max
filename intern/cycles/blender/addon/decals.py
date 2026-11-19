@@ -6,7 +6,8 @@
 Decals: a material projected onto the surfaces inside a box, rendered by Cycles without changing
 the geometry (labels, signs, stains, cracks...).
 
-A decal is a Cube empty with the Decal option of its Cycles settings and a material. It projects
+A decal is a Cube empty with the Decal option of its Cycles settings and a material. There can be
+any number of them. It projects
 along its -Z axis (planar), or wraps around its Z axis (cylindrical). In the material, the default
 UV and the generated coordinates are the ones of the decal, so an Image Texture and a Normal Map
 follow it, and the alpha of the material shows the surface under it. See
@@ -21,6 +22,10 @@ from bpy.props import EnumProperty, IntProperty, StringProperty
 from bpy.types import Operator, Panel
 
 from .ui import CyclesButtonsPanel
+
+
+# Decals listed in the sidebar at most: past that, only the selected ones.
+MAX_LISTED_DECALS = 30
 
 
 def scene_decals(scene):
@@ -300,6 +305,11 @@ class CYCLES_VIEW3D_PT_decals(Panel):
         if not decals:
             layout.label(text="No decals yet", icon='INFO')
             return
+
+        if len(decals) > MAX_LISTED_DECALS:
+            # Many decals (scattered stains, dirt...): only the selected ones are listed.
+            layout.label(text=tip_("{:d} decals, the selected ones:").format(len(decals)), icon='INFO')
+            decals = [ob for ob in decals if ob.select_get()][:MAX_LISTED_DECALS]
 
         for ob in decals:
             cob = ob.cycles

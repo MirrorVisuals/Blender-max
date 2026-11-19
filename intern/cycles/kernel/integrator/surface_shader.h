@@ -1288,8 +1288,7 @@ ccl_device void surface_shader_eval(KernelGlobals kg,
     /* The material of the surface, then the one of each decal on it, layered on top (see
      * kernel/geom/decal.h). One call site, to not inline the interpreter more than once. */
     DecalLayerState decal_state;
-    decal_state.shader = sd->shader & SHADER_MASK;
-    decal_state.has_surface_N = false;
+    decal_layer_init(&decal_state, sd->shader & SHADER_MASK);
     int decal = -1;
     for (;;) {
       svm_eval_nodes<node_feature_mask, SHADER_TYPE_SURFACE>(
@@ -1300,7 +1299,7 @@ ccl_device void surface_shader_eval(KernelGlobals kg,
       if (!use_decals || (sd->flag & SD_CACHE_MISS)) {
         break;
       }
-      decal = decal_layer_begin(kg, sd, decal + 1, &decal_state);
+      decal = decal_layer_begin(kg, sd, &decal_state);
       if (decal == -1) {
         break;
       }
