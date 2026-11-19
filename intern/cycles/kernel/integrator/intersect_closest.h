@@ -413,7 +413,55 @@ ccl_device void integrator_intersect_closest(KernelGlobals kg,
 
     if (hit) {
       float cap_t;
-      const int cap = section_cap_at_hit(kg, &ray, &isect, ray_tmin, visibility, from_cap, &cap_t);
+      int cap = section_cap_at_hit(kg, &ray, &isect, ray_tmin, visibility, from_cap, &cap_t);
+      if (cap == -1 && isect.type == PRIMITIVE_TRIANGLE &&
+          section_crossing_before(kg, &ray, ray_tmin, isect.t, visibility, from_cap))
+      {
+        /* The hit may be inside a cut object that touches or overlaps it (a wall standing on the
+         * slab, walls overlapping at a corner): then a back face of the cut object comes a few
+         * hits further, before its own front face, and its cap is in front of this hit. */
+        int front_objects[SECTION_MAX_INSIDE_HITS + 1];
+        int num_front = 0;
+        front_objects[num_front++] = isect.object;
+        Ray walk = ray;
+        Intersection inside = isect;
+        for (int i = 0; i < SECTION_MAX_INSIDE_HITS; i++) {
+          /* First from just before the hit, for a face at the same place (the bottom of a
+           * pillar on the floor), then past each hit. */
+          walk.tmin = (i == 0) ? fmaxf(ray_tmin, inside.t * 0.9999f - 1e-5f) :
+                                 intersection_t_offset(inside.t);
+          walk.self.object = inside.object;
+          walk.self.prim = inside.prim;
+          if (!scene_intersect(kg, &walk, visibility, &inside)) {
+            break;
+          }
+          if (section_hit_clipped(
+                  kg, inside.object, ray.P + ray.D * inside.t, visibility, from_cap))
+          {
+            continue;
+          }
+          bool seen_front = false;
+          for (int j = 0; j < num_front; j++) {
+            seen_front |= (front_objects[j] == inside.object);
+          }
+          float inside_cap_t;
+          const int inside_cap =
+              seen_front ? -1 :
+                           section_cap_at_hit(
+                               kg, &ray, &inside, ray_tmin, visibility, from_cap, &inside_cap_t);
+          if (inside_cap != -1 && inside_cap_t <= isect.t * 1.0001f + 1e-5f) {
+            isect = inside;
+            cap = inside_cap;
+            cap_t = inside_cap_t;
+            break;
+          }
+          if (inside.type == PRIMITIVE_TRIANGLE &&
+              dot(section_triangle_normal(kg, inside.object, inside.prim), ray.D) < 0.0f)
+          {
+            front_objects[num_front++] = inside.object;
+          }
+        }
+      }
       if (cap != -1) {
         /* The cap is shaded on the section, with the object and its back face hit. */
         isect.t = cap_t;

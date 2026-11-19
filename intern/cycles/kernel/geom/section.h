@@ -12,7 +12,10 @@
  *
  * Where a camera ray crosses the section into the inside of a closed object, the first surface
  * it hits is a back face: there the cut surface (the cap) is shaded instead, on the section,
- * facing the camera. */
+ * facing the camera. Where objects touch or overlap (a wall standing on the floor slab, a column
+ * through a slab, walls overlapping at the corners), the first hit can be the front face of the
+ * other object, inside the cut one: then the back face of the cut object is found a few hits
+ * further, and the cap is shaded in front of the other object. */
 
 #pragma once
 
@@ -25,6 +28,9 @@ CCL_NAMESPACE_BEGIN
 
 /* Clipped hits skipped by one ray at most (walls, floors, furniture... behind each other). */
 #define SECTION_MAX_SKIPPED_HITS 32
+/* Hits looked at behind the first one, for the back face of a cut object the ray is inside of
+ * (objects touching or overlapping it). */
+#define SECTION_MAX_INSIDE_HITS 4
 
 /* Is the point clipped (removed) by the section? */
 ccl_device_inline bool section_point_clipped(const ccl_private KernelSection &section,
@@ -141,18 +147,17 @@ ccl_device_inline float3 section_triangle_normal(KernelGlobals kg,
 
 /* Where along the ray it last passed from a clipped part into a kept part, before `t_max`: the
  * place of a cap. Returns the section, or -1. */
-ccl_device int section_cap_find(KernelGlobals kg,
-                                const int object,
-                                const float3 P,
-                                const float3 D,
-                                const float t_min,
-                                const float t_max,
-                                const uint visibility,
-                                const bool from_cap,
-                                ccl_private float *r_t,
-                                ccl_private float3 *r_N)
+ccl_device int section_cap_find_mask(KernelGlobals kg,
+                                     const uint mask,
+                                     const float3 P,
+                                     const float3 D,
+                                     const float t_min,
+                                     const float t_max,
+                                     const uint visibility,
+                                     const bool from_cap,
+                                     ccl_private float *r_t,
+                                     ccl_private float3 *r_N)
 {
-  const uint mask = section_object_mask(kg, object);
   if (mask == 0) {
     return -1;
   }
@@ -245,6 +250,36 @@ ccl_device int section_cap_find(KernelGlobals kg,
     *r_N = best_N;
   }
   return best;
+}
+
+ccl_device_inline int section_cap_find(KernelGlobals kg,
+                                       const int object,
+                                       const float3 P,
+                                       const float3 D,
+                                       const float t_min,
+                                       const float t_max,
+                                       const uint visibility,
+                                       const bool from_cap,
+                                       ccl_private float *r_t,
+                                       ccl_private float3 *r_N)
+{
+  return section_cap_find_mask(
+      kg, section_object_mask(kg, object), P, D, t_min, t_max, visibility, from_cap, r_t, r_N);
+}
+
+/* Does the ray pass from a clipped part into a kept part of any capped section before `t_max`?
+ * Then the surface it hits there may be inside a cut object, which has to be capped. */
+ccl_device_inline bool section_crossing_before(KernelGlobals kg,
+                                               const ccl_private Ray *ray,
+                                               const float t_min,
+                                               const float t_max,
+                                               const uint visibility,
+                                               const bool from_cap)
+{
+  float t;
+  float3 N;
+  return section_cap_find_mask(
+             kg, ~0u, ray->P, ray->D, t_min, t_max, visibility, from_cap, &t, &N) != -1;
 }
 
 /* Is the closest hit a back face seen through a section: then the cap is shaded there instead.

@@ -140,6 +140,17 @@ check(abs(cap[0] - 0.8) < 0.02 and abs(cap[1] - 0.2) < 0.02 and abs(cap[2] - 0.1
       "the cut of the wall is filled with the flat cap color (%.3f, %.3f, %.3f)" % cap)
 check(abs(brightness(cut(*OUTSIDE)) - ground) < 0.02 * ground + 1e-4, "the ground outside is as before")
 
+# A pillar standing on the floor of the room: its bottom is on the floor, so seen through the cut
+# the floor (a front face) and the bottom of the pillar (its back face) are hit at the same place.
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(-1.0, -1.0, 1.85))
+pillar = bpy.context.object
+pillar.scale = (0.6, 0.6, 3.3)
+pillar_cut = render("pillar")
+pillar_cap = pillar_cut(-1.0, -1.0)
+check(abs(pillar_cap[0] - 0.8) < 0.02 and abs(pillar_cap[1] - 0.2) < 0.02,
+      "a pillar standing on the floor is capped too (%.3f, %.3f, %.3f)" % pillar_cap)
+bpy.data.objects.remove(pillar, do_unlink=True)
+
 cs.section_affect_lighting = False
 open_cut = render("open")
 check(brightness(open_cut(*CENTER)) > 0.5 * roof,
