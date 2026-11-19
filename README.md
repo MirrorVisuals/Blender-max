@@ -4,14 +4,14 @@ linking to external resources instead of including content in-line.
 See 'release/text/readme.html' for the end user read-me.
 -->
 
-Blender-max
-===========
+BlenderViz
+==========
 
 An experimental fork of **Blender 5.2.3 LTS** that brings a 3ds Max style modifier workflow to
 Blender: editable modeling levels in the modifier stack, UVW Map and Unwrap modifiers, a solid
 Extrude Manifold, a Slice Plane, camera tilt correction, a V-Ray style frame buffer with
-interactive render and Light Mix, quick sun caustics, architectural sections, and a few more
-rendering extras. Branch: `edit-poly-stack`.
+interactive render and Light Mix, quick sun caustics, architectural sections, decals, and a few more
+rendering extras, for architectural visualization. Branch: `edit-poly-stack`.
 Experimental and unofficial: not affiliated with the Blender Foundation.
 
 What is different from Blender 5.2.3

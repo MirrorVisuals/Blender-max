@@ -70,3 +70,8 @@ void BKE_blender_version_blendfile_string_from_values(char *str_buff,
                                                       const short file_subversion);
 
 }  // namespace blender
+
+/** Name of this build of Blender, shown in the window title, the splash and About. Blender's own
+ * name and version (#BKE_blender_version_string, `bpy.app.version_string`) are unchanged, so
+ * add-ons and the settings folder work as in Blender. */
+#define BLENDER_PRODUCT_NAME "BlenderViz"
